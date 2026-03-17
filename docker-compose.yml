@@ -1,0 +1,48 @@
+# services:
+#   postgres:
+#     image: postgres:16
+#     container_name: futures_ai_postgres
+#     environment:
+#       POSTGRES_USER: bot
+#       POSTGRES_PASSWORD: botpass
+#       POSTGRES_DB: botdb
+#     ports:
+#       - "5432:5432"
+#     volumes:
+#       - pgdata:/var/lib/postgresql/data
+
+#   redis:
+#     image: redis:7
+#     container_name: futures_ai_redis
+#     ports:
+#       - "6380:6379"
+#     volumes:
+#       - redisdata:/data
+
+# volumes:
+#   pgdata:
+#   redisdata:
+
+
+services:
+
+  futures-bot-backend:
+    image: node:22-slim
+    container_name: futures-bot-backend
+    hostname: futures-bot-backend
+    restart: always
+    volumes:
+      - ./:/app
+    working_dir: /app
+    environment:
+      - TZ=America/La_Paz
+    command: >
+      sh -c "npm run build && npm run start:dev"
+    ports:
+      - "${PORT}:${PORT}"
+    networks:
+      - futures-bot-network
+
+networks: 
+  futures-bot-network:
+    external: true
