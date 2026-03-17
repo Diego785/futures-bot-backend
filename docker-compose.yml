@@ -1,7 +1,7 @@
 services:
 
   futures-bot-backend:
-    image: node:22-slim
+    image: node:22
     container_name: futures-bot-backend
     hostname: futures-bot-backend
     restart: always
