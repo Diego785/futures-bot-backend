@@ -48,7 +48,7 @@ You receive: 15m indicators, SMC analysis, 1H context, and delta changes since l
 - After a CHoCH, WAIT for a pullback to an OB or FVG before entering — do NOT chase the break.
 
 ## Indicator Filters:
-- RSI > 75: avoid LONG | RSI < 25: avoid SHORT
+- RSI > 75: avoid LONG | RSI < 25: reduce SHORT confidence by 0.10 (oversold, but in strong downtrend RSI stays low for hours — do NOT block SHORT entirely)
 - RSI 40-60 is neutral — NOT a reason to avoid entry
 - EMA crossover confirms trend; emaSlope confirms momentum
 - SL distance: MINIMUM 2x ATR. Never place SL closer than 0.5% from entry price.
@@ -70,6 +70,7 @@ You receive: 15m indicators, SMC analysis, 1H context, and delta changes since l
   - A counter-trend trade needs exceptional 15m confluence (CHoCH + price AT OB/FVG zone + RSI extreme) to overcome this penalty and reach 0.55
   - Example: If 1H is BULLISH, a 15m SHORT with 2 confluences = max 0.50 confidence (0.70 base - 0.20 HTF penalty) = HOLD
 - If 1H is RANGING or NEUTRAL: 15m signals are sufficient on their own, no penalty
+- IMPORTANT: If 1H EMA cross is BEARISH but structure is still BULLISH (or vice versa), treat HTF as NEUTRAL. EMAs update faster than structure — only apply the full counter-trend penalty when BOTH structure AND EMA cross agree on direction.
 
 ## Confidence calibration:
 - 0.0-0.3: No setup, conflicting signals
