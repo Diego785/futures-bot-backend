@@ -72,14 +72,23 @@ You receive: 15m indicators, SMC analysis, 1H context, and delta changes since l
 - If 1H is RANGING or NEUTRAL: 15m signals are sufficient on their own, no penalty
 - IMPORTANT: If 1H EMA cross is BEARISH but structure is still BULLISH (or vice versa), treat HTF as NEUTRAL. EMAs update faster than structure — only apply the full counter-trend penalty when BOTH structure AND EMA cross agree on direction.
 
-## Confidence calibration:
-- 0.0-0.3: No setup, conflicting signals
-- 0.3-0.45: Weak, missing confluences
-- 0.45-0.55: Borderline — 1 confluence only
-- 0.55-0.70: Good — 2+ confluences aligned — ACTIONABLE
-- 0.70-0.85: Strong — full alignment with HTF
-- 0.85-1.0: Perfect storm, rare
-DO NOT default to 0.4. Calibrate based on actual confluence count.
+## Confidence calibration (FOLLOW STRICTLY):
+- 0.0-0.30: No setup, conflicting signals
+- 0.30-0.44: One weak confluence (structure clear but price FAR from any OB/FVG)
+- 0.45-0.54: One moderate confluence (structure clear but no OB/FVG nearby, or near OB but structure unclear)
+- 0.55-0.64: Two confluences aligned (structure + OB/FVG proximity). THIS IS THE MINIMUM ACTIONABLE LEVEL.
+- 0.65-0.75: Two confluences + HTF agreement or price AT zone (distance < 0.1%)
+- 0.75-0.85: Full alignment: structure + AT zone + HTF agrees + momentum confirms
+- 0.85-1.0: Perfect storm, extremely rare
+
+### Concrete examples (use as scoring anchors):
+- BEARISH structure + price 0.04% from BEARISH FVG + HTF neutral → confidence = 0.58
+- BULLISH BOS + price inside BULLISH OB + 1H also BULLISH → confidence = 0.72
+- BEARISH structure + price 0.25% from BEARISH OB + low momentum → confidence = 0.52
+- BEARISH CHoCH + price AT BEARISH FVG + RSI < 35 + 1H BEARISH → confidence = 0.78
+- Structure unclear (RANGING) + price in OB but wrong direction → confidence = 0.30
+
+CRITICAL SCORING RULE: Count confluences FIRST, then assign the band, then adjust within band. If 2+ confluences are present, confidence MUST be >= 0.55 unless an explicit penalty applies.
 
 ## Response format (strict JSON):
 { "action": "LONG" | "SHORT" | "HOLD", "confidence": 0.0-1.0, "reasoning": "brief (<150 words)", "suggestedStopLoss": price|null, "suggestedTakeProfit": price|null }
@@ -114,7 +123,7 @@ export class DeepSeekService {
     const payload: Record<string, unknown> = {
       symbol,
       timestamp: new Date().toISOString(),
-      technicalIndicators_5m: {
+      technicalIndicators_15m: {
         currentPrice: indicators.currentPrice,
         ema9: indicators.ema9,
         ema21: indicators.ema21,
@@ -126,7 +135,7 @@ export class DeepSeekService {
         priceChange1h: `${indicators.priceChange1h > 0 ? '+' : ''}${indicators.priceChange1h.toFixed(3)}%`,
         recentCandles: indicators.recentCandles,
       },
-      smartMoneyConcepts_5m: {
+      smartMoneyConcepts_15m: {
         marketStructure: smcFeatures.marketStructure,
         lastStructureBreak: smcFeatures.lastStructureBreak,
         premiumDiscount: smcFeatures.premiumDiscount,
