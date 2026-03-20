@@ -7,6 +7,7 @@ import { DeepSeekService } from './deepseek.service';
 import { SignalGeneratorService } from './signal-generator.service';
 import { PreFilterGateService } from './pre-filter-gate.service';
 import { SignalCacheService } from './signal-cache.service';
+import { HybridSignalService } from './hybrid-signal.service';
 
 @Module({
   imports: [HttpModule.register({ timeout: 30_000 }), BinanceModule],
@@ -17,6 +18,7 @@ import { SignalCacheService } from './signal-cache.service';
     SignalGeneratorService,
     PreFilterGateService,
     SignalCacheService,
+    HybridSignalService,
   ],
   exports: [
     SignalGeneratorService,

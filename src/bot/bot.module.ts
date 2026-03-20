@@ -23,6 +23,7 @@ import { KillSwitchService } from './kill-switch.service';
 import { ExecutionService } from '../trading/execution.service';
 import { DashboardGateway } from '../dashboard/dashboard.gateway';
 import { DashboardModule } from '../dashboard/dashboard.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { DashboardModule } from '../dashboard/dashboard.module';
     StrategyModule,
     TradingModule,
     forwardRef(() => DashboardModule),
+    NotificationsModule,
   ],
   providers: [
     BotStateService,
@@ -44,6 +46,7 @@ import { DashboardModule } from '../dashboard/dashboard.module';
 export class BotModule implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(BotModule.name);
   private candleSub: Subscription | null = null;
+  private priceSub: Subscription | null = null;
   private stateSub: Subscription | null = null;
   private orderUpdateSub: Subscription | null = null;
   private algoUpdateSub: Subscription | null = null;
@@ -84,6 +87,13 @@ export class BotModule implements OnModuleInit, OnModuleDestroy {
           .catch((err) => {
             this.logger.error('Failed to enqueue strategy cycle', err);
           });
+      },
+    );
+
+    // Subscribe to price ticks -> emit to dashboard
+    this.priceSub = this.binanceMarketWs.onPrice$.subscribe(
+      ({ symbol, price }) => {
+        this.dashboardGateway.emitPriceUpdate(symbol, price);
       },
     );
 
@@ -155,6 +165,7 @@ export class BotModule implements OnModuleInit, OnModuleDestroy {
 
   onModuleDestroy(): void {
     this.candleSub?.unsubscribe();
+    this.priceSub?.unsubscribe();
     this.stateSub?.unsubscribe();
     this.orderUpdateSub?.unsubscribe();
     this.algoUpdateSub?.unsubscribe();

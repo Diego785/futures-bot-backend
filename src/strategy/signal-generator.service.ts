@@ -4,6 +4,7 @@ import { BinanceRestService } from '../binance/binance-rest.service';
 import { IndicatorsService, type IndicatorFeatures } from './indicators.service';
 import { SmcService, type SmcFeatures } from './smc.service';
 import { DeepSeekService, type DeltaChanges, type HtfContext } from './deepseek.service';
+import { HybridSignalService } from './hybrid-signal.service';
 import { PreFilterGateService, type GateResult } from './pre-filter-gate.service';
 import { SignalCacheService } from './signal-cache.service';
 import { deepSeekResponseSchema } from './schemas/deepseek-response.schema';
@@ -80,6 +81,7 @@ export class SignalGeneratorService {
     private readonly indicators: IndicatorsService,
     private readonly smc: SmcService,
     private readonly deepseek: DeepSeekService,
+    private readonly hybrid: HybridSignalService,
     private readonly gate: PreFilterGateService,
     private readonly signalCache: SignalCacheService,
     private readonly config: ConfigService,
@@ -217,44 +219,34 @@ export class SignalGeneratorService {
       return { signal: null, gateResult, cacheHit: true, analysis: buildAnalysis() };
     }
 
-    // 8. Call DeepSeek with HTF and delta context
+    // 8. Hybrid signal (rule-based, no AI)
     if (this.gateEnabled) this.gate.recordApiCall();
-    const rawResponse = await this.deepseek.getSignal(
+
+    // Get previous features for EMA crossover detection
+    let prevFeatures: IndicatorFeatures | null = null;
+    if (this.previousCycle) {
+      // Reconstruct minimal previous features for crossover detection
+      prevFeatures = {
+        ...features,
+        emaCrossover: this.previousCycle.structure === 'BULLISH' ? 'BULLISH' : 'BEARISH',
+      } as IndicatorFeatures;
+    }
+
+    const hybridResult = this.hybrid.generateSignal(
       features,
       smcFeatures,
       symbol,
       htfContext,
-      deltaChanges,
+      prevFeatures,
     );
 
-    // 9. Validate DeepSeek response
-    const parsed = deepSeekResponseSchema.safeParse(rawResponse);
-    if (!parsed.success) {
-      this.logger.warn(
-        `DeepSeek response validation failed: ${JSON.stringify(parsed.error.issues)}`,
-      );
-      const raw = rawResponse as Record<string, unknown> | null;
-      this.cyclesSinceLastAction++;
-      return {
-        signal: null,
-        gateResult,
-        cacheHit: false,
-        analysis: buildAnalysis(
-          raw?.action as string | undefined,
-          raw?.confidence as number | undefined,
-          raw?.reasoning as string | undefined,
-        ),
-      };
-    }
-
-    const dsResponse = parsed.data;
     this.logger.log(
-      `DeepSeek: action=${dsResponse.action} confidence=${dsResponse.confidence} ` +
-        `reason="${dsResponse.reasoning?.slice(0, 80)}..."`,
+      `Hybrid: action=${hybridResult.action} confidence=${hybridResult.confidence.toFixed(2)} ` +
+        `reason="${hybridResult.reasoning.slice(0, 80)}..."`,
     );
 
-    // 10. Skip HOLD signals (and cache them)
-    if (dsResponse.action === 'HOLD') {
+    // Skip HOLD signals
+    if (hybridResult.action === 'HOLD') {
       this.logger.log('Signal: HOLD — no action');
       this.signalCache.cacheHoldResult(features, smcFeatures);
       this.cyclesSinceLastAction++;
@@ -262,32 +254,32 @@ export class SignalGeneratorService {
         signal: null,
         gateResult,
         cacheHit: false,
-        analysis: buildAnalysis(dsResponse.action, dsResponse.confidence, dsResponse.reasoning),
+        analysis: buildAnalysis(hybridResult.action, hybridResult.confidence, hybridResult.reasoning),
       };
     }
 
-    // 11. Build validated signal
+    // Build validated signal
     const currentPrice = features.currentPrice;
     const defaultStopDistance = features.atr14 * 1.5;
     const defaultTpDistance = defaultStopDistance * 2;
 
     const stopLoss =
-      dsResponse.suggestedStopLoss ??
-      (dsResponse.action === 'LONG'
+      hybridResult.suggestedStopLoss ??
+      (hybridResult.action === 'LONG'
         ? currentPrice - defaultStopDistance
         : currentPrice + defaultStopDistance);
 
     const takeProfit =
-      dsResponse.suggestedTakeProfit ??
-      (dsResponse.action === 'LONG'
+      hybridResult.suggestedTakeProfit ??
+      (hybridResult.action === 'LONG'
         ? currentPrice + defaultTpDistance
         : currentPrice - defaultTpDistance);
 
     const signalData = {
       symbol,
-      action: dsResponse.action,
-      confidence: dsResponse.confidence,
-      reasoning: dsResponse.reasoning,
+      action: hybridResult.action,
+      confidence: hybridResult.confidence,
+      reasoning: hybridResult.reasoning,
       entryPrice: currentPrice,
       stopLoss,
       takeProfit,
@@ -298,19 +290,19 @@ export class SignalGeneratorService {
       timestamp: Date.now(),
     };
 
-    // 12. Final validation
+    // Final validation
     const finalParsed = signalSchema.safeParse(signalData);
     if (!finalParsed.success) {
       this.logger.warn(
         `Signal validation failed: ${JSON.stringify(finalParsed.error.issues)}`,
       );
       this.cyclesSinceLastAction++;
-      return { signal: null, gateResult, cacheHit: false, analysis: buildAnalysis(dsResponse.action, dsResponse.confidence, dsResponse.reasoning) };
+      return { signal: null, gateResult, cacheHit: false, analysis: buildAnalysis(hybridResult.action, hybridResult.confidence, hybridResult.reasoning) };
     }
 
     // Action taken! Reset counter
     this.cyclesSinceLastAction = 0;
-    return { signal: finalParsed.data, gateResult, cacheHit: false, analysis: buildAnalysis(dsResponse.action, dsResponse.confidence, dsResponse.reasoning) };
+    return { signal: finalParsed.data, gateResult, cacheHit: false, analysis: buildAnalysis(hybridResult.action, hybridResult.confidence, hybridResult.reasoning) };
   }
 
   /**

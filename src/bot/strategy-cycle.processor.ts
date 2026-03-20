@@ -10,6 +10,7 @@ import { RiskManagerService } from '../trading/risk-manager.service';
 import { ExecutionService } from '../trading/execution.service';
 import { Signal } from '../trading/entities/signal.entity';
 import { DashboardGateway } from '../dashboard/dashboard.gateway';
+import { FcmService } from '../notifications/fcm.service';
 
 interface StrategyCycleJobData {
   symbol: string;
@@ -27,6 +28,7 @@ export class StrategyCycleProcessor extends WorkerHost {
     private readonly riskManager: RiskManagerService,
     private readonly execution: ExecutionService,
     private readonly dashboardGateway: DashboardGateway,
+    private readonly fcmService: FcmService,
     @InjectRepository(Signal)
     private readonly signalRepo: Repository<Signal>,
   ) {
@@ -104,6 +106,11 @@ export class StrategyCycleProcessor extends WorkerHost {
       signalEntity.rejectionReason = riskDecision.reason ?? 'Risk check failed';
       await this.signalRepo.save(signalEntity);
       this.logger.warn(`Signal REJECTED: ${riskDecision.reason}`);
+      this.fcmService.notifySignalRejected(
+        signal.action,
+        signal.confidence,
+        riskDecision.reason ?? 'Risk check failed',
+      ).catch(() => {});
       return;
     }
 
@@ -121,6 +128,13 @@ export class StrategyCycleProcessor extends WorkerHost {
       await this.signalRepo.save(signalEntity);
       this.dashboardGateway.emitOrderUpdate(trade as unknown as Record<string, unknown>);
       this.logger.log(`Signal EXECUTED -> Trade ${trade.id}`);
+      this.fcmService.notifyTradeOpened(
+        trade.direction,
+        trade.symbol,
+        Number(trade.entryPrice),
+        Number(trade.stopLoss),
+        Number(trade.takeProfit),
+      ).catch(() => {});
     } else {
       this.logger.warn('Execution returned null — signal not executed');
     }

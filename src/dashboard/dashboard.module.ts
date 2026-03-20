@@ -8,6 +8,7 @@ import { DailyPnl } from '../trading/entities/daily-pnl.entity';
 import { DashboardController } from './dashboard.controller';
 import { DashboardGateway } from './dashboard.gateway';
 import { BotModule } from '../bot/bot.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { BotModule } from '../bot/bot.module';
     BinanceModule,
     StrategyModule,
     forwardRef(() => BotModule),
+    NotificationsModule,
   ],
   controllers: [DashboardController],
   providers: [DashboardGateway],

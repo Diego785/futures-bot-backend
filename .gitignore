@@ -1,3 +1,7 @@
+# Secrets
+firebase-service-account.json
+*.json.bak
+
 # compiled output
 /dist
 /node_modules

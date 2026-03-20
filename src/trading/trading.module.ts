@@ -7,11 +7,13 @@ import { Trade } from './entities/trade.entity';
 import { DailyPnl } from './entities/daily-pnl.entity';
 import { RiskManagerService } from './risk-manager.service';
 import { ExecutionService } from './execution.service';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Signal, Order, Trade, DailyPnl]),
     BinanceModule,
+    NotificationsModule,
   ],
   providers: [RiskManagerService, ExecutionService],
   exports: [
