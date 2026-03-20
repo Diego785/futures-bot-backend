@@ -33,6 +33,14 @@ export class BinanceMarketWsService implements OnModuleDestroy {
   }>();
   readonly onCandleClose$ = this.candleCloseSubject.asObservable();
 
+  private readonly priceSubject = new Subject<{
+    symbol: string;
+    price: number;
+  }>();
+  readonly onPrice$ = this.priceSubject.asObservable();
+  private lastPriceEmit = 0;
+  private readonly PRICE_THROTTLE_MS = 5_000; // max 1 price emit per 5s
+
   constructor(private readonly config: ConfigService) {
     this.wsUrl = this.config.getOrThrow<string>('BINANCE_FUTURES_WS_URL');
   }
@@ -102,20 +110,34 @@ export class BinanceMarketWsService implements OnModuleDestroy {
       this.lastMessageTime = Date.now();
       try {
         const payload = JSON.parse(data.toString()) as KlineWsPayload;
-        if (payload.e === 'kline' && payload.k.x) {
+        if (payload.e === 'kline') {
           const k = payload.k;
-          const candle: Candle = {
-            openTime: k.t,
-            open: parseFloat(k.o),
-            high: parseFloat(k.h),
-            low: parseFloat(k.l),
-            close: parseFloat(k.c),
-            volume: parseFloat(k.v),
-            closeTime: k.T,
-            quoteVolume: parseFloat(k.q),
-            trades: k.n,
-          };
-          this.candleCloseSubject.next({ symbol: payload.s, candle });
+
+          // Emit price tick (throttled to max 1 per 5s)
+          const now = Date.now();
+          if (now - this.lastPriceEmit >= this.PRICE_THROTTLE_MS) {
+            this.lastPriceEmit = now;
+            this.priceSubject.next({
+              symbol: payload.s,
+              price: parseFloat(k.c),
+            });
+          }
+
+          // Emit candle close (only when candle is finalized)
+          if (k.x) {
+            const candle: Candle = {
+              openTime: k.t,
+              open: parseFloat(k.o),
+              high: parseFloat(k.h),
+              low: parseFloat(k.l),
+              close: parseFloat(k.c),
+              volume: parseFloat(k.v),
+              closeTime: k.T,
+              quoteVolume: parseFloat(k.q),
+              trades: k.n,
+            };
+            this.candleCloseSubject.next({ symbol: payload.s, candle });
+          }
         }
       } catch (err) {
         this.logger.error('Failed to parse market WS message', err);

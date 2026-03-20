@@ -27,4 +27,5 @@ export const WS_EVENTS = {
   ERROR: 'bot:error',
   GATE_RESULT: 'gate:result',
   ANALYSIS_COMPLETE: 'analysis:complete',
+  PRICE_UPDATE: 'price:update',
 } as const;

@@ -19,6 +19,7 @@ import { BotStateService } from '../bot/bot-state.service';
 import { KillSwitchService } from '../bot/kill-switch.service';
 import { PreFilterGateService } from '../strategy/pre-filter-gate.service';
 import { DashboardGateway } from './dashboard.gateway';
+import { FcmService } from '../notifications/fcm.service';
 
 @Controller('api')
 export class DashboardController {
@@ -30,6 +31,7 @@ export class DashboardController {
     private readonly binanceRest: BinanceRestService,
     private readonly preFilterGate: PreFilterGateService,
     private readonly dashboardGateway: DashboardGateway,
+    private readonly fcmService: FcmService,
     @InjectRepository(Signal)
     private readonly signalRepo: Repository<Signal>,
     @InjectRepository(Trade)
@@ -167,6 +169,15 @@ export class DashboardController {
     } catch {
       return null;
     }
+  }
+
+  @Post('fcm-token')
+  registerFcmToken(@Body() body: { token: string }) {
+    if (body.token) {
+      this.fcmService.registerToken(body.token);
+      return { success: true };
+    }
+    return { success: false, error: 'No token provided' };
   }
 
   @Get('last-analysis')

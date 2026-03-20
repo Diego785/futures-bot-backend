@@ -19,6 +19,7 @@ import type {
   OrderTradeUpdatePayload,
   AlgoUpdatePayload,
 } from '../common/interfaces/binance.interfaces';
+import { FcmService } from '../notifications/fcm.service';
 
 @Injectable()
 export class ExecutionService {
@@ -37,6 +38,7 @@ export class ExecutionService {
     private readonly tradeRepo: Repository<Trade>,
     @InjectRepository(DailyPnl)
     private readonly dailyPnlRepo: Repository<DailyPnl>,
+    private readonly fcmService: FcmService,
   ) {}
 
   async executeSignal(
@@ -479,6 +481,12 @@ export class ExecutionService {
     this.logger.log(
       `Trade closed (algo): ${trade.id} ${trade.status} PnL=${netPnl.toFixed(4)} (price=${pricePnl.toFixed(4)}, comm=${totalCommission.toFixed(4)})`,
     );
+    this.fcmService.notifyTradeClosed(
+      trade.direction,
+      trade.symbol,
+      trade.status,
+      netPnl,
+    ).catch(() => {});
   }
 
   private async handleBracketFill(

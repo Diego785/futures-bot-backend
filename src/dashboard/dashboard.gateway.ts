@@ -73,6 +73,10 @@ export class DashboardGateway
     this.server?.emit(WS_EVENTS.ANALYSIS_COMPLETE, data);
   }
 
+  emitPriceUpdate(symbol: string, price: number): void {
+    this.server?.emit(WS_EVENTS.PRICE_UPDATE, { symbol, price });
+  }
+
   // REST accessors
   getLastAnalysis(): Record<string, unknown> | null {
     return this.analysisHistory[0] ?? null;
