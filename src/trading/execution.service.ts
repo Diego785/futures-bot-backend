@@ -755,7 +755,7 @@ export class ExecutionService {
                     });
 
                   const newSlOrder = this.orderRepo.create({
-                    clientOrderId: `FAB_TSL_${trade.id.substring(0, 8)}`,
+                    clientOrderId: `FAB_TSL_${trade.id.substring(0, 8)}_${Date.now().toString(36)}`,
                     binanceOrderId: newSlResponse.algoId,
                     symbol: trade.symbol,
                     side: closeSide,
