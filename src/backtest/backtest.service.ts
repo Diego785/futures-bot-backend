@@ -238,6 +238,7 @@ export class BacktestService {
               if (direction === 'LONG' && features.priceChange1h < 0) shouldEnter = false;
               if (direction === 'SHORT' && features.priceChange1h > 0) shouldEnter = false;
             }
+
           }
         }
       }

@@ -24,6 +24,7 @@ import { FcmService } from '../notifications/fcm.service';
 @Injectable()
 export class ExecutionService {
   private readonly logger = new Logger(ExecutionService.name);
+  private readonly closingTrades = new Set<string>();
 
   constructor(
     private readonly config: ConfigService,
@@ -388,8 +389,8 @@ export class ExecutionService {
       `Algo update: ${clientAlgoId} status=${o.X} type=${o.o} symbol=${o.s}`,
     );
 
-    // Update order status based on algo status
-    if (o.X === 'TRIGGERED' || o.X === 'FINISHED') {
+    // Update order status based on algo status (only FINISHED — TRIGGERED is intermediate)
+    if (o.X === 'FINISHED') {
       order.status = 'FILLED';
       order.executedQty = parseFloat(o.aq) || order.quantity;
       order.avgPrice = parseFloat(o.ap) || order.stopPrice || 0;
@@ -414,6 +415,14 @@ export class ExecutionService {
   ): Promise<void> {
     if (!filledOrder.tradeId) return;
 
+    // Prevent concurrent close of same trade (race condition guard)
+    if (this.closingTrades.has(filledOrder.tradeId)) {
+      this.logger.debug(`Trade ${filledOrder.tradeId} already being closed, skipping algo handler`);
+      return;
+    }
+    this.closingTrades.add(filledOrder.tradeId);
+
+    try {
     const trade = await this.tradeRepo.findOne({
       where: { id: filledOrder.tradeId },
     });
@@ -487,6 +496,9 @@ export class ExecutionService {
       trade.status,
       netPnl,
     ).catch(() => {});
+    } finally {
+      this.closingTrades.delete(filledOrder.tradeId);
+    }
   }
 
   private async handleBracketFill(
@@ -495,6 +507,14 @@ export class ExecutionService {
   ): Promise<void> {
     if (!filledOrder.tradeId) return;
 
+    // Prevent concurrent close of same trade (race condition guard)
+    if (this.closingTrades.has(filledOrder.tradeId)) {
+      this.logger.debug(`Trade ${filledOrder.tradeId} already being closed, skipping order handler`);
+      return;
+    }
+    this.closingTrades.add(filledOrder.tradeId);
+
+    try {
     const trade = await this.tradeRepo.findOne({
       where: { id: filledOrder.tradeId },
     });
@@ -542,6 +562,9 @@ export class ExecutionService {
     this.logger.log(
       `Trade closed: ${trade.id} ${trade.status} PnL=${trade.realizedPnl}`,
     );
+    } finally {
+      this.closingTrades.delete(filledOrder.tradeId);
+    }
   }
 
   private async updateDailyPnl(pnl: number): Promise<void> {

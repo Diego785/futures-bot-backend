@@ -11,6 +11,10 @@ export interface IndicatorFeatures {
   atr14: number;
   atrPercent: number;
   priceChange1h: number; // cumulative % change over last 12 candles (1h on 5m TF)
+  bbUpper: number;       // Bollinger Band upper (SMA20 + 2*stdDev)
+  bbMiddle: number;      // Bollinger Band middle (SMA20)
+  bbLower: number;       // Bollinger Band lower (SMA20 - 2*stdDev)
+  bbWidth: number;       // Relative width: (upper - lower) / middle
   recentCandles: Array<{
     o: number;
     h: number;
@@ -120,6 +124,32 @@ export class IndicatorsService {
     return atr;
   }
 
+  /**
+   * Bollinger Bands: SMA(period) ± multiplier * stdDev
+   */
+  calculateBollingerBands(
+    candles: Candle[],
+    period = 20,
+    multiplier = 2,
+  ): { upper: number; middle: number; lower: number } {
+    const closes = candles.slice(-period).map((c) => c.close);
+    if (closes.length < period) {
+      const last = candles[candles.length - 1]?.close ?? 0;
+      return { upper: last, middle: last, lower: last };
+    }
+
+    const sma = closes.reduce((a, b) => a + b, 0) / period;
+    const variance =
+      closes.reduce((sum, c) => sum + Math.pow(c - sma, 2), 0) / period;
+    const stdDev = Math.sqrt(variance);
+
+    return {
+      upper: sma + multiplier * stdDev,
+      middle: sma,
+      lower: sma - multiplier * stdDev,
+    };
+  }
+
   computeFeatures(candles: Candle[]): IndicatorFeatures {
     const ema9 = this.calculateEMA(candles, 9);
     const ema21 = this.calculateEMA(candles, 21);
@@ -147,6 +177,8 @@ export class IndicatorsService {
         ? ((latestClose - price12ago) / price12ago) * 100
         : 0;
 
+    const bb = this.calculateBollingerBands(candles);
+
     return {
       currentPrice: latestClose,
       ema9: currentEma9,
@@ -157,6 +189,10 @@ export class IndicatorsService {
       atr14: currentAtr,
       atrPercent: latestClose > 0 ? currentAtr / latestClose : 0,
       priceChange1h,
+      bbUpper: bb.upper,
+      bbMiddle: bb.middle,
+      bbLower: bb.lower,
+      bbWidth: bb.middle > 0 ? (bb.upper - bb.lower) / bb.middle : 0,
       recentCandles: candles.slice(-12).map((c) => ({
         o: c.open,
         h: c.high,
