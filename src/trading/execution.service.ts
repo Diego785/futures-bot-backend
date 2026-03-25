@@ -365,6 +365,25 @@ export class ExecutionService {
       `Order update: ${clientOrderId} status=${o.X} exec=${o.z} avg=${o.ap}`,
     );
 
+    // Sync trade entry price when ENTRY order fills with real avg price
+    if (
+      o.X === 'FILLED' &&
+      order.purpose === 'ENTRY' &&
+      order.avgPrice > 0 &&
+      order.tradeId
+    ) {
+      const trade = await this.tradeRepo.findOne({
+        where: { id: order.tradeId },
+      });
+      if (trade && Math.abs(Number(trade.entryPrice) - order.avgPrice) > 0.01) {
+        this.logger.log(
+          `Entry price synced: ${order.avgPrice} (was ${trade.entryPrice})`,
+        );
+        trade.entryPrice = order.avgPrice;
+        await this.tradeRepo.save(trade);
+      }
+    }
+
     // Check if this is a SL or TP fill
     if (o.X === 'FILLED' && (order.purpose === 'STOP_LOSS' || order.purpose === 'TAKE_PROFIT')) {
       await this.handleBracketFill(order, event);
