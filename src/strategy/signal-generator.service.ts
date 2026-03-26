@@ -5,6 +5,7 @@ import { IndicatorsService, type IndicatorFeatures } from './indicators.service'
 import { SmcService, type SmcFeatures } from './smc.service';
 import { DeepSeekService, type DeltaChanges, type HtfContext } from './deepseek.service';
 import { HybridSignalService } from './hybrid-signal.service';
+import { PullbackObSignalService } from './pullback-ob-signal.service';
 import { PreFilterGateService, type GateResult } from './pre-filter-gate.service';
 import { SignalCacheService } from './signal-cache.service';
 import { deepSeekResponseSchema } from './schemas/deepseek-response.schema';
@@ -82,6 +83,7 @@ export class SignalGeneratorService {
     private readonly smc: SmcService,
     private readonly deepseek: DeepSeekService,
     private readonly hybrid: HybridSignalService,
+    private readonly pullbackOb: PullbackObSignalService,
     private readonly gate: PreFilterGateService,
     private readonly signalCache: SignalCacheService,
     private readonly config: ConfigService,
@@ -199,49 +201,65 @@ export class SignalGeneratorService {
 
     // 6. Pre-filter gate
     let gateResult: GateResult | null = null;
+    const strategyMode = this.config.get<string>('STRATEGY_MODE', 'hybrid');
+    const isPullbackMode = strategyMode === 'pullback-ob';
+
     if (this.gateEnabled) {
       gateResult = this.gate.evaluate(features, smcFeatures);
       this.logger.log(
         `Gate: score=${gateResult.score} passed=${gateResult.passed} reason="${gateResult.reason}"`,
       );
-      if (!gateResult.passed) {
+      // For pullback mode, skip gate blocking (state machine needs to run every cycle)
+      if (!isPullbackMode && !gateResult.passed) {
         this.cyclesSinceLastAction++;
         return { signal: null, gateResult, cacheHit: false, analysis: buildAnalysis() };
       }
     }
 
-    // 7. Signal cache check
-    const cacheCheck = this.signalCache.shouldSkip(features, smcFeatures);
-    if (cacheCheck.skip) {
-      this.logger.log(`Cache HIT: ${cacheCheck.reason}`);
-      if (this.gateEnabled) this.gate.recordCacheHit();
-      this.cyclesSinceLastAction++;
-      return { signal: null, gateResult, cacheHit: true, analysis: buildAnalysis() };
+    // 7. Signal cache check (skip for pullback mode — stateful strategy)
+    if (!isPullbackMode) {
+      const cacheCheck = this.signalCache.shouldSkip(features, smcFeatures);
+      if (cacheCheck.skip) {
+        this.logger.log(`Cache HIT: ${cacheCheck.reason}`);
+        if (this.gateEnabled) this.gate.recordCacheHit();
+        this.cyclesSinceLastAction++;
+        return { signal: null, gateResult, cacheHit: true, analysis: buildAnalysis() };
+      }
     }
 
-    // 8. Hybrid signal (rule-based, no AI)
+    // 8. Generate signal based on strategy mode
     if (this.gateEnabled) this.gate.recordApiCall();
 
-    // Get previous features for EMA crossover detection
-    let prevFeatures: IndicatorFeatures | null = null;
-    if (this.previousCycle) {
-      // Reconstruct minimal previous features for crossover detection
-      prevFeatures = {
-        ...features,
-        emaCrossover: this.previousCycle.structure === 'BULLISH' ? 'BULLISH' : 'BEARISH',
-      } as IndicatorFeatures;
+    let hybridResult: { action: string; confidence: number; reasoning: string; suggestedStopLoss: number | null; suggestedTakeProfit: number | null };
+
+    if (isPullbackMode) {
+      // Pullback-OB strategy (stateful, zone-based entries)
+      hybridResult = this.pullbackOb.generateSignal(
+        features,
+        smcFeatures,
+        symbol,
+        htfContext ? { emaCrossover: htfContext.emaCrossover, marketStructure: htfContext.marketStructure } : null,
+      );
+    } else {
+      // Legacy hybrid strategy (EMA crossover + breakout)
+      let prevFeatures: IndicatorFeatures | null = null;
+      if (this.previousCycle) {
+        prevFeatures = {
+          ...features,
+          emaCrossover: this.previousCycle.structure === 'BULLISH' ? 'BULLISH' : 'BEARISH',
+        } as IndicatorFeatures;
+      }
+      hybridResult = this.hybrid.generateSignal(
+        features,
+        smcFeatures,
+        symbol,
+        htfContext,
+        prevFeatures,
+      );
     }
 
-    const hybridResult = this.hybrid.generateSignal(
-      features,
-      smcFeatures,
-      symbol,
-      htfContext,
-      prevFeatures,
-    );
-
     this.logger.log(
-      `Hybrid: action=${hybridResult.action} confidence=${hybridResult.confidence.toFixed(2)} ` +
+      `${isPullbackMode ? 'Pullback' : 'Hybrid'}: action=${hybridResult.action} confidence=${hybridResult.confidence.toFixed(2)} ` +
         `reason="${hybridResult.reasoning.slice(0, 80)}..."`,
     );
 

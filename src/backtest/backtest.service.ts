@@ -57,6 +57,12 @@ export class BacktestService {
     let gatePassCount = 0;
     let cooldownUntil = 0;
 
+    // Pullback-OB state machine
+    let pbState: 'NO_SETUP' | 'WAITING_PULLBACK' = 'NO_SETUP';
+    let pbBias: 'LONG' | 'SHORT' = 'LONG';
+    let pbTargetZones: Array<{ type: 'OB' | 'FVG'; high: number; low: number }> = [];
+    let pbWaitStart = 0;
+
     for (let i = warmup; i < candles.length; i++) {
       const candle = candles[i];
 
@@ -300,6 +306,181 @@ export class BacktestService {
           if (shouldEnter) {
             if (direction === 'LONG' && features.priceChange1h < 0) shouldEnter = false;
             if (direction === 'SHORT' && features.priceChange1h > 0) shouldEnter = false;
+          }
+        }
+      }
+
+      if (config.mode === 'pullback-ob') {
+        // PULLBACK TO OB/FVG STRATEGY — State Machine
+        const htfSlice = this.getHtfSlice(htfCandles, candle.closeTime);
+
+        if (pbState === 'NO_SETUP') {
+          // Step 1: Detect HTF bias (1H EMA + structure must agree)
+          if (htfSlice.length >= 21) {
+            const htfFeatures = this.indicators.computeFeatures(htfSlice);
+            const htfSmc = this.smc.analyze(htfSlice);
+
+            let htfBias: 'LONG' | 'SHORT' | null = null;
+            if (htfSmc.marketStructure === 'BULLISH' && htfFeatures.emaCrossover === 'BULLISH') {
+              htfBias = 'LONG';
+            } else if (htfSmc.marketStructure === 'BEARISH' && htfFeatures.emaCrossover === 'BEARISH') {
+              htfBias = 'SHORT';
+            }
+
+            if (htfBias) {
+              // Step 2: 15m structure must not contradict
+              const contradicts =
+                (htfBias === 'LONG' && smcFeatures.marketStructure === 'BEARISH') ||
+                (htfBias === 'SHORT' && smcFeatures.marketStructure === 'BULLISH');
+
+              if (!contradicts) {
+                // Step 3: Find valid zones below (LONG) or above (SHORT) current price
+                const zones: Array<{ type: 'OB' | 'FVG'; high: number; low: number }> = [];
+                const price = features.currentPrice;
+
+                if (config.pullbackZoneType !== 'fvg') {
+                  for (const ob of smcFeatures.activeOrderBlocks) {
+                    if (ob.mitigated) continue;
+                    if (htfBias === 'LONG' && ob.type === 'BULLISH') {
+                      const dist = ((price - ob.high) / price) * 100;
+                      if (dist > config.pullbackMinDistance && dist < config.pullbackMaxDistance) {
+                        zones.push({ type: 'OB', high: ob.high, low: ob.low });
+                      }
+                    } else if (htfBias === 'SHORT' && ob.type === 'BEARISH') {
+                      const dist = ((ob.low - price) / price) * 100;
+                      if (dist > config.pullbackMinDistance && dist < config.pullbackMaxDistance) {
+                        zones.push({ type: 'OB', high: ob.high, low: ob.low });
+                      }
+                    }
+                  }
+                }
+
+                if (config.pullbackZoneType !== 'ob') {
+                  for (const fvg of smcFeatures.activeFairValueGaps) {
+                    if (fvg.filled) continue;
+                    if (htfBias === 'LONG' && fvg.type === 'BULLISH') {
+                      const dist = ((price - fvg.high) / price) * 100;
+                      if (dist > config.pullbackMinDistance && dist < config.pullbackMaxDistance) {
+                        zones.push({ type: 'FVG', high: fvg.high, low: fvg.low });
+                      }
+                    } else if (htfBias === 'SHORT' && fvg.type === 'BEARISH') {
+                      const dist = ((fvg.low - price) / price) * 100;
+                      if (dist > config.pullbackMinDistance && dist < config.pullbackMaxDistance) {
+                        zones.push({ type: 'FVG', high: fvg.high, low: fvg.low });
+                      }
+                    }
+                  }
+                }
+
+                if (zones.length > 0) {
+                  // Sort by distance — closest first
+                  zones.sort((a, b) => {
+                    const distA = htfBias === 'LONG'
+                      ? price - a.high
+                      : a.low - price;
+                    const distB = htfBias === 'LONG'
+                      ? price - b.high
+                      : b.low - price;
+                    return distA - distB;
+                  });
+
+                  pbState = 'WAITING_PULLBACK';
+                  pbBias = htfBias;
+                  pbTargetZones = zones;
+                  pbWaitStart = i;
+                }
+              }
+            }
+          }
+        }
+
+        if (pbState === 'WAITING_PULLBACK') {
+          // Check invalidation FIRST
+
+          // 1. Timeout
+          if (i - pbWaitStart > config.pullbackMaxWaitCandles) {
+            pbState = 'NO_SETUP';
+          }
+          // 2. CHoCH against bias on 15m
+          else if (
+            smcFeatures.lastStructureBreak &&
+            smcFeatures.lastStructureBreak.type === 'CHoCH' &&
+            ((pbBias === 'LONG' && smcFeatures.lastStructureBreak.direction === 'BEARISH') ||
+             (pbBias === 'SHORT' && smcFeatures.lastStructureBreak.direction === 'BULLISH'))
+          ) {
+            pbState = 'NO_SETUP';
+          }
+          // 3. HTF bias flipped
+          else {
+            const htfF = htfSlice.length >= 21 ? this.indicators.computeFeatures(htfSlice) : null;
+            const htfS = htfSlice.length >= 21 ? this.smc.analyze(htfSlice) : null;
+            if (htfF && htfS) {
+              const stillBullish = htfS.marketStructure === 'BULLISH' && htfF.emaCrossover === 'BULLISH';
+              const stillBearish = htfS.marketStructure === 'BEARISH' && htfF.emaCrossover === 'BEARISH';
+              if ((pbBias === 'LONG' && !stillBullish) || (pbBias === 'SHORT' && !stillBearish)) {
+                pbState = 'NO_SETUP';
+              }
+            }
+          }
+
+          // 4. Remove mitigated zones
+          if (pbState === 'WAITING_PULLBACK') {
+            pbTargetZones = pbTargetZones.filter((zone) => {
+              if (pbBias === 'LONG') return candle.close >= zone.low; // not blown through
+              return candle.close <= zone.high;
+            });
+            if (pbTargetZones.length === 0) pbState = 'NO_SETUP';
+          }
+
+          // Check entry trigger (with additional filters)
+          if (pbState === 'WAITING_PULLBACK') {
+            // Filter: EMA slope — don't enter against strong downward/upward momentum
+            const slopeOk =
+              (pbBias === 'LONG' && features.emaSlope !== 'FALLING') ||
+              (pbBias === 'SHORT' && features.emaSlope !== 'RISING');
+
+            if (slopeOk) {
+            for (const zone of pbTargetZones) {
+              let entryPrice: number;
+              let sl: number;
+
+              if (pbBias === 'LONG') {
+                // Price must have been above zone at candle open (not gap-through)
+                if (candle.open < zone.low) continue;
+                // Price must have reached the zone
+                if (candle.low > zone.high) continue;
+
+                entryPrice = zone.high;
+                const slRaw = zone.low - features.atr14 * config.pullbackSlBuffer;
+                const slDist = Math.max(entryPrice - slRaw, entryPrice * config.slMinPercent);
+                sl = entryPrice - slDist;
+
+                // Don't enter if SL would be hit same candle
+                if (candle.low <= sl) continue;
+
+                const tp = entryPrice + slDist * config.rrRatio;
+                simulator.openPosition('LONG', entryPrice, sl, tp, candle.closeTime, 0, 0.65);
+              } else {
+                if (candle.open > zone.high) continue;
+                if (candle.high < zone.low) continue;
+
+                entryPrice = zone.low;
+                const slRaw = zone.high + features.atr14 * config.pullbackSlBuffer;
+                const slDist = Math.max(slRaw - entryPrice, entryPrice * config.slMinPercent);
+                sl = entryPrice + slDist;
+
+                if (candle.high >= sl) continue;
+
+                const tp = entryPrice - slDist * config.rrRatio;
+                simulator.openPosition('SHORT', entryPrice, sl, tp, candle.closeTime, 0, 0.65);
+              }
+
+              // Position opened — reset state
+              pbState = 'NO_SETUP';
+              pbTargetZones = [];
+              break;
+            }
+            } // end pdOk && rsiOk && slopeOk
           }
         }
       }

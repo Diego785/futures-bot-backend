@@ -34,6 +34,11 @@ async function main() {
     rrRatio: parseFloat(getArg('rr', '1.5')),
     enableTrailing: getArg('no-trailing', '') === '' ? true : false,
     requireOBFVG: getArg('require-obfvg', '') !== '',
+    pullbackMaxWaitCandles: parseInt(getArg('max-wait', '12'), 10),
+    pullbackSlBuffer: parseFloat(getArg('ob-sl-buffer', '0.3')),
+    pullbackZoneType: getArg('zone-type', 'both') as 'ob' | 'fvg' | 'both',
+    pullbackMaxDistance: parseFloat(getArg('max-distance', '1.5')),
+    pullbackMinDistance: parseFloat(getArg('min-distance', '0.05')),
   };
 
   console.log('');

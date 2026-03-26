@@ -91,8 +91,10 @@ export class ExecutionService {
       await this.binanceRest.changeLeverage(symbol, maxLeverage);
 
       // 4. Enforce minimum SL distance (safety net)
-      const minSlDistanceAtr = signal.atr * 2;
-      const minSlDistancePct = signal.entryPrice * 0.005; // 0.5%
+      const slSafetyAtrMult = this.config.get<number>('SL_SAFETY_ATR_MULT', 2);
+      const slSafetyMinPct = this.config.get<number>('SL_SAFETY_MIN_PCT', 0.005);
+      const minSlDistanceAtr = signal.atr * slSafetyAtrMult;
+      const minSlDistancePct = signal.entryPrice * slSafetyMinPct;
       const minSlDistance = Math.max(minSlDistanceAtr, minSlDistancePct);
       const currentSlDistance = Math.abs(signal.entryPrice - signal.stopLoss);
 

@@ -8,6 +8,7 @@ import { SignalGeneratorService } from './signal-generator.service';
 import { PreFilterGateService } from './pre-filter-gate.service';
 import { SignalCacheService } from './signal-cache.service';
 import { HybridSignalService } from './hybrid-signal.service';
+import { PullbackObSignalService } from './pullback-ob-signal.service';
 
 @Module({
   imports: [HttpModule.register({ timeout: 30_000 }), BinanceModule],
@@ -19,6 +20,7 @@ import { HybridSignalService } from './hybrid-signal.service';
     PreFilterGateService,
     SignalCacheService,
     HybridSignalService,
+    PullbackObSignalService,
   ],
   exports: [
     SignalGeneratorService,

@@ -2,7 +2,7 @@ export interface BacktestConfig {
   symbol: string;
   timeframe: string;
   days: number;
-  mode: 'gate-only' | 'deepseek' | 'ema-crossover' | 'bollinger' | 'breakout' | 'hybrid';
+  mode: 'gate-only' | 'deepseek' | 'ema-crossover' | 'bollinger' | 'breakout' | 'hybrid' | 'pullback-ob';
   gateEntryThreshold: number;
   initialBalance: number;
   maxLeverage: number;
@@ -13,6 +13,12 @@ export interface BacktestConfig {
   rrRatio: number;           // default 1.5
   enableTrailing: boolean;   // default true
   requireOBFVG: boolean;     // default false
+  // Pullback-OB mode params
+  pullbackMaxWaitCandles: number;   // default 12 (3h on 15m)
+  pullbackSlBuffer: number;        // ATR multiplier for SL buffer beyond zone (default 0.3)
+  pullbackZoneType: 'ob' | 'fvg' | 'both';  // default 'both'
+  pullbackMaxDistance: number;     // max % distance to consider zone (default 1.5)
+  pullbackMinDistance: number;     // min % distance — skip if too close (default 0.05)
 }
 
 export interface BacktestTrade {
@@ -29,6 +35,8 @@ export interface BacktestTrade {
   gateScore: number;
   confidence?: number;
   trailingPhase: number;
+  zoneType?: 'OB' | 'FVG';
+  waitCandles?: number;
 }
 
 export interface BacktestReport {
