@@ -20,12 +20,14 @@ export class TradeSimulator {
   private commissionRate: number;
   private quantity: number;
   private enableTrailing: boolean;
+  private breakevenPct: number;
 
-  constructor(commissionRate: number, notional: number, enableTrailing = true) {
+  constructor(commissionRate: number, notional: number, enableTrailing = true, breakevenPct = 0.3) {
     this.commissionRate = commissionRate;
     this.quantity = 0;
     this.notional = notional;
     this.enableTrailing = enableTrailing;
+    this.breakevenPct = breakevenPct;
   }
 
   private notional: number;
@@ -84,7 +86,11 @@ export class TradeSimulator {
 
     let newSl = pos.stopLoss;
 
-    if (profitPct >= 0.8) {
+    const bePct = this.breakevenPct;
+    const trailPct2 = bePct + 0.2;  // Phase 2: BE + 0.2%
+    const trailPct3 = bePct + 0.5;  // Phase 3: BE + 0.5%
+
+    if (profitPct >= trailPct3) {
       const trailSl = isLong
         ? pos.entryPrice + priceDiff * 0.7
         : pos.entryPrice - priceDiff * 0.7;
@@ -92,7 +98,7 @@ export class TradeSimulator {
         newSl = trailSl;
         pos.trailingPhase = 3;
       }
-    } else if (profitPct >= 0.5) {
+    } else if (profitPct >= trailPct2) {
       const trailSl = isLong
         ? pos.entryPrice + priceDiff * 0.5
         : pos.entryPrice - priceDiff * 0.5;
@@ -100,7 +106,7 @@ export class TradeSimulator {
         newSl = trailSl;
         pos.trailingPhase = Math.max(pos.trailingPhase, 2);
       }
-    } else if (profitPct >= 0.3) {
+    } else if (profitPct >= bePct) {
       const buffer = pos.entryPrice * 0.0005;
       const beSl = isLong
         ? pos.entryPrice + buffer

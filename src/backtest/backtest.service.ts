@@ -51,6 +51,7 @@ export class BacktestService {
       config.commissionRate,
       config.initialBalance * config.maxLeverage * 0.9,
       config.enableTrailing,
+      config.trailingBreakevenPct ?? 0.3,
     );
 
     const warmup = 100;

@@ -19,6 +19,7 @@ export interface BacktestConfig {
   pullbackZoneType: 'ob' | 'fvg' | 'both';  // default 'both'
   pullbackMaxDistance: number;     // max % distance to consider zone (default 1.5)
   pullbackMinDistance: number;     // min % distance — skip if too close (default 0.05)
+  trailingBreakevenPct: number;   // profit % to trigger breakeven SL (default 0.3)
 }
 
 export interface BacktestTrade {

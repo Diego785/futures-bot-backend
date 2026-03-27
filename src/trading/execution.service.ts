@@ -736,19 +736,23 @@ export class ExecutionService {
               : entryPrice - markPrice;
             const profitPct = (priceDiff / entryPrice) * 100;
 
+            const bePct = this.config.get<number>('TRAILING_BE_PCT', 0.5);
+            const trailPct2 = bePct + 0.2;
+            const trailPct3 = bePct + 0.5;
+
             let newSl: number | null = null;
 
-            if (profitPct >= 0.8) {
+            if (profitPct >= trailPct3) {
               // Phase 3: Lock 70% of profit
               newSl = isLong
                 ? entryPrice + priceDiff * 0.7
                 : entryPrice - priceDiff * 0.7;
-            } else if (profitPct >= 0.5) {
+            } else if (profitPct >= trailPct2) {
               // Phase 2: Trail at 50% of profit
               newSl = isLong
                 ? entryPrice + priceDiff * 0.5
                 : entryPrice - priceDiff * 0.5;
-            } else if (profitPct >= 0.3) {
+            } else if (profitPct >= bePct) {
               // Phase 1: Breakeven + 0.05% buffer
               const buffer = entryPrice * 0.0005;
               newSl = isLong ? entryPrice + buffer : entryPrice - buffer;
@@ -810,6 +814,7 @@ export class ExecutionService {
                     status: 'NEW',
                     purpose: 'STOP_LOSS',
                     stopPrice: parseFloat(roundedSl),
+                    tradeId: trade.id,
                   });
                   await this.orderRepo.save(newSlOrder);
 

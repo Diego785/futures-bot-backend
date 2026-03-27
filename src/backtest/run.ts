@@ -39,6 +39,7 @@ async function main() {
     pullbackZoneType: getArg('zone-type', 'both') as 'ob' | 'fvg' | 'both',
     pullbackMaxDistance: parseFloat(getArg('max-distance', '1.5')),
     pullbackMinDistance: parseFloat(getArg('min-distance', '0.05')),
+    trailingBreakevenPct: parseFloat(getArg('be-pct', '0.3')),
   };
 
   console.log('');
