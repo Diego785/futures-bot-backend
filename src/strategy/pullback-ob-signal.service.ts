@@ -56,6 +56,12 @@ export class PullbackObSignalService {
     if (setup.state === 'IDLE') {
       if (!htfContext) return hold;
 
+      // Skip ranging/low-volatility markets
+      const atrPct = (features.atr14 / features.currentPrice) * 100;
+      if (atrPct < 0.25) {
+        return { ...hold, reasoning: `Volatilidad muy baja (ATR%=${atrPct.toFixed(2)}%). Esperando movimiento.` };
+      }
+
       const htfBias = this.determineHtfBias(htfContext);
       if (!htfBias) {
         return { ...hold, reasoning: 'Sin bias HTF claro (EMA y estructura no coinciden).' };
@@ -151,7 +157,7 @@ export class PullbackObSignalService {
           if (lastCandle.o < zone.low) continue; // gap through zone
           if (lastCandle.l > zone.high) continue; // didn't reach zone
 
-          const entryPrice = features.currentPrice;
+          const entryPrice = zone.high; // Enter at zone boundary, not current price
           const slRaw = zone.low - features.atr14 * this.SL_BUFFER_ATR;
           const minSlDist = entryPrice * 0.003;
           const slDist = Math.max(entryPrice - slRaw, minSlDist);
@@ -179,7 +185,7 @@ export class PullbackObSignalService {
           if (lastCandle.o > zone.high) continue;
           if (lastCandle.h < zone.low) continue;
 
-          const entryPrice = features.currentPrice;
+          const entryPrice = zone.low; // Enter at zone boundary, not current price
           const slRaw = zone.high + features.atr14 * this.SL_BUFFER_ATR;
           const minSlDist = entryPrice * 0.003;
           const slDist = Math.max(slRaw - entryPrice, minSlDist);
