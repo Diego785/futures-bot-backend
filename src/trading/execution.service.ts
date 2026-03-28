@@ -481,21 +481,29 @@ export class ExecutionService {
     const direction = trade.direction === 'LONG' ? 1 : -1;
     const pricePnl = (exitPrice - entryPrice) * qty * direction;
 
-    // Fetch actual commissions from user trades
+    // Fetch actual commissions and PnL from user trades
     let totalCommission = 0;
+    let binancePnl: number | null = null;
     try {
-      const fills = await this.binanceRest.getUserTrades(trade.symbol, 20);
-      const tradeOpenTime = new Date(trade.openedAt).getTime();
+      const fills = await this.binanceRest.getUserTrades(trade.symbol, 50);
+      // Include fills from 2 min before trade creation to catch entry fills
+      const tradeOpenTime = new Date(trade.openedAt).getTime() - 120_000;
       const relevantFills = fills.filter((f) => f.time >= tradeOpenTime);
       for (const f of relevantFills) {
         totalCommission += parseFloat(f.commission);
+        const fillPnl = parseFloat(f.realizedPnl);
+        if (fillPnl !== 0) {
+          binancePnl = (binancePnl ?? 0) + fillPnl;
+        }
       }
     } catch {
       // Estimate: 0.05% taker × notional × 2 sides
       totalCommission = qty * entryPrice * 0.001;
     }
 
-    const netPnl = pricePnl - totalCommission;
+    // Use Binance's realizedPnl if available (more accurate), otherwise fallback to manual calc
+    const grossPnl = binancePnl ?? pricePnl;
+    const netPnl = grossPnl - totalCommission;
 
     trade.exitPrice = exitPrice;
     trade.realizedPnl = netPnl;
@@ -568,20 +576,39 @@ export class ExecutionService {
       }
     }
 
-    // Update trade
-    trade.exitPrice = parseFloat(event.o.ap);
-    trade.realizedPnl = parseFloat(event.o.rp);
-    trade.commission = parseFloat(event.o.n || '0');
+    // Update trade — fetch full commissions from user trades API
+    const exitPrice = parseFloat(event.o.ap);
+    const grossPnl = parseFloat(event.o.rp);
+    let totalCommission = parseFloat(event.o.n || '0');
+
+    try {
+      const fills = await this.binanceRest.getUserTrades(trade.symbol, 50);
+      const tradeOpenTime = new Date(trade.openedAt).getTime() - 120_000;
+      const relevantFills = fills.filter((f) => f.time >= tradeOpenTime);
+      if (relevantFills.length > 0) {
+        totalCommission = 0;
+        for (const f of relevantFills) {
+          totalCommission += parseFloat(f.commission);
+        }
+      }
+    } catch {
+      // Keep single-fill commission as fallback
+    }
+
+    const netPnl = grossPnl - totalCommission;
+    trade.exitPrice = exitPrice;
+    trade.realizedPnl = netPnl;
+    trade.commission = totalCommission;
     trade.status =
       filledOrder.purpose === 'STOP_LOSS' ? 'CLOSED_SL' : 'CLOSED_TP';
     trade.closedAt = new Date();
     await this.tradeRepo.save(trade);
 
     // Update daily PnL
-    await this.updateDailyPnl(parseFloat(event.o.rp));
+    await this.updateDailyPnl(netPnl);
 
     this.logger.log(
-      `Trade closed: ${trade.id} ${trade.status} PnL=${trade.realizedPnl}`,
+      `Trade closed: ${trade.id} ${trade.status} PnL=${netPnl.toFixed(4)} (gross=${grossPnl.toFixed(4)}, comm=${totalCommission.toFixed(4)})`,
     );
     } finally {
       this.closingTrades.delete(filledOrder.tradeId);
