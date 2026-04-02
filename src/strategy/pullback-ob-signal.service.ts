@@ -18,6 +18,7 @@ export interface PullbackSignalResult {
   action: 'LONG' | 'SHORT' | 'HOLD';
   confidence: number;
   reasoning: string;
+  suggestedEntryPrice: number | null;
   suggestedStopLoss: number | null;
   suggestedTakeProfit: number | null;
 }
@@ -43,6 +44,7 @@ export class PullbackObSignalService {
       action: 'HOLD',
       confidence: 0.30,
       reasoning: 'Pullback-OB: sin setup.',
+      suggestedEntryPrice: null,
       suggestedStopLoss: null,
       suggestedTakeProfit: null,
     };
@@ -178,6 +180,7 @@ export class PullbackObSignalService {
               `Pullback LONG a ${zone.type} [${zone.low.toFixed(0)}-${zone.high.toFixed(0)}]. ` +
               `Slope: ${features.emaSlope}. ATR%: ${(features.atrPercent * 100).toFixed(2)}%. ` +
               `Waited ${setup.waitCycles} cycles.`,
+            suggestedEntryPrice: entryPrice,
             suggestedStopLoss: sl,
             suggestedTakeProfit: tp,
           };
@@ -206,6 +209,7 @@ export class PullbackObSignalService {
               `Pullback SHORT a ${zone.type} [${zone.low.toFixed(0)}-${zone.high.toFixed(0)}]. ` +
               `Slope: ${features.emaSlope}. ATR%: ${(features.atrPercent * 100).toFixed(2)}%. ` +
               `Waited ${setup.waitCycles} cycles.`,
+            suggestedEntryPrice: entryPrice,
             suggestedStopLoss: sl,
             suggestedTakeProfit: tp,
           };

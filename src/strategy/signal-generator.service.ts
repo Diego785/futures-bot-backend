@@ -230,7 +230,7 @@ export class SignalGeneratorService {
     // 8. Generate signal based on strategy mode
     if (this.gateEnabled) this.gate.recordApiCall();
 
-    let hybridResult: { action: string; confidence: number; reasoning: string; suggestedStopLoss: number | null; suggestedTakeProfit: number | null };
+    let hybridResult: { action: string; confidence: number; reasoning: string; suggestedEntryPrice?: number | null; suggestedStopLoss: number | null; suggestedTakeProfit: number | null };
 
     if (isPullbackMode) {
       // Pullback-OB strategy (stateful, zone-based entries)
@@ -298,7 +298,7 @@ export class SignalGeneratorService {
       action: hybridResult.action,
       confidence: hybridResult.confidence,
       reasoning: hybridResult.reasoning,
-      entryPrice: currentPrice,
+      entryPrice: hybridResult.suggestedEntryPrice ?? currentPrice,
       stopLoss,
       takeProfit,
       atr: features.atr14,
