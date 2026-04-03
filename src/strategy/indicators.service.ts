@@ -22,6 +22,8 @@ export interface IndicatorFeatures {
     c: number;
     v: number;
   }>;
+  volumeAvg20: number;  // 20-candle average volume
+  lastVolume: number;   // most recent candle volume
 }
 
 @Injectable()
@@ -200,6 +202,10 @@ export class IndicatorsService {
         c: c.close,
         v: c.volume,
       })),
+      volumeAvg20: candles.length >= 20
+        ? candles.slice(-20).reduce((sum, c) => sum + c.volume, 0) / 20
+        : 0,
+      lastVolume: candles[candles.length - 1].volume,
     };
   }
 }

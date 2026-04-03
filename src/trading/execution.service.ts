@@ -755,34 +755,35 @@ export class ExecutionService {
             }
           }
 
-          // === TRAILING SL — move SL to protect profits ===
+          // === TRAILING SL — TP-distance mode: protect profits based on % of TP distance ===
           const entryPrice = Number(trade.entryPrice);
           if (entryPrice > 0 && !slHit && !tpHit) {
             const priceDiff = isLong
               ? markPrice - entryPrice
               : entryPrice - markPrice;
-            const profitPct = (priceDiff / entryPrice) * 100;
-
-            const bePct = this.config.get<number>('TRAILING_BE_PCT', 0.5);
-            const trailPct2 = bePct + 0.2;
-            const trailPct3 = bePct + 0.5;
+            const tpPrice = Number(trade.takeProfit);
+            const tpDistance = Math.abs(tpPrice - entryPrice);
 
             let newSl: number | null = null;
 
-            if (profitPct >= trailPct3) {
-              // Phase 3: Lock 70% of profit
-              newSl = isLong
-                ? entryPrice + priceDiff * 0.7
-                : entryPrice - priceDiff * 0.7;
-            } else if (profitPct >= trailPct2) {
-              // Phase 2: Trail at 50% of profit
-              newSl = isLong
-                ? entryPrice + priceDiff * 0.5
-                : entryPrice - priceDiff * 0.5;
-            } else if (profitPct >= bePct) {
-              // Phase 1: Breakeven + 0.05% buffer
-              const buffer = entryPrice * 0.0005;
-              newSl = isLong ? entryPrice + buffer : entryPrice - buffer;
+            if (tpDistance > 0 && priceDiff > 0) {
+              const profitRatio = priceDiff / tpDistance;
+
+              if (profitRatio >= 0.75) {
+                // Phase 3: Lock 60% of profit
+                newSl = isLong
+                  ? entryPrice + priceDiff * 0.6
+                  : entryPrice - priceDiff * 0.6;
+              } else if (profitRatio >= 0.50) {
+                // Phase 2: Lock 40% of profit
+                newSl = isLong
+                  ? entryPrice + priceDiff * 0.4
+                  : entryPrice - priceDiff * 0.4;
+              } else if (profitRatio >= 0.25) {
+                // Phase 1: Breakeven + 0.05% buffer
+                const buffer = entryPrice * 0.0005;
+                newSl = isLong ? entryPrice + buffer : entryPrice - buffer;
+              }
             }
 
             if (newSl !== null) {
@@ -848,9 +849,10 @@ export class ExecutionService {
                   trade.stopLoss = parseFloat(roundedSl);
                   await this.tradeRepo.save(trade);
 
+                  const profitRatioLog = tpDistance > 0 ? (priceDiff / tpDistance * 100).toFixed(1) : '0';
                   this.logger.log(
                     `Trailing SL moved for ${trade.id}: ${currentSl.toFixed(2)} → ${roundedSl} ` +
-                      `(profit ${profitPct.toFixed(2)}%, phase ${profitPct >= 0.8 ? 3 : profitPct >= 0.5 ? 2 : 1})`,
+                      `(${profitRatioLog}% of TP, priceDiff=${priceDiff.toFixed(2)})`,
                   );
                 } catch (err) {
                   this.logger.error(

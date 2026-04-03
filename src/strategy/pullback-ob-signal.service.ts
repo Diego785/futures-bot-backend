@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import type { IndicatorFeatures } from './indicators.service';
 import type { SmcFeatures } from './smc.service';
 
@@ -10,7 +11,7 @@ export interface HtfBiasContext {
 interface PullbackSetup {
   state: 'IDLE' | 'WAITING_PULLBACK';
   bias: 'LONG' | 'SHORT';
-  targetZones: Array<{ type: 'OB' | 'FVG'; high: number; low: number }>;
+  targetZones: Array<{ type: 'OB' | 'FVG'; high: number; low: number; confluence?: boolean }>;
   waitCycles: number;
 }
 
@@ -33,6 +34,27 @@ export class PullbackObSignalService {
   private readonly RR_RATIO = 1.5;
   private readonly MAX_DISTANCE_PCT = 1.5;
   private readonly MIN_DISTANCE_PCT = 0.05;
+
+  // Confluence filters (configurable via .env)
+  private readonly filterPD: boolean;
+  private readonly filterRsi: boolean;
+  private readonly filterCandle: boolean;
+  private readonly filterConfluence: boolean;
+  private readonly filterVolume: boolean;
+  private readonly rsiLongMax: number;
+  private readonly rsiShortMin: number;
+  private readonly volumeMultiplier: number;
+
+  constructor(private readonly config: ConfigService) {
+    this.filterPD = this.config.get<string>('PULLBACK_FILTER_PD', 'false') === 'true';
+    this.filterRsi = this.config.get<string>('PULLBACK_FILTER_RSI', 'false') === 'true';
+    this.filterCandle = this.config.get<string>('PULLBACK_FILTER_CANDLE', 'false') === 'true';
+    this.filterConfluence = this.config.get<string>('PULLBACK_FILTER_CONFLUENCE', 'false') === 'true';
+    this.filterVolume = this.config.get<string>('PULLBACK_FILTER_VOLUME', 'false') === 'true';
+    this.rsiLongMax = this.config.get<number>('PULLBACK_RSI_LONG_MAX', 40);
+    this.rsiShortMin = this.config.get<number>('PULLBACK_RSI_SHORT_MIN', 60);
+    this.volumeMultiplier = this.config.get<number>('PULLBACK_VOL_MULT', 1.2);
+  }
 
   generateSignal(
     features: IndicatorFeatures,
@@ -69,6 +91,16 @@ export class PullbackObSignalService {
         return { ...hold, reasoning: 'Sin bias HTF claro (EMA y estructura no coinciden).' };
       }
 
+      // Filter 1: Premium/Discount bias alignment
+      if (this.filterPD) {
+        if (htfBias === 'LONG' && smc.premiumDiscount === 'PREMIUM') {
+          return { ...hold, reasoning: `Filtro P/D: no LONG en zona PREMIUM.` };
+        }
+        if (htfBias === 'SHORT' && smc.premiumDiscount === 'DISCOUNT') {
+          return { ...hold, reasoning: `Filtro P/D: no SHORT en zona DISCOUNT.` };
+        }
+      }
+
       // 15m structure must not contradict HTF
       const contradicts =
         (htfBias === 'LONG' && smc.marketStructure === 'BEARISH') ||
@@ -81,6 +113,11 @@ export class PullbackObSignalService {
       const zones = this.findValidZones(smc, features.currentPrice, htfBias);
       if (zones.length === 0) {
         return { ...hold, reasoning: `Bias ${htfBias} pero sin zonas OB/FVG válidas.` };
+      }
+
+      // Filter 4: Mark confluence zones (OB+FVG overlap)
+      if (this.filterConfluence) {
+        this.markConfluenceZones(zones);
       }
 
       // Setup detected
@@ -168,14 +205,20 @@ export class PullbackObSignalService {
 
           if (lastCandle.l <= sl) continue; // SL hit in same candle
 
+          // Confluence entry filters
+          if (this.filterRsi && features.rsi14 > this.rsiLongMax) continue;
+          if (this.filterCandle && !this.hasCandleConfirmation(features.recentCandles, 'LONG')) continue;
+          if (this.filterVolume && features.volumeAvg20 > 0 && features.lastVolume < features.volumeAvg20 * this.volumeMultiplier) continue;
+          if (this.filterConfluence && zone.confluence !== true) continue;
+
           this.resetSetup(symbol);
           this.logger.log(
-            `ENTRY LONG at ${zone.type} [${zone.low.toFixed(0)}-${zone.high.toFixed(0)}] after ${setup.waitCycles} cycles`,
+            `ENTRY LONG at ${zone.type}${zone.confluence ? '+CONFLUENCE' : ''} [${zone.low.toFixed(0)}-${zone.high.toFixed(0)}] after ${setup.waitCycles} cycles`,
           );
 
           return {
             action: 'LONG',
-            confidence: 0.70,
+            confidence: zone.confluence ? 0.80 : 0.70,
             reasoning:
               `Pullback LONG a ${zone.type} [${zone.low.toFixed(0)}-${zone.high.toFixed(0)}]. ` +
               `Slope: ${features.emaSlope}. ATR%: ${(features.atrPercent * 100).toFixed(2)}%. ` +
@@ -197,14 +240,20 @@ export class PullbackObSignalService {
 
           if (lastCandle.h >= sl) continue;
 
+          // Confluence entry filters
+          if (this.filterRsi && features.rsi14 < this.rsiShortMin) continue;
+          if (this.filterCandle && !this.hasCandleConfirmation(features.recentCandles, 'SHORT')) continue;
+          if (this.filterVolume && features.volumeAvg20 > 0 && features.lastVolume < features.volumeAvg20 * this.volumeMultiplier) continue;
+          if (this.filterConfluence && zone.confluence !== true) continue;
+
           this.resetSetup(symbol);
           this.logger.log(
-            `ENTRY SHORT at ${zone.type} [${zone.low.toFixed(0)}-${zone.high.toFixed(0)}] after ${setup.waitCycles} cycles`,
+            `ENTRY SHORT at ${zone.type}${zone.confluence ? '+CONFLUENCE' : ''} [${zone.low.toFixed(0)}-${zone.high.toFixed(0)}] after ${setup.waitCycles} cycles`,
           );
 
           return {
             action: 'SHORT',
-            confidence: 0.70,
+            confidence: zone.confluence ? 0.80 : 0.70,
             reasoning:
               `Pullback SHORT a ${zone.type} [${zone.low.toFixed(0)}-${zone.high.toFixed(0)}]. ` +
               `Slope: ${features.emaSlope}. ATR%: ${(features.atrPercent * 100).toFixed(2)}%. ` +
@@ -311,5 +360,44 @@ export class PullbackObSignalService {
       targetZones: [],
       waitCycles: 0,
     });
+  }
+
+  private hasCandleConfirmation(
+    recentCandles: Array<{ o: number; h: number; l: number; c: number; v: number }>,
+    bias: 'LONG' | 'SHORT',
+  ): boolean {
+    if (recentCandles.length < 2) return false;
+    const curr = recentCandles[recentCandles.length - 1];
+    const prev = recentCandles[recentCandles.length - 2];
+    const body = Math.abs(curr.c - curr.o);
+    const fullRange = curr.h - curr.l;
+    if (fullRange === 0) return false;
+
+    if (bias === 'LONG') {
+      const lowerWick = Math.min(curr.o, curr.c) - curr.l;
+      const isPinBar = lowerWick / fullRange > 0.6 && body / fullRange < 0.3;
+      const isEngulfing = curr.c > curr.o && prev.c < prev.o && curr.c > prev.o && curr.o < prev.c;
+      return isPinBar || isEngulfing;
+    } else {
+      const upperWick = curr.h - Math.max(curr.o, curr.c);
+      const isPinBar = upperWick / fullRange > 0.6 && body / fullRange < 0.3;
+      const isEngulfing = curr.c < curr.o && prev.c > prev.o && curr.o > prev.c && curr.c < prev.o;
+      return isPinBar || isEngulfing;
+    }
+  }
+
+  private markConfluenceZones(
+    zones: Array<{ type: 'OB' | 'FVG'; high: number; low: number; confluence?: boolean }>,
+  ): void {
+    for (let i = 0; i < zones.length; i++) {
+      for (let j = i + 1; j < zones.length; j++) {
+        if (zones[i].type === zones[j].type) continue;
+        const overlap = Math.min(zones[i].high, zones[j].high) - Math.max(zones[i].low, zones[j].low);
+        if (overlap > 0) {
+          zones[i].confluence = true;
+          zones[j].confluence = true;
+        }
+      }
+    }
   }
 }

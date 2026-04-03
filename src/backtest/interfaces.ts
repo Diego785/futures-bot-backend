@@ -20,6 +20,18 @@ export interface BacktestConfig {
   pullbackMaxDistance: number;     // max % distance to consider zone (default 1.5)
   pullbackMinDistance: number;     // min % distance — skip if too close (default 0.05)
   trailingBreakevenPct: number;   // profit % to trigger breakeven SL (default 0.3)
+  startDate?: string;            // YYYY-MM-DD — override days with date range
+  endDate?: string;              // YYYY-MM-DD — override days with date range
+  // Confluence filters (all default false)
+  filterPremiumDiscount: boolean;
+  filterRsiExtreme: boolean;
+  filterCandlePattern: boolean;
+  filterZoneConfluence: boolean;
+  filterVolumeConfirm: boolean;
+  rsiLongMax: number;            // default 40
+  rsiShortMin: number;           // default 60
+  volumeMultiplier: number;      // default 1.2
+  trailMode: 'entry-pct' | 'tp-distance';  // trailing SL mode
 }
 
 export interface BacktestTrade {

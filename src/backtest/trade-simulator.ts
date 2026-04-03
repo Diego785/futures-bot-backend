@@ -21,13 +21,15 @@ export class TradeSimulator {
   private quantity: number;
   private enableTrailing: boolean;
   private breakevenPct: number;
+  private trailMode: 'entry-pct' | 'tp-distance';
 
-  constructor(commissionRate: number, notional: number, enableTrailing = true, breakevenPct = 0.3) {
+  constructor(commissionRate: number, notional: number, enableTrailing = true, breakevenPct = 0.3, trailMode: 'entry-pct' | 'tp-distance' = 'entry-pct') {
     this.commissionRate = commissionRate;
     this.quantity = 0;
     this.notional = notional;
     this.enableTrailing = enableTrailing;
     this.breakevenPct = breakevenPct;
+    this.trailMode = trailMode;
   }
 
   private notional: number;
@@ -82,38 +84,75 @@ export class TradeSimulator {
     const priceDiff = isLong
       ? bestPrice - pos.entryPrice
       : pos.entryPrice - bestPrice;
-    const profitPct = (priceDiff / pos.entryPrice) * 100;
 
     let newSl = pos.stopLoss;
 
-    const bePct = this.breakevenPct;
-    const trailPct2 = bePct + 0.2;  // Phase 2: BE + 0.2%
-    const trailPct3 = bePct + 0.5;  // Phase 3: BE + 0.5%
+    if (this.trailMode === 'tp-distance') {
+      // TP-distance mode: trail based on % of distance to TP
+      const tpDistance = Math.abs(pos.takeProfit - pos.entryPrice);
+      if (tpDistance > 0 && priceDiff > 0) {
+        const profitRatio = priceDiff / tpDistance; // 0.0 to 1.0+
 
-    if (profitPct >= trailPct3) {
-      const trailSl = isLong
-        ? pos.entryPrice + priceDiff * 0.7
-        : pos.entryPrice - priceDiff * 0.7;
-      if (isLong ? trailSl > newSl : trailSl < newSl) {
-        newSl = trailSl;
-        pos.trailingPhase = 3;
+        if (profitRatio >= 0.75) {
+          const trailSl = isLong
+            ? pos.entryPrice + priceDiff * 0.6
+            : pos.entryPrice - priceDiff * 0.6;
+          if (isLong ? trailSl > newSl : trailSl < newSl) {
+            newSl = trailSl;
+            pos.trailingPhase = 3;
+          }
+        } else if (profitRatio >= 0.50) {
+          const trailSl = isLong
+            ? pos.entryPrice + priceDiff * 0.4
+            : pos.entryPrice - priceDiff * 0.4;
+          if (isLong ? trailSl > newSl : trailSl < newSl) {
+            newSl = trailSl;
+            pos.trailingPhase = Math.max(pos.trailingPhase, 2);
+          }
+        } else if (profitRatio >= 0.25) {
+          // Breakeven: SL moves to entry + tiny buffer
+          const buffer = pos.entryPrice * 0.0005;
+          const beSl = isLong
+            ? pos.entryPrice + buffer
+            : pos.entryPrice - buffer;
+          if (isLong ? beSl > newSl : beSl < newSl) {
+            newSl = beSl;
+            pos.trailingPhase = Math.max(pos.trailingPhase, 1);
+          }
+        }
       }
-    } else if (profitPct >= trailPct2) {
-      const trailSl = isLong
-        ? pos.entryPrice + priceDiff * 0.5
-        : pos.entryPrice - priceDiff * 0.5;
-      if (isLong ? trailSl > newSl : trailSl < newSl) {
-        newSl = trailSl;
-        pos.trailingPhase = Math.max(pos.trailingPhase, 2);
-      }
-    } else if (profitPct >= bePct) {
-      const buffer = pos.entryPrice * 0.0005;
-      const beSl = isLong
-        ? pos.entryPrice + buffer
-        : pos.entryPrice - buffer;
-      if (isLong ? beSl > newSl : beSl < newSl) {
-        newSl = beSl;
-        pos.trailingPhase = Math.max(pos.trailingPhase, 1);
+    } else {
+      // Entry-pct mode (original): trail based on % of entry price
+      const profitPct = (priceDiff / pos.entryPrice) * 100;
+      const bePct = this.breakevenPct;
+      const trailPct2 = bePct + 0.2;
+      const trailPct3 = bePct + 0.5;
+
+      if (profitPct >= trailPct3) {
+        const trailSl = isLong
+          ? pos.entryPrice + priceDiff * 0.7
+          : pos.entryPrice - priceDiff * 0.7;
+        if (isLong ? trailSl > newSl : trailSl < newSl) {
+          newSl = trailSl;
+          pos.trailingPhase = 3;
+        }
+      } else if (profitPct >= trailPct2) {
+        const trailSl = isLong
+          ? pos.entryPrice + priceDiff * 0.5
+          : pos.entryPrice - priceDiff * 0.5;
+        if (isLong ? trailSl > newSl : trailSl < newSl) {
+          newSl = trailSl;
+          pos.trailingPhase = Math.max(pos.trailingPhase, 2);
+        }
+      } else if (profitPct >= bePct) {
+        const buffer = pos.entryPrice * 0.0005;
+        const beSl = isLong
+          ? pos.entryPrice + buffer
+          : pos.entryPrice - buffer;
+        if (isLong ? beSl > newSl : beSl < newSl) {
+          newSl = beSl;
+          pos.trailingPhase = Math.max(pos.trailingPhase, 1);
+        }
       }
     }
 

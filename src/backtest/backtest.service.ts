@@ -13,6 +13,30 @@ import { TradeSimulator } from './trade-simulator';
 import { generateReport, printReport } from './report-generator';
 import type { BacktestConfig, BacktestTrade, BacktestReport } from './interfaces';
 
+function hasCandleConfirm(
+  recentCandles: Array<{ o: number; h: number; l: number; c: number; v: number }>,
+  bias: 'LONG' | 'SHORT',
+): boolean {
+  if (recentCandles.length < 2) return false;
+  const curr = recentCandles[recentCandles.length - 1];
+  const prev = recentCandles[recentCandles.length - 2];
+  const body = Math.abs(curr.c - curr.o);
+  const fullRange = curr.h - curr.l;
+  if (fullRange === 0) return false;
+
+  if (bias === 'LONG') {
+    const lowerWick = Math.min(curr.o, curr.c) - curr.l;
+    const isPinBar = lowerWick / fullRange > 0.6 && body / fullRange < 0.3;
+    const isEngulfing = curr.c > curr.o && prev.c < prev.o && curr.c > prev.o && curr.o < prev.c;
+    return isPinBar || isEngulfing;
+  } else {
+    const upperWick = curr.h - Math.max(curr.o, curr.c);
+    const isPinBar = upperWick / fullRange > 0.6 && body / fullRange < 0.3;
+    const isEngulfing = curr.c < curr.o && prev.c > prev.o && curr.o > prev.c && curr.c < prev.o;
+    return isPinBar || isEngulfing;
+  }
+}
+
 @Injectable()
 export class BacktestService {
   private readonly logger = new Logger(BacktestService.name);
@@ -34,6 +58,8 @@ export class BacktestService {
       config.symbol,
       config.timeframe,
       config.days,
+      config.startDate,
+      config.endDate,
     );
     this.logger.log(`Downloaded ${candles.length} candles`);
 
@@ -42,6 +68,8 @@ export class BacktestService {
       config.symbol,
       '1h',
       config.days,
+      config.startDate,
+      config.endDate,
     );
     this.logger.log(`Downloaded ${htfCandles.length} HTF (1H) candles`);
 
@@ -52,6 +80,7 @@ export class BacktestService {
       config.initialBalance * config.maxLeverage * 0.9,
       config.enableTrailing,
       config.trailingBreakevenPct ?? 0.3,
+      config.trailMode ?? 'entry-pct',
     );
 
     const warmup = 100;
@@ -328,6 +357,12 @@ export class BacktestService {
               htfBias = 'SHORT';
             }
 
+            // Filter P/D: skip if LONG in PREMIUM or SHORT in DISCOUNT
+            if (htfBias && config.filterPremiumDiscount) {
+              if (htfBias === 'LONG' && smcFeatures.premiumDiscount === 'PREMIUM') htfBias = null;
+              if (htfBias === 'SHORT' && smcFeatures.premiumDiscount === 'DISCOUNT') htfBias = null;
+            }
+
             if (htfBias) {
               // Step 2: 15m structure must not contradict
               const contradicts =
@@ -384,6 +419,20 @@ export class BacktestService {
                       : b.low - price;
                     return distA - distB;
                   });
+
+                  // Mark confluence zones (OB+FVG overlap)
+                  if (config.filterZoneConfluence) {
+                    for (let zi = 0; zi < zones.length; zi++) {
+                      for (let zj = zi + 1; zj < zones.length; zj++) {
+                        if (zones[zi].type === zones[zj].type) continue;
+                        const overlap = Math.min(zones[zi].high, zones[zj].high) - Math.max(zones[zi].low, zones[zj].low);
+                        if (overlap > 0) {
+                          (zones[zi] as any).confluence = true;
+                          (zones[zj] as any).confluence = true;
+                        }
+                      }
+                    }
+                  }
 
                   pbState = 'WAITING_PULLBACK';
                   pbBias = htfBias;
@@ -459,8 +508,14 @@ export class BacktestService {
                 // Don't enter if SL would be hit same candle
                 if (candle.low <= sl) continue;
 
+                // Confluence entry filters
+                if (config.filterRsiExtreme && features.rsi14 > config.rsiLongMax) continue;
+                if (config.filterCandlePattern && !hasCandleConfirm(features.recentCandles, 'LONG')) continue;
+                if (config.filterVolumeConfirm && features.volumeAvg20 > 0 && features.lastVolume < features.volumeAvg20 * config.volumeMultiplier) continue;
+                if (config.filterZoneConfluence && !(zone as any).confluence) continue;
+
                 const tp = entryPrice + slDist * config.rrRatio;
-                simulator.openPosition('LONG', entryPrice, sl, tp, candle.closeTime, 0, 0.65);
+                simulator.openPosition('LONG', entryPrice, sl, tp, candle.closeTime, 0, (zone as any).confluence ? 0.80 : 0.65);
               } else {
                 if (candle.open > zone.high) continue;
                 if (candle.high < zone.low) continue;
@@ -472,8 +527,14 @@ export class BacktestService {
 
                 if (candle.high >= sl) continue;
 
+                // Confluence entry filters
+                if (config.filterRsiExtreme && features.rsi14 < config.rsiShortMin) continue;
+                if (config.filterCandlePattern && !hasCandleConfirm(features.recentCandles, 'SHORT')) continue;
+                if (config.filterVolumeConfirm && features.volumeAvg20 > 0 && features.lastVolume < features.volumeAvg20 * config.volumeMultiplier) continue;
+                if (config.filterZoneConfluence && !(zone as any).confluence) continue;
+
                 const tp = entryPrice - slDist * config.rrRatio;
-                simulator.openPosition('SHORT', entryPrice, sl, tp, candle.closeTime, 0, 0.65);
+                simulator.openPosition('SHORT', entryPrice, sl, tp, candle.closeTime, 0, (zone as any).confluence ? 0.80 : 0.65);
               }
 
               // Position opened — reset state
@@ -546,6 +607,8 @@ export class BacktestService {
     symbol: string,
     interval: string,
     days: number,
+    startDate?: string,
+    endDate?: string,
   ): Promise<Candle[]> {
     const intervalMs: Record<string, number> = {
       '1m': 60_000,
@@ -555,9 +618,21 @@ export class BacktestService {
     };
 
     const ms = intervalMs[interval] || 900_000;
-    const totalCandles = Math.ceil((days * 24 * 60 * 60 * 1000) / ms);
+
+    // Use date range if provided, otherwise fallback to days
+    let endTimeMs = Date.now();
+    let totalCandles: number;
+
+    if (startDate && endDate) {
+      const startMs = new Date(startDate + 'T00:00:00Z').getTime();
+      endTimeMs = new Date(endDate + 'T23:59:59Z').getTime();
+      totalCandles = Math.ceil((endTimeMs - startMs) / ms);
+    } else {
+      totalCandles = Math.ceil((days * 24 * 60 * 60 * 1000) / ms);
+    }
+
     const allCandles: Candle[] = [];
-    let endTime = Date.now();
+    let endTime = endTimeMs;
 
     while (allCandles.length < totalCandles) {
       const limit = Math.min(1500, totalCandles - allCandles.length);

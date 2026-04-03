@@ -9,6 +9,7 @@ async function main() {
     const arg = args.find((a) => a.startsWith(`--${name}=`));
     return arg ? arg.split('=')[1] : def;
   };
+  const hasFlag = (name: string): boolean => args.includes(`--${name}`);
 
   const timeframe = getArg('timeframe', '15m');
   const tfMinutes: Record<string, number> = {
@@ -40,13 +41,28 @@ async function main() {
     pullbackMaxDistance: parseFloat(getArg('max-distance', '1.5')),
     pullbackMinDistance: parseFloat(getArg('min-distance', '0.05')),
     trailingBreakevenPct: parseFloat(getArg('be-pct', '0.3')),
+    startDate: getArg('start-date', '') || undefined,
+    endDate: getArg('end-date', '') || undefined,
+    filterPremiumDiscount: hasFlag('filter-pd'),
+    filterRsiExtreme: hasFlag('filter-rsi'),
+    filterCandlePattern: hasFlag('filter-candle'),
+    filterZoneConfluence: hasFlag('filter-confluence'),
+    filterVolumeConfirm: hasFlag('filter-volume'),
+    rsiLongMax: parseFloat(getArg('rsi-long-max', '40')),
+    rsiShortMin: parseFloat(getArg('rsi-short-min', '60')),
+    volumeMultiplier: parseFloat(getArg('vol-mult', '1.2')),
+    trailMode: (getArg('trail-mode', 'entry-pct') as 'entry-pct' | 'tp-distance'),
   };
 
   console.log('');
   console.log('Starting backtest with config:');
   console.log(`  Symbol:     ${config.symbol}`);
   console.log(`  Timeframe:  ${config.timeframe}`);
-  console.log(`  Days:       ${config.days}`);
+  if (config.startDate && config.endDate) {
+    console.log(`  Period:     ${config.startDate} → ${config.endDate}`);
+  } else {
+    console.log(`  Days:       ${config.days}`);
+  }
   console.log(`  Mode:       ${config.mode}`);
   console.log(`  Gate Entry: >= ${config.gateEntryThreshold}`);
   console.log(`  Balance:    $${config.initialBalance}`);
