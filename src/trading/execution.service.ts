@@ -793,12 +793,15 @@ export class ExecutionService {
                 : newSl < currentSl;
 
               if (isBetter) {
-                // Cancel old SL algo order
-                const slOrder = trade.orders?.find(
-                  (o) =>
-                    o.purpose === 'STOP_LOSS' && o.status === 'NEW',
-                );
-                if (slOrder) {
+                // Cancel ALL existing SL algo orders from DB (not just in-memory)
+                const existingSlOrders = await this.orderRepo.find({
+                  where: {
+                    tradeId: trade.id,
+                    purpose: 'STOP_LOSS',
+                    status: 'NEW',
+                  },
+                });
+                for (const slOrder of existingSlOrders) {
                   try {
                     await this.binanceRest.cancelAlgoOrder(
                       slOrder.binanceOrderId,
@@ -806,7 +809,9 @@ export class ExecutionService {
                     slOrder.status = 'CANCELED';
                     await this.orderRepo.save(slOrder);
                   } catch {
-                    // best-effort
+                    // best-effort — order may already be canceled
+                    slOrder.status = 'CANCELED';
+                    await this.orderRepo.save(slOrder);
                   }
                 }
 
