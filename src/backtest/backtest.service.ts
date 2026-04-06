@@ -81,6 +81,7 @@ export class BacktestService {
       config.enableTrailing,
       config.trailingBreakevenPct ?? 0.3,
       config.trailMode ?? 'entry-pct',
+      config.trailFixed ?? 100,
     );
 
     const warmup = 100;

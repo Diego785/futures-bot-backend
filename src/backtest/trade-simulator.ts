@@ -21,15 +21,17 @@ export class TradeSimulator {
   private quantity: number;
   private enableTrailing: boolean;
   private breakevenPct: number;
-  private trailMode: 'entry-pct' | 'tp-distance';
+  private trailMode: 'entry-pct' | 'tp-distance' | 'fixed-amount';
+  private trailFixed: number;
 
-  constructor(commissionRate: number, notional: number, enableTrailing = true, breakevenPct = 0.3, trailMode: 'entry-pct' | 'tp-distance' = 'entry-pct') {
+  constructor(commissionRate: number, notional: number, enableTrailing = true, breakevenPct = 0.3, trailMode: 'entry-pct' | 'tp-distance' | 'fixed-amount' = 'entry-pct', trailFixed = 100) {
     this.commissionRate = commissionRate;
     this.quantity = 0;
     this.notional = notional;
     this.enableTrailing = enableTrailing;
     this.breakevenPct = breakevenPct;
     this.trailMode = trailMode;
+    this.trailFixed = trailFixed;
   }
 
   private notional: number;
@@ -119,6 +121,18 @@ export class TradeSimulator {
             newSl = beSl;
             pos.trailingPhase = Math.max(pos.trailingPhase, 1);
           }
+        }
+      }
+    } else if (this.trailMode === 'fixed-amount') {
+      // Fixed-amount mode: trail when priceDiff >= fixed threshold
+      if (priceDiff >= this.trailFixed) {
+        // SL trails behind price by trailFixed amount
+        const trailSl = isLong
+          ? bestPrice - this.trailFixed
+          : bestPrice + this.trailFixed;
+        if (isLong ? trailSl > newSl : trailSl < newSl) {
+          newSl = trailSl;
+          pos.trailingPhase = Math.max(pos.trailingPhase, 1);
         }
       }
     } else {

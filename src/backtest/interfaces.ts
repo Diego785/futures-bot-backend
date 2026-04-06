@@ -31,7 +31,8 @@ export interface BacktestConfig {
   rsiLongMax: number;            // default 40
   rsiShortMin: number;           // default 60
   volumeMultiplier: number;      // default 1.2
-  trailMode: 'entry-pct' | 'tp-distance';  // trailing SL mode
+  trailMode: 'entry-pct' | 'tp-distance' | 'fixed-amount';  // trailing SL mode
+  trailFixed: number;  // fixed price distance for fixed-amount mode (default 100)
 }
 
 export interface BacktestTrade {

@@ -145,6 +145,21 @@ export class BinanceRestService implements OnModuleInit {
     });
   }
 
+  async getIncome(
+    symbol: string,
+    startTime: number,
+    endTime?: number,
+    limit = 100,
+  ): Promise<Array<{ incomeType: string; income: string; asset: string; time: number }>> {
+    const params: Record<string, string> = {
+      symbol,
+      startTime: startTime.toString(),
+      limit: limit.toString(),
+    };
+    if (endTime) params.endTime = endTime.toString();
+    return this.signedRequest('GET', BINANCE_API.INCOME, params);
+  }
+
   async getPositionRisk(
     symbol?: string,
   ): Promise<BinancePositionRisk[]> {

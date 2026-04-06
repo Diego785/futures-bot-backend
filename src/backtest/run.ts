@@ -51,7 +51,8 @@ async function main() {
     rsiLongMax: parseFloat(getArg('rsi-long-max', '40')),
     rsiShortMin: parseFloat(getArg('rsi-short-min', '60')),
     volumeMultiplier: parseFloat(getArg('vol-mult', '1.2')),
-    trailMode: (getArg('trail-mode', 'entry-pct') as 'entry-pct' | 'tp-distance'),
+    trailMode: (getArg('trail-mode', 'entry-pct') as 'entry-pct' | 'tp-distance' | 'fixed-amount'),
+    trailFixed: parseFloat(getArg('trail-fixed', '100')),
   };
 
   console.log('');

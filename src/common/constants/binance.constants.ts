@@ -11,6 +11,7 @@ export const BINANCE_API = {
   LISTEN_KEY: '/fapi/v1/listenKey',
   CHANGE_LEVERAGE: '/fapi/v1/leverage',
   USER_TRADES: '/fapi/v1/userTrades',
+  INCOME: '/fapi/v1/income',
   SERVER_TIME: '/fapi/v1/time',
 } as const;
 

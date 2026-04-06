@@ -481,29 +481,39 @@ export class ExecutionService {
     const direction = trade.direction === 'LONG' ? 1 : -1;
     const pricePnl = (exitPrice - entryPrice) * qty * direction;
 
-    // Fetch actual commissions and PnL from user trades
+    // Fetch REAL PnL from Binance income history (includes commissions + funding fees)
+    let netPnl = pricePnl;
     let totalCommission = 0;
-    let binancePnl: number | null = null;
     try {
-      const fills = await this.binanceRest.getUserTrades(trade.symbol, 50);
-      // Include fills from 2 min before trade creation to catch entry fills
       const tradeOpenTime = new Date(trade.openedAt).getTime() - 120_000;
-      const relevantFills = fills.filter((f) => f.time >= tradeOpenTime);
-      for (const f of relevantFills) {
-        totalCommission += parseFloat(f.commission);
-        const fillPnl = parseFloat(f.realizedPnl);
-        if (fillPnl !== 0) {
-          binancePnl = (binancePnl ?? 0) + fillPnl;
-        }
+      const incomeEntries = await this.binanceRest.getIncome(
+        trade.symbol,
+        tradeOpenTime,
+        Date.now(),
+        100,
+      );
+      let grossPnl = 0;
+      let commissions = 0;
+      let funding = 0;
+      for (const entry of incomeEntries) {
+        const amount = parseFloat(entry.income);
+        if (entry.incomeType === 'REALIZED_PNL') grossPnl += amount;
+        else if (entry.incomeType === 'COMMISSION') commissions += amount; // negative
+        else if (entry.incomeType === 'FUNDING_FEE') funding += amount; // can be +/-
       }
-    } catch {
-      // Estimate: 0.05% taker × notional × 2 sides
+      // Binance returns commissions as negative numbers
+      totalCommission = Math.abs(commissions);
+      // Net PnL = gross + commissions (negative) + funding (can be +/-)
+      netPnl = grossPnl + commissions + funding;
+      this.logger.log(
+        `Income breakdown: gross=${grossPnl.toFixed(4)} comm=${commissions.toFixed(4)} fund=${funding.toFixed(4)} net=${netPnl.toFixed(4)}`,
+      );
+    } catch (err) {
+      this.logger.warn('Failed to fetch income history, using manual PnL', err);
+      // Fallback: estimate commission
       totalCommission = qty * entryPrice * 0.001;
+      netPnl = pricePnl - totalCommission;
     }
-
-    // Use Binance's realizedPnl if available (more accurate), otherwise fallback to manual calc
-    const grossPnl = binancePnl ?? pricePnl;
-    const netPnl = grossPnl - totalCommission;
 
     trade.exitPrice = exitPrice;
     trade.realizedPnl = netPnl;
@@ -578,24 +588,36 @@ export class ExecutionService {
 
     // Update trade — fetch full commissions from user trades API
     const exitPrice = parseFloat(event.o.ap);
-    const grossPnl = parseFloat(event.o.rp);
-    let totalCommission = parseFloat(event.o.n || '0');
+    let netPnl = parseFloat(event.o.rp) - Math.abs(parseFloat(event.o.n || '0'));
+    let totalCommission = Math.abs(parseFloat(event.o.n || '0'));
 
+    // Fetch REAL PnL from Binance income history (includes commissions + funding fees)
     try {
-      const fills = await this.binanceRest.getUserTrades(trade.symbol, 50);
       const tradeOpenTime = new Date(trade.openedAt).getTime() - 120_000;
-      const relevantFills = fills.filter((f) => f.time >= tradeOpenTime);
-      if (relevantFills.length > 0) {
-        totalCommission = 0;
-        for (const f of relevantFills) {
-          totalCommission += parseFloat(f.commission);
-        }
+      const incomeEntries = await this.binanceRest.getIncome(
+        trade.symbol,
+        tradeOpenTime,
+        Date.now(),
+        100,
+      );
+      let grossPnl = 0;
+      let commissions = 0;
+      let funding = 0;
+      for (const entry of incomeEntries) {
+        const amount = parseFloat(entry.income);
+        if (entry.incomeType === 'REALIZED_PNL') grossPnl += amount;
+        else if (entry.incomeType === 'COMMISSION') commissions += amount;
+        else if (entry.incomeType === 'FUNDING_FEE') funding += amount;
       }
+      totalCommission = Math.abs(commissions);
+      netPnl = grossPnl + commissions + funding;
+      this.logger.log(
+        `Income breakdown: gross=${grossPnl.toFixed(4)} comm=${commissions.toFixed(4)} fund=${funding.toFixed(4)} net=${netPnl.toFixed(4)}`,
+      );
     } catch {
-      // Keep single-fill commission as fallback
+      // Keep WS-based PnL as fallback
     }
 
-    const netPnl = grossPnl - totalCommission;
     trade.exitPrice = exitPrice;
     trade.realizedPnl = netPnl;
     trade.commission = totalCommission;
@@ -608,7 +630,7 @@ export class ExecutionService {
     await this.updateDailyPnl(netPnl);
 
     this.logger.log(
-      `Trade closed: ${trade.id} ${trade.status} PnL=${netPnl.toFixed(4)} (gross=${grossPnl.toFixed(4)}, comm=${totalCommission.toFixed(4)})`,
+      `Trade closed: ${trade.id} ${trade.status} PnL=${netPnl.toFixed(4)} (comm=${totalCommission.toFixed(4)})`,
     );
     } finally {
       this.closingTrades.delete(filledOrder.tradeId);
