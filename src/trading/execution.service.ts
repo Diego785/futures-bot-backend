@@ -218,6 +218,25 @@ export class ExecutionService {
       });
       await this.orderRepo.save(entryOrder);
 
+      // 5b. Recalculate SL/TP if actual fill price differs significantly from signal entry
+      const parsedFillAvg = parseFloat(entryResponse.avgPrice || '0');
+      const actualFillPrice = parsedFillAvg > 0 ? parsedFillAvg : signal.entryPrice;
+      const fillDiff = Math.abs(actualFillPrice - signal.entryPrice);
+      if (fillDiff > 50) {
+        const slDistance = Math.abs(signal.entryPrice - signal.stopLoss);
+        const isLong = signal.action === 'LONG';
+        signal.stopLoss = isLong
+          ? actualFillPrice - slDistance
+          : actualFillPrice + slDistance;
+        signal.takeProfit = isLong
+          ? actualFillPrice + slDistance * 1.5
+          : actualFillPrice - slDistance * 1.5;
+        signal.entryPrice = actualFillPrice;
+        this.logger.warn(
+          `Recalculated SL/TP for fill at ${actualFillPrice.toFixed(2)} (signal was ${(actualFillPrice - fillDiff * (isLong ? 1 : -1)).toFixed(2)}) → SL=${signal.stopLoss.toFixed(2)} TP=${signal.takeProfit.toFixed(2)}`,
+        );
+      }
+
       // 6. Place STOP_MARKET (stop loss) via Algo Order API
       const slPrice = roundToTickSize(signal.stopLoss, tickSize);
       const slClientId = generateClientOrderId(
@@ -266,32 +285,38 @@ export class ExecutionService {
         `Placing TAKE_PROFIT_MARKET (algo): ${closeSide} ${quantity} ${symbol} @ ${tpPrice}`,
       );
 
-      const tpResponse = await this.binanceRest.placeAlgoOrder({
-        symbol,
-        side: closeSide,
-        type: 'TAKE_PROFIT_MARKET',
-        triggerPrice: tpPrice,
-        quantity,
-        reduceOnly: 'true',
-        clientAlgoId: tpClientId,
-      });
+      let tpOrder: any = null;
+      try {
+        const tpResponse = await this.binanceRest.placeAlgoOrder({
+          symbol,
+          side: closeSide,
+          type: 'TAKE_PROFIT_MARKET',
+          triggerPrice: tpPrice,
+          quantity,
+          reduceOnly: 'true',
+          clientAlgoId: tpClientId,
+        });
 
-      const tpOrder = this.orderRepo.create({
-        clientOrderId: tpClientId,
-        binanceOrderId: tpResponse.algoId,
-        symbol,
-        side: closeSide,
-        type: 'TAKE_PROFIT_MARKET',
-        stopPrice: parseFloat(tpPrice),
-        quantity: parseFloat(quantity),
-        status: tpResponse.algoStatus,
-        purpose: 'TAKE_PROFIT',
-        signalId: signalEntity.id,
-      });
-      await this.orderRepo.save(tpOrder);
+        tpOrder = this.orderRepo.create({
+          clientOrderId: tpClientId,
+          binanceOrderId: tpResponse.algoId,
+          symbol,
+          side: closeSide,
+          type: 'TAKE_PROFIT_MARKET',
+          stopPrice: parseFloat(tpPrice),
+          quantity: parseFloat(quantity),
+          status: tpResponse.algoStatus,
+          purpose: 'TAKE_PROFIT',
+          signalId: signalEntity.id,
+        });
+        await this.orderRepo.save(tpOrder);
+      } catch (tpErr: any) {
+        this.logger.warn(
+          `TP placement failed (${tpErr?.response?.data?.msg || tpErr?.message}). Trade will rely on trailing SL and software TP.`,
+        );
+      }
 
-      // 8. Create Trade entity
-      // In demo mode, avgPrice may be "0" — fallback to signal's entryPrice
+      // 8. Create Trade entity — ALWAYS, even if TP failed
       const parsedAvg = parseFloat(entryResponse.avgPrice || '0');
       const entryPrice = parsedAvg > 0 ? parsedAvg : signal.entryPrice;
 
@@ -310,8 +335,12 @@ export class ExecutionService {
       // Link orders to trade
       entryOrder.tradeId = savedTrade.id;
       slOrder.tradeId = savedTrade.id;
-      tpOrder.tradeId = savedTrade.id;
-      await this.orderRepo.save([entryOrder, slOrder, tpOrder]);
+      const ordersToLink = [entryOrder, slOrder];
+      if (tpOrder) {
+        tpOrder.tradeId = savedTrade.id;
+        ordersToLink.push(tpOrder);
+      }
+      await this.orderRepo.save(ordersToLink);
 
       // 9. Record trade execution
       this.riskManager.recordTradeExecuted();
