@@ -777,44 +777,33 @@ export class ExecutionService {
             }
           }
 
-          // === TRAILING SL — TP-distance mode: protect profits based on % of TP distance ===
+          // === TRAILING SL — Fixed-amount mode: SL follows price at $TRAIL_FIXED distance ===
           const entryPrice = Number(trade.entryPrice);
           if (entryPrice > 0 && !slHit && !tpHit) {
             const priceDiff = isLong
               ? markPrice - entryPrice
               : entryPrice - markPrice;
-            const tpPrice = Number(trade.takeProfit);
-            const tpDistance = Math.abs(tpPrice - entryPrice);
+            const trailFixed = this.config.get<number>('TRAIL_FIXED', 50);
 
             let newSl: number | null = null;
 
-            if (tpDistance > 0 && priceDiff > 0) {
-              const profitRatio = priceDiff / tpDistance;
-
-              if (profitRatio >= 0.75) {
-                // Phase 3: Lock 60% of profit
-                newSl = isLong
-                  ? entryPrice + priceDiff * 0.6
-                  : entryPrice - priceDiff * 0.6;
-              } else if (profitRatio >= 0.50) {
-                // Phase 2: Lock 40% of profit
-                newSl = isLong
-                  ? entryPrice + priceDiff * 0.4
-                  : entryPrice - priceDiff * 0.4;
-              } else if (profitRatio >= 0.25) {
-                // Phase 1: Breakeven + 0.05% buffer
-                const buffer = entryPrice * 0.0005;
-                newSl = isLong ? entryPrice + buffer : entryPrice - buffer;
-              }
+            if (priceDiff >= trailFixed) {
+              // SL trails behind best price by trailFixed amount
+              newSl = isLong
+                ? markPrice - trailFixed
+                : markPrice + trailFixed;
             }
 
             if (newSl !== null) {
               const currentSl = Number(trade.stopLoss);
+              const slDiff = Math.abs(newSl - currentSl);
               const isBetter = isLong
                 ? newSl > currentSl
                 : newSl < currentSl;
+              // Only move SL if improvement is meaningful (> $5) to avoid spam orders
+              const isSignificant = slDiff > 5;
 
-              if (isBetter) {
+              if (isBetter && isSignificant) {
                 // Cancel ALL existing SL algo orders from DB (not just in-memory)
                 const existingSlOrders = await this.orderRepo.find({
                   where: {
@@ -876,10 +865,9 @@ export class ExecutionService {
                   trade.stopLoss = parseFloat(roundedSl);
                   await this.tradeRepo.save(trade);
 
-                  const profitRatioLog = tpDistance > 0 ? (priceDiff / tpDistance * 100).toFixed(1) : '0';
                   this.logger.log(
                     `Trailing SL moved for ${trade.id}: ${currentSl.toFixed(2)} → ${roundedSl} ` +
-                      `(${profitRatioLog}% of TP, priceDiff=${priceDiff.toFixed(2)})`,
+                      `(priceDiff=$${priceDiff.toFixed(2)}, trailFixed=$${trailFixed})`,
                   );
                 } catch (err) {
                   this.logger.error(
