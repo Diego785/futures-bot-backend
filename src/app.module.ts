@@ -23,9 +23,9 @@ import { DashboardModule } from './dashboard/dashboard.module';
     LoggerModule.forRoot({
       pinoHttp: {
         // Disable automatic HTTP request logging — too verbose, spams logs on dashboard polling
+        // (this only disables the per-request logs, NOT this.logger.log() calls in services)
         autoLogging: false,
-        // Keep only warnings and errors at HTTP level
-        level: 'warn',
+        // Keep default level 'info' so this.logger.log() calls still appear
         transport:
           process.env.NODE_ENV !== 'production'
             ? { target: 'pino-pretty', options: { colorize: true } }
