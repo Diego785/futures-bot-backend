@@ -22,6 +22,10 @@ import { DashboardModule } from './dashboard/dashboard.module';
 
     LoggerModule.forRoot({
       pinoHttp: {
+        // Disable automatic HTTP request logging — too verbose, spams logs on dashboard polling
+        autoLogging: false,
+        // Keep only warnings and errors at HTTP level
+        level: 'warn',
         transport:
           process.env.NODE_ENV !== 'production'
             ? { target: 'pino-pretty', options: { colorize: true } }
@@ -40,7 +44,8 @@ import { DashboardModule } from './dashboard/dashboard.module';
         database: config.get('DB_NAME'),
         autoLoadEntities: true,
         synchronize: config.get('NODE_ENV') === 'development',
-        logging: config.get('NODE_ENV') === 'development',
+        // Only log errors from TypeORM — disable SQL query logging that spams logs
+        logging: ['error', 'warn'],
       }),
     }),
 
