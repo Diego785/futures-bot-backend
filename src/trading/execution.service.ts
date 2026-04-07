@@ -25,6 +25,7 @@ import { FcmService } from '../notifications/fcm.service';
 export class ExecutionService {
   private readonly logger = new Logger(ExecutionService.name);
   private readonly closingTrades = new Set<string>();
+  private isReconciling = false;
 
   constructor(
     private readonly config: ConfigService,
@@ -426,12 +427,22 @@ export class ExecutionService {
     const clientAlgoId = o.caid;
 
     // Find order by clientAlgoId (stored as clientOrderId)
-    const order = await this.orderRepo.findOne({
+    let order = await this.orderRepo.findOne({
       where: { clientOrderId: clientAlgoId },
     });
 
+    // Fallback: lookup by binanceOrderId (algoId) if clientAlgoId lookup fails
+    if (!order && o.aid) {
+      order = await this.orderRepo.findOne({
+        where: { binanceOrderId: o.aid },
+      });
+      if (order) {
+        this.logger.log(`Algo order found by algoId fallback: ${o.aid} (caid=${clientAlgoId})`);
+      }
+    }
+
     if (!order) {
-      this.logger.debug(`Algo order not tracked: ${clientAlgoId}`);
+      this.logger.debug(`Algo order not tracked: ${clientAlgoId} (aid=${o.aid})`);
       return;
     }
 
@@ -692,6 +703,13 @@ export class ExecutionService {
   }
 
   async reconcilePositions(): Promise<void> {
+    if (this.isReconciling) {
+      this.logger.debug('reconcilePositions already running, skipping');
+      return;
+    }
+    this.isReconciling = true;
+
+    try {
     const openTrades = await this.tradeRepo.find({
       where: { status: 'OPEN' },
       relations: ['orders'],
@@ -813,10 +831,11 @@ export class ExecutionService {
               ? markPrice - entryPrice
               : entryPrice - markPrice;
             const trailFixed = this.config.get<number>('TRAIL_FIXED', 50);
+            const trailActivation = this.config.get<number>('TRAIL_ACTIVATION', trailFixed);
 
             let newSl: number | null = null;
 
-            if (priceDiff >= trailFixed) {
+            if (priceDiff >= trailActivation) {
               // SL trails behind best price by trailFixed amount
               newSl = isLong
                 ? markPrice - trailFixed
@@ -863,6 +882,7 @@ export class ExecutionService {
                 const roundedSl = roundToTickSize(newSl, tickSize);
 
                 try {
+                  const tslClientId = `FAB_TSL_${trade.id.substring(0, 8)}_${Date.now().toString(36)}`;
                   const newSlResponse =
                     await this.binanceRest.placeAlgoOrder({
                       symbol: trade.symbol,
@@ -873,10 +893,11 @@ export class ExecutionService {
                         parseFloat(activePos.positionAmt),
                       ).toString(),
                       reduceOnly: 'true',
+                      clientAlgoId: tslClientId,
                     });
 
                   const newSlOrder = this.orderRepo.create({
-                    clientOrderId: `FAB_TSL_${trade.id.substring(0, 8)}_${Date.now().toString(36)}`,
+                    clientOrderId: tslClientId,
                     binanceOrderId: newSlResponse.algoId,
                     symbol: trade.symbol,
                     side: closeSide,
@@ -896,7 +917,7 @@ export class ExecutionService {
 
                   this.logger.log(
                     `Trailing SL moved for ${trade.id}: ${currentSl.toFixed(2)} → ${roundedSl} ` +
-                      `(priceDiff=$${priceDiff.toFixed(2)}, trailFixed=$${trailFixed})`,
+                      `(priceDiff=$${priceDiff.toFixed(2)}, activation=$${trailActivation}, trailFixed=$${trailFixed})`,
                   );
                 } catch (err) {
                   this.logger.error(
@@ -1037,6 +1058,9 @@ export class ExecutionService {
           err,
         );
       }
+    }
+    } finally {
+      this.isReconciling = false;
     }
   }
 

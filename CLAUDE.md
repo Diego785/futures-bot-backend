@@ -19,8 +19,10 @@ DEFAULT_SYMBOL=BTCUSDT
 MAX_LEVERAGE=5
 MAX_POSITION_NOTIONAL_USDT=100
 MAX_DAILY_LOSS_USDT=20
-SL_SAFETY_ATR_MULT=0.5             # For pullback-ob (was 2 with hybrid)
-SL_SAFETY_MIN_PCT=0.003            # For pullback-ob (was 0.005)
+SL_SAFETY_ATR_MULT=0               # DISABLED for pullback-ob (zone provides natural SL)
+SL_SAFETY_MIN_PCT=0                # DISABLED for pullback-ob
+TRAIL_FIXED=50                     # Trailing SL follows price at $50 distance
+TRAILING_BE_PCT=0.5                # Legacy (unused with fixed-amount mode)
 GATE_MIN_SCORE=30
 ```
 
@@ -34,19 +36,25 @@ GATE_MIN_SCORE=30
    - `pullback-ob`: State machine waits for pullback to OB/FVG zone
    - `hybrid`: EMA Crossover + Breakout (legacy)
 7. If confidence >= 0.55 -> Risk Manager validates (6 checks)
-8. Execution: LIMIT entry + STOP_MARKET (SL) + TAKE_PROFIT_MARKET (TP)
-9. Trailing SL: reconcile cron (1 min) moves SL to breakeven/trail
+8. Execution: LIMIT entry (10s timeout) + MARKET fallback + STOP_MARKET (SL) + TAKE_PROFIT_MARKET (TP)
+9. If MARKET fill differs >$50 from signal entry -> recalculates SL/TP from actual fill
+10. Trailing SL: Fixed-$50 mode (TRAIL_FIXED env var). SL follows price at $50 distance. Min $5 movement.
+11. PnL captured via /fapi/v1/income API (commissions + funding fees)
 
 ## Pullback-OB Strategy (ACTIVE)
 State machine: IDLE -> WAITING_PULLBACK -> ENTRY
 1. **Bias**: HTF (1H) EMA crossover + market structure must both agree
-2. **Zone detection**: Unmitigated OBs + unfilled FVGs in pullback direction (0.05%-1.5%)
-3. **Wait**: Max 12 candles (3h on 15m) for pullback to zone
-4. **Entry filter**: EMA slope must NOT be against bias
-5. **Entry trigger**: Candle low/high touches zone -> enter at market
-6. **Invalidation**: CHoCH against, timeout, HTF flip, zone blown through
+2. **Low-vol filter**: ATR% > 0.25% required
+3. **Zone detection**: Unmitigated OBs + unfilled FVGs in pullback direction (0.05%-1.5%)
+4. **Wait**: Max 12 candles (3h on 15m) for pullback to zone
+5. **Entry filter**: EMA slope must NOT be against bias
+6. **Entry trigger**: Candle low/high touches zone -> enter at zone boundary price (suggestedEntryPrice)
+7. **Invalidation**: CHoCH against, timeout, HTF flip, zone blown through
 - SL: Below/above zone + 0.3x ATR buffer | TP: 1.5x SL distance
-- Backtested: 180d BTC 15m = +$131 PnL, 1.97 PF, 50.3% WR
+- SL safety net: DISABLED (SL_SAFETY_ATR_MULT=0)
+- Trailing: Fixed-$50 (PF 7.37 vs 1.54 without)
+- Backtested 3Y: 2,221 trades, 72% WR, +$1,694 PnL, PF 7.37
+- Multi-year: Profitable every year 2020-2025
 
 ## Key Files
 ### Strategy

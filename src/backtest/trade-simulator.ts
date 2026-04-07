@@ -23,8 +23,9 @@ export class TradeSimulator {
   private breakevenPct: number;
   private trailMode: 'entry-pct' | 'tp-distance' | 'fixed-amount';
   private trailFixed: number;
+  private trailActivation: number;
 
-  constructor(commissionRate: number, notional: number, enableTrailing = true, breakevenPct = 0.3, trailMode: 'entry-pct' | 'tp-distance' | 'fixed-amount' = 'entry-pct', trailFixed = 100) {
+  constructor(commissionRate: number, notional: number, enableTrailing = true, breakevenPct = 0.3, trailMode: 'entry-pct' | 'tp-distance' | 'fixed-amount' = 'entry-pct', trailFixed = 100, trailActivation?: number) {
     this.commissionRate = commissionRate;
     this.quantity = 0;
     this.notional = notional;
@@ -32,6 +33,7 @@ export class TradeSimulator {
     this.breakevenPct = breakevenPct;
     this.trailMode = trailMode;
     this.trailFixed = trailFixed;
+    this.trailActivation = trailActivation ?? trailFixed;
   }
 
   private notional: number;
@@ -124,8 +126,8 @@ export class TradeSimulator {
         }
       }
     } else if (this.trailMode === 'fixed-amount') {
-      // Fixed-amount mode: trail when priceDiff >= fixed threshold
-      if (priceDiff >= this.trailFixed) {
+      // Fixed-amount mode: trail when priceDiff >= activation threshold
+      if (priceDiff >= this.trailActivation) {
         // SL trails behind price by trailFixed amount
         const trailSl = isLong
           ? bestPrice - this.trailFixed

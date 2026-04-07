@@ -1,0 +1,52 @@
+{
+  "config": {
+    "symbol": "BTCUSDT",
+    "timeframe": "15m",
+    "days": 1095,
+    "mode": "pullback-ob",
+    "gateEntryThreshold": 60,
+    "initialBalance": 100,
+    "maxLeverage": 5,
+    "commissionRate": 0.0005,
+    "cooldownCandles": 2,
+    "slAtrMultiplier": 2,
+    "slMinPercent": 0.005,
+    "rrRatio": 1.5,
+    "enableTrailing": true,
+    "requireOBFVG": false,
+    "pullbackMaxWaitCandles": 12,
+    "pullbackSlBuffer": 0.3,
+    "pullbackZoneType": "both",
+    "pullbackMaxDistance": 1.5,
+    "pullbackMinDistance": 0.05,
+    "trailingBreakevenPct": 0.3,
+    "filterPremiumDiscount": false,
+    "filterRsiExtreme": false,
+    "filterCandlePattern": false,
+    "filterZoneConfluence": false,
+    "filterVolumeConfirm": false,
+    "rsiLongMax": 40,
+    "rsiShortMin": 60,
+    "volumeMultiplier": 1.2,
+    "trailMode": "fixed-amount",
+    "trailFixed": 100,
+    "trailActivation": 100
+  },
+  "summary": {
+    "totalCandles": 103400,
+    "totalTrades": 0,
+    "wins": 0,
+    "losses": 0,
+    "winRate": 0,
+    "totalPnlUsd": 0,
+    "avgWinUsd": 0,
+    "avgLossUsd": 0,
+    "profitFactor": 0,
+    "maxDrawdownUsd": 0,
+    "gatePassRate": 96.79883945841392
+  },
+  "equityCurve": [
+    100
+  ],
+  "trades": []
+}

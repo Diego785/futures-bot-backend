@@ -53,6 +53,7 @@ async function main() {
     volumeMultiplier: parseFloat(getArg('vol-mult', '1.2')),
     trailMode: (getArg('trail-mode', 'entry-pct') as 'entry-pct' | 'tp-distance' | 'fixed-amount'),
     trailFixed: parseFloat(getArg('trail-fixed', '100')),
+    trailActivation: parseFloat(getArg('trail-activation', getArg('trail-fixed', '100'))),
   };
 
   console.log('');

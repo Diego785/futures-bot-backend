@@ -82,6 +82,7 @@ export class BacktestService {
       config.trailingBreakevenPct ?? 0.3,
       config.trailMode ?? 'entry-pct',
       config.trailFixed ?? 100,
+      config.trailActivation ?? config.trailFixed ?? 100,
     );
 
     const warmup = 100;
@@ -662,8 +663,8 @@ export class BacktestService {
         break;
       }
 
-      // Small delay to avoid rate limits
-      await new Promise((r) => setTimeout(r, 200));
+      // Small delay to avoid rate limits (500ms to handle large date ranges)
+      await new Promise((r) => setTimeout(r, 500));
     }
 
     // Sort by time

@@ -33,6 +33,7 @@ export interface BacktestConfig {
   volumeMultiplier: number;      // default 1.2
   trailMode: 'entry-pct' | 'tp-distance' | 'fixed-amount';  // trailing SL mode
   trailFixed: number;  // fixed price distance for fixed-amount mode (default 100)
+  trailActivation: number;  // min price movement before trailing activates (default = trailFixed)
 }
 
 export interface BacktestTrade {
