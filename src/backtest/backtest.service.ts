@@ -346,8 +346,21 @@ export class BacktestService {
         // PULLBACK TO OB/FVG STRATEGY — State Machine
         const htfSlice = this.getHtfSlice(htfCandles, candle.closeTime);
 
+        // Optional low-volatility filter (disabled by default — set --min-atr-pct=0.15 to enable)
+        if (config.pullbackMinAtrPct > 0) {
+          const atrPct = (features.atr14 / features.currentPrice) * 100;
+          if (atrPct < config.pullbackMinAtrPct) {
+            // Skip this candle — too low volatility
+            if (simulator.hasPosition) {
+              const trade = simulator.processCandle(candle);
+              if (trade) trades.push(trade);
+            }
+            continue;
+          }
+        }
+
         if (pbState === 'NO_SETUP') {
-          // Step 1: Detect HTF bias (1H EMA + structure must agree)
+          // Step 1: Detect HTF bias
           if (htfSlice.length >= 21) {
             const htfFeatures = this.indicators.computeFeatures(htfSlice);
             const htfSmc = this.smc.analyze(htfSlice);
@@ -357,6 +370,14 @@ export class BacktestService {
               htfBias = 'LONG';
             } else if (htfSmc.marketStructure === 'BEARISH' && htfFeatures.emaCrossover === 'BEARISH') {
               htfBias = 'SHORT';
+            } else if (config.pullbackLooseHtf) {
+              // Loose mode: EMA directional while structure is RANGING → soft bias.
+              // EMAs react faster than swing highs/lows, so use EMA direction when structure lags.
+              if (htfFeatures.emaCrossover === 'BULLISH' && htfSmc.marketStructure === 'RANGING') {
+                htfBias = 'LONG';
+              } else if (htfFeatures.emaCrossover === 'BEARISH' && htfSmc.marketStructure === 'RANGING') {
+                htfBias = 'SHORT';
+              }
             }
 
             // Filter P/D: skip if LONG in PREMIUM or SHORT in DISCOUNT
@@ -467,8 +488,17 @@ export class BacktestService {
             const htfF = htfSlice.length >= 21 ? this.indicators.computeFeatures(htfSlice) : null;
             const htfS = htfSlice.length >= 21 ? this.smc.analyze(htfSlice) : null;
             if (htfF && htfS) {
-              const stillBullish = htfS.marketStructure === 'BULLISH' && htfF.emaCrossover === 'BULLISH';
-              const stillBearish = htfS.marketStructure === 'BEARISH' && htfF.emaCrossover === 'BEARISH';
+              let stillBullish = htfS.marketStructure === 'BULLISH' && htfF.emaCrossover === 'BULLISH';
+              let stillBearish = htfS.marketStructure === 'BEARISH' && htfF.emaCrossover === 'BEARISH';
+              if (config.pullbackLooseHtf) {
+                // In loose mode, keep bias if EMA still agrees with bias and structure is RANGING
+                if (!stillBullish && htfF.emaCrossover === 'BULLISH' && htfS.marketStructure === 'RANGING') {
+                  stillBullish = true;
+                }
+                if (!stillBearish && htfF.emaCrossover === 'BEARISH' && htfS.marketStructure === 'RANGING') {
+                  stillBearish = true;
+                }
+              }
               if ((pbBias === 'LONG' && !stillBullish) || (pbBias === 'SHORT' && !stillBearish)) {
                 pbState = 'NO_SETUP';
               }

@@ -34,6 +34,8 @@ export interface BacktestConfig {
   trailMode: 'entry-pct' | 'tp-distance' | 'fixed-amount';  // trailing SL mode
   trailFixed: number;  // fixed price distance for fixed-amount mode (default 100)
   trailActivation: number;  // min price movement before trailing activates (default = trailFixed)
+  pullbackLooseHtf: boolean;  // if true, allow HTF bias when EMA is directional but structure is RANGING (default false)
+  pullbackMinAtrPct: number;  // minimum ATR% to create setup, 0 = disabled (default 0)
 }
 
 export interface BacktestTrade {

@@ -82,7 +82,7 @@ export class PullbackObSignalService {
 
       // Skip ranging/low-volatility markets
       const atrPct = (features.atr14 / features.currentPrice) * 100;
-      if (atrPct < 0.25) {
+      if (atrPct < 0.15) {
         return { ...hold, reasoning: `Volatilidad muy baja (ATR%=${atrPct.toFixed(2)}%). Esperando movimiento.` };
       }
 
@@ -277,16 +277,21 @@ export class PullbackObSignalService {
   private determineHtfBias(
     htf: HtfBiasContext,
   ): 'LONG' | 'SHORT' | null {
-    if (
-      htf.marketStructure === 'BULLISH' &&
-      htf.emaCrossover === 'BULLISH'
-    )
-      return 'LONG';
-    if (
-      htf.marketStructure === 'BEARISH' &&
-      htf.emaCrossover === 'BEARISH'
-    )
-      return 'SHORT';
+    const ema = htf.emaCrossover;
+    const struct = htf.marketStructure;
+
+    // Strong bias: EMA cross and market structure agree.
+    if (ema === 'BULLISH' && struct === 'BULLISH') return 'LONG';
+    if (ema === 'BEARISH' && struct === 'BEARISH') return 'SHORT';
+
+    // Soft bias: EMA is directional while structure is still RANGING.
+    // EMAs react faster than swing highs/lows, so don't wait for structure
+    // to catch up when the EMA cross has already shifted.
+    // Backtest-validated 2026-04-10: loose+0.15 ATR gives PF 13.72 (1Y) vs 10.63 strict.
+    if (ema === 'BULLISH' && struct === 'RANGING') return 'LONG';
+    if (ema === 'BEARISH' && struct === 'RANGING') return 'SHORT';
+
+    // True contradiction (BULLISH vs BEARISH) → block to avoid counter-trend entries.
     return null;
   }
 

@@ -71,19 +71,47 @@ export class ExecutionService {
       const leveragedNotional = notional * maxLeverage;
       const stepSize = this.exchangeInfo.getStepSize(symbol);
       const tickSize = this.exchangeInfo.getTickSize(symbol);
+      const exchangeMinNotional = this.exchangeInfo.getMinNotional(symbol);
       const rawQty = leveragedNotional / signal.entryPrice;
-      const quantity = roundToStepSize(rawQty, stepSize);
+      let quantity = roundToStepSize(rawQty, stepSize);
+      let actualNotional = parseFloat(quantity) * signal.entryPrice;
 
-      const actualNotional = parseFloat(quantity) * signal.entryPrice;
+      // If the floored qty drops actual notional below the exchange minimum,
+      // bump it up one step — but only if the resulting margin still fits in balance.
+      // Without this, Math.floor can produce orders Binance will reject
+      // (e.g. 0.001 BTC @ $73k = $73 notional vs $100 min).
+      if (actualNotional < exchangeMinNotional) {
+        const step = parseFloat(stepSize);
+        const bumpedQty = parseFloat(quantity) + step;
+        const bumpedNotional = bumpedQty * signal.entryPrice;
+        const requiredMargin = bumpedNotional / maxLeverage;
+
+        if (requiredMargin <= available * 0.95) {
+          quantity = roundToStepSize(bumpedQty, stepSize);
+          actualNotional = parseFloat(quantity) * signal.entryPrice;
+          this.logger.warn(
+            `Qty bumped to meet min notional ${exchangeMinNotional}: ` +
+              `qty=${quantity} notional=${actualNotional.toFixed(2)} margin=${requiredMargin.toFixed(2)}`,
+          );
+        } else {
+          this.logger.error(
+            `Cannot meet min notional ${exchangeMinNotional} with balance ${available.toFixed(2)}: ` +
+              `would need margin ${requiredMargin.toFixed(2)}. Trade skipped.`,
+          );
+          return null;
+        }
+      }
+
       this.logger.log(
         `Position sizing: balance=${available.toFixed(2)} notional=${notional} ` +
           `leverage=${maxLeverage}x leveraged=${leveragedNotional.toFixed(2)} ` +
           `qty=${quantity} actualNotional=${actualNotional.toFixed(2)}`,
       );
 
-      if (parseFloat(quantity) <= 0 || actualNotional < 5) {
+      if (parseFloat(quantity) <= 0 || actualNotional < exchangeMinNotional) {
         this.logger.error(
-          `Position too small: qty=${quantity} notional=${actualNotional.toFixed(2)} (min 5 USDT)`,
+          `Position below exchange minimum: qty=${quantity} ` +
+            `notional=${actualNotional.toFixed(2)} (min ${exchangeMinNotional})`,
         );
         return null;
       }

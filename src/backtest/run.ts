@@ -54,6 +54,8 @@ async function main() {
     trailMode: (getArg('trail-mode', 'entry-pct') as 'entry-pct' | 'tp-distance' | 'fixed-amount'),
     trailFixed: parseFloat(getArg('trail-fixed', '100')),
     trailActivation: parseFloat(getArg('trail-activation', getArg('trail-fixed', '100'))),
+    pullbackLooseHtf: hasFlag('loose-htf'),
+    pullbackMinAtrPct: parseFloat(getArg('min-atr-pct', '0')),
   };
 
   console.log('');
