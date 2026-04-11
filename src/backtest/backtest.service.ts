@@ -94,6 +94,7 @@ export class BacktestService {
     let pbBias: 'LONG' | 'SHORT' = 'LONG';
     let pbTargetZones: Array<{ type: 'OB' | 'FVG'; high: number; low: number }> = [];
     let pbWaitStart = 0;
+    let pbCreatedAtBreakTime: number | null = null;
 
     for (let i = warmup; i < candles.length; i++) {
       const candle = candles[i];
@@ -461,6 +462,7 @@ export class BacktestService {
                   pbBias = htfBias;
                   pbTargetZones = zones;
                   pbWaitStart = i;
+                  pbCreatedAtBreakTime = smcFeatures.lastStructureBreak?.time ?? null;
                 }
               }
             }
@@ -475,11 +477,14 @@ export class BacktestService {
             pbState = 'NO_SETUP';
           }
           // 2. CHoCH against bias on 15m
+          // With --fresh-choch flag: only cancel if the CHoCH is NEWER than the one
+          // that existed at setup creation (avoids whipsaw on sticky lastStructureBreak).
           else if (
             smcFeatures.lastStructureBreak &&
             smcFeatures.lastStructureBreak.type === 'CHoCH' &&
             ((pbBias === 'LONG' && smcFeatures.lastStructureBreak.direction === 'BEARISH') ||
-             (pbBias === 'SHORT' && smcFeatures.lastStructureBreak.direction === 'BULLISH'))
+             (pbBias === 'SHORT' && smcFeatures.lastStructureBreak.direction === 'BULLISH')) &&
+            (!config.pullbackFreshChoch || smcFeatures.lastStructureBreak.time !== pbCreatedAtBreakTime)
           ) {
             pbState = 'NO_SETUP';
           }

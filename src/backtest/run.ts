@@ -56,6 +56,7 @@ async function main() {
     trailActivation: parseFloat(getArg('trail-activation', getArg('trail-fixed', '100'))),
     pullbackLooseHtf: hasFlag('loose-htf'),
     pullbackMinAtrPct: parseFloat(getArg('min-atr-pct', '0')),
+    pullbackFreshChoch: hasFlag('fresh-choch'),
   };
 
   console.log('');

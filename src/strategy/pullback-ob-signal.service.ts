@@ -13,6 +13,7 @@ interface PullbackSetup {
   bias: 'LONG' | 'SHORT';
   targetZones: Array<{ type: 'OB' | 'FVG'; high: number; low: number; confluence?: boolean }>;
   waitCycles: number;
+  createdAtBreakTime: number | null;
 }
 
 export interface PullbackSignalResult {
@@ -125,6 +126,7 @@ export class PullbackObSignalService {
       setup.bias = htfBias;
       setup.targetZones = zones;
       setup.waitCycles = 0;
+      setup.createdAtBreakTime = smc.lastStructureBreak?.time ?? null;
 
       this.logger.log(
         `Setup ${htfBias}: ${zones.length} zonas | ${zones.map((z) => `${z.type}[${z.low.toFixed(0)}-${z.high.toFixed(0)}]`).join(', ')}`,
@@ -146,10 +148,12 @@ export class PullbackObSignalService {
         return { ...hold, reasoning: `Setup ${setup.bias} expirado (${this.MAX_WAIT_CYCLES} ciclos).` };
       }
 
-      // Invalidation 2: CHoCH against bias on 15m
+      // Invalidation 2: CHoCH against bias on 15m — only if FRESH (newer than setup creation).
+      // Avoids whipsaw where a sticky lastStructureBreak cancels setups every candle.
       if (
         smc.lastStructureBreak &&
         smc.lastStructureBreak.type === 'CHoCH' &&
+        smc.lastStructureBreak.time !== setup.createdAtBreakTime &&
         ((setup.bias === 'LONG' &&
           smc.lastStructureBreak.direction === 'BEARISH') ||
           (setup.bias === 'SHORT' &&
@@ -353,6 +357,7 @@ export class PullbackObSignalService {
         bias: 'LONG',
         targetZones: [],
         waitCycles: 0,
+        createdAtBreakTime: null,
       });
     }
     return this.setups.get(symbol)!;
@@ -364,6 +369,7 @@ export class PullbackObSignalService {
       bias: 'LONG',
       targetZones: [],
       waitCycles: 0,
+      createdAtBreakTime: null,
     });
   }
 

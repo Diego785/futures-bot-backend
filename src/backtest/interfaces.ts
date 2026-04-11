@@ -36,6 +36,7 @@ export interface BacktestConfig {
   trailActivation: number;  // min price movement before trailing activates (default = trailFixed)
   pullbackLooseHtf: boolean;  // if true, allow HTF bias when EMA is directional but structure is RANGING (default false)
   pullbackMinAtrPct: number;  // minimum ATR% to create setup, 0 = disabled (default 0)
+  pullbackFreshChoch: boolean;  // if true, CHoCH invalidation only fires on structure breaks newer than setup creation (default false)
 }
 
 export interface BacktestTrade {
