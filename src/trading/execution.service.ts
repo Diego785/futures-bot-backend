@@ -612,7 +612,10 @@ export class ExecutionService {
     filledOrder: Order,
     event: OrderTradeUpdatePayload,
   ): Promise<void> {
-    if (!filledOrder.tradeId) return;
+    if (!filledOrder.tradeId) {
+      this.logger.warn(`handleBracketFill: order ${filledOrder.clientOrderId} has no tradeId`);
+      return;
+    }
 
     // Prevent concurrent close of same trade (race condition guard)
     if (this.closingTrades.has(filledOrder.tradeId)) {
@@ -626,7 +629,12 @@ export class ExecutionService {
       where: { id: filledOrder.tradeId },
     });
 
-    if (!trade || trade.status !== 'OPEN') return;
+    if (!trade || trade.status !== 'OPEN') {
+      this.logger.warn(
+        `handleBracketFill: trade ${filledOrder.tradeId} not found or not OPEN (status=${trade?.status})`,
+      );
+      return;
+    }
 
     // Cancel the opposite bracket order
     const oppositeType =
@@ -858,8 +866,8 @@ export class ExecutionService {
             const priceDiff = isLong
               ? markPrice - entryPrice
               : entryPrice - markPrice;
-            const trailFixed = this.config.get<number>('TRAIL_FIXED', 50);
-            const trailActivation = this.config.get<number>('TRAIL_ACTIVATION', trailFixed);
+            const trailFixed = Number(this.config.get('TRAIL_FIXED', 50));
+            const trailActivation = Number(this.config.get('TRAIL_ACTIVATION', trailFixed));
 
             let newSl: number | null = null;
 
@@ -1015,16 +1023,47 @@ export class ExecutionService {
             // Fallback: estimate PnL from entry price if we have mark price data
           }
 
-          // If no fills found, try to estimate from entry data
+          // If no fills found via userTrades, fallback to income API
           if (exitPrice === null && realizedPnl === 0) {
-            const entryPrice = Number(trade.entryPrice);
-            const qty = Number(trade.quantity);
-            if (entryPrice > 0 && qty > 0) {
-              // We don't know the exit price, but log it
-              this.logger.warn(
-                `No exit fills found for trade ${trade.id}. Entry=${entryPrice}, Qty=${qty}. ` +
-                  `Cannot determine exit price.`,
+            try {
+              const tradeOpenTime = new Date(trade.openedAt).getTime() - 120_000;
+              const incomeEntries = await this.binanceRest.getIncome(
+                trade.symbol,
+                tradeOpenTime,
+                Date.now(),
+                100,
               );
+              let grossPnl = 0;
+              let commissions = 0;
+              let funding = 0;
+              for (const entry of incomeEntries) {
+                const amount = parseFloat(entry.income);
+                if (entry.incomeType === 'REALIZED_PNL') grossPnl += amount;
+                else if (entry.incomeType === 'COMMISSION') commissions += amount;
+                else if (entry.incomeType === 'FUNDING_FEE') funding += amount;
+              }
+              if (grossPnl !== 0 || commissions !== 0) {
+                realizedPnl = grossPnl + commissions + funding;
+                commission = Math.abs(commissions);
+                this.logger.log(
+                  `Reconcile income fallback for ${trade.id}: gross=${grossPnl.toFixed(4)} ` +
+                    `comm=${commissions.toFixed(4)} fund=${funding.toFixed(4)} net=${realizedPnl.toFixed(4)}`,
+                );
+              }
+            } catch (incErr) {
+              this.logger.warn(`Failed to fetch income for reconcile of ${trade.id}`, incErr);
+            }
+
+            // If still no data, log the gap
+            if (exitPrice === null && realizedPnl === 0) {
+              const entryPrice = Number(trade.entryPrice);
+              const qty = Number(trade.quantity);
+              if (entryPrice > 0 && qty > 0) {
+                this.logger.warn(
+                  `No exit fills found for trade ${trade.id}. Entry=${entryPrice}, Qty=${qty}. ` +
+                    `Cannot determine exit price.`,
+                );
+              }
             }
           }
 
