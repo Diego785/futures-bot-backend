@@ -425,6 +425,23 @@ export class ExecutionService {
       `Order update: ${clientOrderId} status=${o.X} exec=${o.z} avg=${o.ap}`,
     );
 
+    // Link tradeId for trailing SL orders that lost their tradeId reference
+    if (!order.tradeId && clientOrderId.startsWith('FAB_TSL_')) {
+      const parts = clientOrderId.split('_');
+      if (parts.length >= 3) {
+        const partialTradeId = parts[2]; // first 8 chars of trade UUID
+        const openTrade = await this.tradeRepo.findOne({
+          where: { status: 'OPEN' },
+          order: { openedAt: 'DESC' },
+        });
+        if (openTrade && openTrade.id.startsWith(partialTradeId)) {
+          order.tradeId = openTrade.id;
+          await this.orderRepo.save(order);
+          this.logger.log(`Linked trailing SL order ${clientOrderId} to trade ${openTrade.id}`);
+        }
+      }
+    }
+
     // Sync trade entry price when ENTRY order fills with real avg price
     if (
       o.X === 'FILLED' &&
@@ -861,7 +878,22 @@ export class ExecutionService {
           }
 
           // === TRAILING SL — Fixed-amount mode: SL follows price at $TRAIL_FIXED distance ===
-          const entryPrice = Number(trade.entryPrice);
+          let entryPrice = Number(trade.entryPrice);
+          // Correct entry price from actual fill if zone boundary differs from real fill
+          if (entryPrice > 0) {
+            const entryOrder = await this.orderRepo.findOne({
+              where: { tradeId: trade.id, purpose: 'ENTRY' },
+              order: { executedQty: 'DESC' },
+            });
+            if (entryOrder && entryOrder.avgPrice > 0 && Math.abs(entryOrder.avgPrice - entryPrice) > 1) {
+              this.logger.log(
+                `Entry price corrected: ${entryPrice.toFixed(1)} → ${entryOrder.avgPrice.toFixed(1)} (real fill)`,
+              );
+              entryPrice = entryOrder.avgPrice;
+              trade.entryPrice = entryPrice;
+              await this.tradeRepo.save(trade);
+            }
+          }
           if (entryPrice > 0 && !slHit && !tpHit) {
             const priceDiff = isLong
               ? markPrice - entryPrice
@@ -946,7 +978,13 @@ export class ExecutionService {
                     stopPrice: parseFloat(roundedSl),
                     tradeId: trade.id,
                   });
-                  await this.orderRepo.save(newSlOrder);
+                  const savedSlOrder = await this.orderRepo.save(newSlOrder);
+                  // Verify tradeId was persisted (guard against ORM quirks)
+                  if (!savedSlOrder.tradeId) {
+                    savedSlOrder.tradeId = trade.id;
+                    await this.orderRepo.save(savedSlOrder);
+                    this.logger.warn(`TSL order tradeId re-saved for ${tslClientId}`);
+                  }
 
                   trade.stopLoss = parseFloat(roundedSl);
                   await this.tradeRepo.save(trade);
@@ -1025,6 +1063,8 @@ export class ExecutionService {
 
           // If no fills found via userTrades, fallback to income API
           if (exitPrice === null && realizedPnl === 0) {
+            // Wait 2s for Binance to process the trade before querying income
+            await new Promise((r) => setTimeout(r, 2000));
             try {
               const tradeOpenTime = new Date(trade.openedAt).getTime() - 120_000;
               const incomeEntries = await this.binanceRest.getIncome(
