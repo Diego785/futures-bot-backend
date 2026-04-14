@@ -86,7 +86,10 @@ export class ExecutionService {
         const bumpedNotional = bumpedQty * signal.entryPrice;
         const requiredMargin = bumpedNotional / maxLeverage;
 
-        if (requiredMargin <= available * 0.95) {
+        // Reserve $0.20 for entry+exit commissions (~0.05% × 2 × $150 notional ≈ $0.15).
+        // No percentage buffer — SL/MAX_DAILY_LOSS/isolated margin already handle risk.
+        const commissionReserve = 0.20;
+        if (requiredMargin + commissionReserve <= available) {
           quantity = roundToStepSize(bumpedQty, stepSize);
           actualNotional = parseFloat(quantity) * signal.entryPrice;
           this.logger.warn(
@@ -96,7 +99,7 @@ export class ExecutionService {
         } else {
           this.logger.error(
             `Cannot meet min notional ${exchangeMinNotional} with balance ${available.toFixed(2)}: ` +
-              `would need margin ${requiredMargin.toFixed(2)}. Trade skipped.`,
+              `would need margin ${requiredMargin.toFixed(2)} + $${commissionReserve} commission reserve. Trade skipped.`,
           );
           return null;
         }
