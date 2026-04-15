@@ -26,6 +26,8 @@ export class ExecutionService {
   private readonly logger = new Logger(ExecutionService.name);
   private readonly closingTrades = new Set<string>();
   private isReconciling = false;
+  // Per-trade MFE/MAE tracking for post-entry monitoring
+  private readonly tradeExcursions = new Map<string, { mfe: number; mae: number }>();
 
   constructor(
     private readonly config: ConfigService,
@@ -250,13 +252,40 @@ export class ExecutionService {
       });
       await this.orderRepo.save(entryOrder);
 
-      // 5b. Recalculate SL/TP if actual fill price differs significantly from signal entry
-      const parsedFillAvg = parseFloat(entryResponse.avgPrice || '0');
-      const actualFillPrice = parsedFillAvg > 0 ? parsedFillAvg : signal.entryPrice;
+      // 5b. Recalculate SL/TP if actual fill price differs significantly from signal entry.
+      // For MARKET fills, entryResponse.avgPrice is often 0 — query userTrades to get real fill.
+      let actualFillPrice = parseFloat(entryResponse.avgPrice || '0');
+      if (actualFillPrice <= 0) {
+        await new Promise((r) => setTimeout(r, 500));
+        try {
+          const userTrades = await this.binanceRest.getUserTrades(symbol, 10);
+          const orderFills = userTrades.filter((t) => t.orderId === entryResponse.orderId);
+          if (orderFills.length > 0) {
+            let totalQty = 0;
+            let totalNotional = 0;
+            for (const f of orderFills) {
+              const fQty = parseFloat(f.qty);
+              totalQty += fQty;
+              totalNotional += fQty * parseFloat(f.price);
+            }
+            if (totalQty > 0) {
+              actualFillPrice = totalNotional / totalQty;
+              this.logger.log(
+                `Fetched real fill price from userTrades: ${actualFillPrice.toFixed(2)} (${orderFills.length} fills)`,
+              );
+            }
+          }
+        } catch (err) {
+          this.logger.warn(`Could not fetch userTrades for fill price: ${err}`);
+        }
+      }
+      if (actualFillPrice <= 0) actualFillPrice = signal.entryPrice;
+
       const fillDiff = Math.abs(actualFillPrice - signal.entryPrice);
-      if (fillDiff > 50) {
+      if (fillDiff > 30) {
         const slDistance = Math.abs(signal.entryPrice - signal.stopLoss);
         const isLong = signal.action === 'LONG';
+        const originalEntry = signal.entryPrice;
         signal.stopLoss = isLong
           ? actualFillPrice - slDistance
           : actualFillPrice + slDistance;
@@ -265,7 +294,7 @@ export class ExecutionService {
           : actualFillPrice - slDistance * 1.5;
         signal.entryPrice = actualFillPrice;
         this.logger.warn(
-          `Recalculated SL/TP for fill at ${actualFillPrice.toFixed(2)} (signal was ${(actualFillPrice - fillDiff * (isLong ? 1 : -1)).toFixed(2)}) → SL=${signal.stopLoss.toFixed(2)} TP=${signal.takeProfit.toFixed(2)}`,
+          `Recalculated SL/TP for fill at ${actualFillPrice.toFixed(2)} (signal was ${originalEntry.toFixed(2)}, diff=$${fillDiff.toFixed(2)}) → SL=${signal.stopLoss.toFixed(2)} TP=${signal.takeProfit.toFixed(2)} (R:R 1.5 preserved)`,
         );
       }
 
@@ -897,6 +926,34 @@ export class ExecutionService {
               await this.tradeRepo.save(trade);
             }
           }
+          // === POST-ENTRY MONITOR — log MFE/MAE for first 15 min after trade open ===
+          if (entryPrice > 0 && !slHit && !tpHit) {
+            const minutesSinceOpen = (Date.now() - new Date(trade.openedAt).getTime()) / 60_000;
+            if (minutesSinceOpen <= 15) {
+              const instantPnl = isLong
+                ? (markPrice - entryPrice) * Number(trade.quantity)
+                : (entryPrice - markPrice) * Number(trade.quantity);
+              const excursion = this.tradeExcursions.get(trade.id) ?? { mfe: 0, mae: 0 };
+              if (instantPnl > excursion.mfe) excursion.mfe = instantPnl;
+              if (instantPnl < excursion.mae) excursion.mae = instantPnl;
+              this.tradeExcursions.set(trade.id, excursion);
+
+              const slDist = Math.abs(markPrice - Number(trade.stopLoss));
+              const tpDist = Math.abs(markPrice - Number(trade.takeProfit));
+              this.logger.log(
+                `POST-ENTRY MONITOR ${trade.id.substring(0, 8)} t=${minutesSinceOpen.toFixed(1)}min ` +
+                  `price=${markPrice.toFixed(1)} entry=${entryPrice.toFixed(1)} ` +
+                  `PnL=${instantPnl >= 0 ? '+' : ''}$${instantPnl.toFixed(4)} ` +
+                  `MFE=+$${excursion.mfe.toFixed(4)} MAE=-$${Math.abs(excursion.mae).toFixed(4)} ` +
+                  `SL_dist=$${slDist.toFixed(1)} TP_dist=$${tpDist.toFixed(1)}`,
+              );
+            } else if (this.tradeExcursions.has(trade.id)) {
+              // Cleanup after monitoring window
+              this.tradeExcursions.delete(trade.id);
+            }
+          }
+
+          // === TRAILING SL — Fixed-amount mode: SL follows price at $TRAIL_FIXED distance ===
           if (entryPrice > 0 && !slHit && !tpHit) {
             const priceDiff = isLong
               ? markPrice - entryPrice
