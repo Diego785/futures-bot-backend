@@ -25,8 +25,9 @@ export class TradeSimulator {
   private trailFixed: number;
   private trailActivation: number;
   private trailBreakevenAt: number;
+  private pessimisticTrail: boolean;
 
-  constructor(commissionRate: number, notional: number, enableTrailing = true, breakevenPct = 0.3, trailMode: 'entry-pct' | 'tp-distance' | 'fixed-amount' = 'entry-pct', trailFixed = 100, trailActivation?: number, trailBreakevenAt = 0) {
+  constructor(commissionRate: number, notional: number, enableTrailing = true, breakevenPct = 0.3, trailMode: 'entry-pct' | 'tp-distance' | 'fixed-amount' = 'entry-pct', trailFixed = 100, trailActivation?: number, trailBreakevenAt = 0, pessimisticTrail = false) {
     this.commissionRate = commissionRate;
     this.quantity = 0;
     this.notional = notional;
@@ -36,6 +37,7 @@ export class TradeSimulator {
     this.trailFixed = trailFixed;
     this.trailActivation = trailActivation ?? trailFixed;
     this.trailBreakevenAt = trailBreakevenAt;
+    this.pessimisticTrail = pessimisticTrail;
   }
 
   private notional: number;
@@ -76,6 +78,21 @@ export class TradeSimulator {
     const pos = this.position;
     const isLong = pos.direction === 'LONG';
 
+    // PESSIMISTIC MODE: check if worstPrice hits CURRENT SL BEFORE any trailing update.
+    // This assumes adverse intrabar order (low before high for LONG, high before low for SHORT).
+    if (this.pessimisticTrail) {
+      const worstPrice = isLong ? candle.low : candle.high;
+      const slHitBefore = isLong ? worstPrice <= pos.stopLoss : worstPrice >= pos.stopLoss;
+      if (slHitBefore) {
+        return this.closeTrade(pos.stopLoss, candle.closeTime, pos.trailingPhase > 0 ? 'TRAILING_SL' : 'SL');
+      }
+      // Also check TP hit with bestPrice (TP can still hit if price reached it)
+      const tpHitBefore = isLong ? candle.high >= pos.takeProfit : candle.low <= pos.takeProfit;
+      if (tpHitBefore) {
+        return this.closeTrade(pos.takeProfit, candle.closeTime, 'TP');
+      }
+    }
+
     const bestPrice = isLong ? candle.high : candle.low;
     const priceDiff = isLong
       ? bestPrice - pos.entryPrice
@@ -83,10 +100,9 @@ export class TradeSimulator {
 
     let newSl = pos.stopLoss;
 
-    // BREAKEVEN LOCK — independent of trailing. Activates when profit >= trailBreakevenAt.
-    // Moves SL to entry + tiny buffer (covers commissions) to protect gains.
+    // BREAKEVEN LOCK — independent of trailing.
     if (this.trailBreakevenAt > 0 && priceDiff >= this.trailBreakevenAt) {
-      const buffer = pos.entryPrice * 0.0005; // ~$37 at BTC $75k
+      const buffer = pos.entryPrice * 0.0005;
       const beSl = isLong
         ? pos.entryPrice + buffer
         : pos.entryPrice - buffer;

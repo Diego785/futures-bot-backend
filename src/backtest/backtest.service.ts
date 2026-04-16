@@ -73,6 +73,21 @@ export class BacktestService {
     );
     this.logger.log(`Downloaded ${htfCandles.length} HTF (1H) candles`);
 
+    // 2b. Download 1m candles for intrabar trailing resolution (if not pessimistic-only mode)
+    let intrabarCandles: Candle[] = [];
+    if (!config.pessimisticTrail) {
+      // Only download 1m if we're NOT using pessimistic shortcut (which doesn't need them)
+      // When pessimisticTrail is false and we have 1m data, use it for realistic trailing
+      intrabarCandles = await this.downloadKlines(
+        config.symbol,
+        '1m',
+        config.days,
+        config.startDate,
+        config.endDate,
+      );
+      this.logger.log(`Downloaded ${intrabarCandles.length} intrabar (1m) candles`);
+    }
+
     // 3. Run simulation
     const trades: BacktestTrade[] = [];
     const simulator = new TradeSimulator(
@@ -84,6 +99,7 @@ export class BacktestService {
       config.trailFixed ?? 100,
       config.trailActivation ?? config.trailFixed ?? 100,
       config.trailBreakevenAt ?? 0,
+      config.pessimisticTrail ?? false,
     );
 
     const warmup = 100;
@@ -102,12 +118,31 @@ export class BacktestService {
 
       // Check open position first
       if (simulator.hasPosition) {
-        const closed = simulator.processCandle(candle);
+        let closed: BacktestTrade | null = null;
+
+        if (intrabarCandles.length > 0) {
+          // Use 1m sub-candles for realistic intrabar trailing resolution.
+          // Process each 1m candle in chronological order within this 15m window.
+          const prevClose = i > 0 ? candles[i - 1].closeTime : candle.closeTime - 900_000;
+          const subCandles = this.getIntrabarSlice(intrabarCandles, prevClose, candle.closeTime);
+          for (const sub of subCandles) {
+            closed = simulator.processCandle(sub);
+            if (closed) break;
+          }
+          // If no sub-candles matched (data gap), fall back to 15m candle
+          if (!closed && subCandles.length === 0) {
+            closed = simulator.processCandle(candle);
+          }
+        } else {
+          // No intrabar data — use 15m candle directly (with pessimistic flag if set)
+          closed = simulator.processCandle(candle);
+        }
+
         if (closed) {
           trades.push(closed);
           cooldownUntil = i + config.cooldownCandles;
         }
-        continue; // Don't open new position while one is open
+        continue;
       }
 
       // Cooldown check
@@ -542,8 +577,8 @@ export class BacktestService {
                 const slRaw = zone.low - features.atr14 * config.pullbackSlBuffer;
                 const slDist = Math.max(signalEntry - slRaw, signalEntry * config.slMinPercent);
                 // Apply entry slippage (LONG pays MORE than signal when filled via MARKET)
-                entryPrice = signalEntry + (config.entrySlippage || 0);
-                sl = entryPrice - slDist; // preserve slDist, SL shifts with entry
+                entryPrice = signalEntry + (config.entrySlippage || 0) + (config.adverseSlip || 0);
+                sl = entryPrice - slDist;
 
                 // Don't enter if SL would be hit same candle
                 if (candle.low <= sl) continue;
@@ -564,8 +599,8 @@ export class BacktestService {
                 const slRaw = zone.high + features.atr14 * config.pullbackSlBuffer;
                 const slDist = Math.max(slRaw - signalEntry, signalEntry * config.slMinPercent);
                 // Apply entry slippage (SHORT receives LESS than signal when filled via MARKET)
-                entryPrice = signalEntry - (config.entrySlippage || 0);
-                sl = entryPrice + slDist; // preserve slDist, SL shifts with entry
+                entryPrice = signalEntry - (config.entrySlippage || 0) - (config.adverseSlip || 0);
+                sl = entryPrice + slDist;
 
                 if (candle.high >= sl) continue;
 
@@ -577,6 +612,14 @@ export class BacktestService {
 
                 const tp = entryPrice - slDist * config.rrRatio;
                 simulator.openPosition('SHORT', entryPrice, sl, tp, candle.closeTime, 0, (zone as any).confluence ? 0.80 : 0.65);
+              }
+
+              // Simulate fill probability — deterministic hash from candle time for reproducibility
+              if (config.fillRate < 1.0) {
+                const hash = ((candle.closeTime * 2654435761) >>> 0) / 4294967296; // 0-1 deterministic
+                if (hash >= config.fillRate) {
+                  continue; // missed fill — LIMIT didn't execute, skip this zone
+                }
               }
 
               // Position opened — reset state
@@ -643,6 +686,10 @@ export class BacktestService {
   private getHtfSlice(htfCandles: Candle[], beforeTime: number): Candle[] {
     const filtered = htfCandles.filter((c) => c.closeTime <= beforeTime);
     return filtered.slice(-100);
+  }
+
+  private getIntrabarSlice(intrabarCandles: Candle[], afterTime: number, beforeOrEqualTime: number): Candle[] {
+    return intrabarCandles.filter((c) => c.closeTime > afterTime && c.closeTime <= beforeOrEqualTime);
   }
 
   private async downloadKlines(

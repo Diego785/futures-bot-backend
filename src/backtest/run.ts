@@ -59,6 +59,9 @@ async function main() {
     pullbackFreshChoch: hasFlag('fresh-choch'),
     entrySlippage: parseFloat(getArg('entry-slippage', '0')),
     trailBreakevenAt: parseFloat(getArg('trail-breakeven-at', '0')),
+    fillRate: parseFloat(getArg('fill-rate', '1.0')),
+    adverseSlip: parseFloat(getArg('adverse-slip', '0')),
+    pessimisticTrail: hasFlag('pessimistic-trail'),
   };
 
   console.log('');

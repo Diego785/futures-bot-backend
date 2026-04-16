@@ -39,6 +39,9 @@ export interface BacktestConfig {
   pullbackFreshChoch: boolean;  // if true, CHoCH invalidation only fires on structure breaks newer than setup creation (default false)
   entrySlippage: number;  // dollars added to entry price (LONG) or subtracted (SHORT) to simulate MARKET fill slippage (default 0)
   trailBreakevenAt: number;  // profit $ threshold to lock SL at breakeven; 0 = disabled (default 0)
+  fillRate: number;  // probability [0-1] that a signal results in a fill. 1.0 = all fill (default). 0.7 = 30% missed.
+  adverseSlip: number;  // dollars of adverse selection AFTER fill (simulates queue priority loss). default 0.
+  pessimisticTrail: boolean;  // if true, check SL hit BEFORE trailing update (conservative intrabar order). default false.
 }
 
 export interface BacktestTrade {
