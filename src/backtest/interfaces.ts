@@ -37,6 +37,8 @@ export interface BacktestConfig {
   pullbackLooseHtf: boolean;  // if true, allow HTF bias when EMA is directional but structure is RANGING (default false)
   pullbackMinAtrPct: number;  // minimum ATR% to create setup, 0 = disabled (default 0)
   pullbackFreshChoch: boolean;  // if true, CHoCH invalidation only fires on structure breaks newer than setup creation (default false)
+  entrySlippage: number;  // dollars added to entry price (LONG) or subtracted (SHORT) to simulate MARKET fill slippage (default 0)
+  trailBreakevenAt: number;  // profit $ threshold to lock SL at breakeven; 0 = disabled (default 0)
 }
 
 export interface BacktestTrade {

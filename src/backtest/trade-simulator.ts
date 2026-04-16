@@ -24,8 +24,9 @@ export class TradeSimulator {
   private trailMode: 'entry-pct' | 'tp-distance' | 'fixed-amount';
   private trailFixed: number;
   private trailActivation: number;
+  private trailBreakevenAt: number;
 
-  constructor(commissionRate: number, notional: number, enableTrailing = true, breakevenPct = 0.3, trailMode: 'entry-pct' | 'tp-distance' | 'fixed-amount' = 'entry-pct', trailFixed = 100, trailActivation?: number) {
+  constructor(commissionRate: number, notional: number, enableTrailing = true, breakevenPct = 0.3, trailMode: 'entry-pct' | 'tp-distance' | 'fixed-amount' = 'entry-pct', trailFixed = 100, trailActivation?: number, trailBreakevenAt = 0) {
     this.commissionRate = commissionRate;
     this.quantity = 0;
     this.notional = notional;
@@ -34,6 +35,7 @@ export class TradeSimulator {
     this.trailMode = trailMode;
     this.trailFixed = trailFixed;
     this.trailActivation = trailActivation ?? trailFixed;
+    this.trailBreakevenAt = trailBreakevenAt;
   }
 
   private notional: number;
@@ -74,22 +76,35 @@ export class TradeSimulator {
     const pos = this.position;
     const isLong = pos.direction === 'LONG';
 
-    // Trailing SL logic — check best price in this candle
-    if (!this.enableTrailing) {
-      // Skip trailing, go straight to SL/TP check
-      const slHit = isLong ? candle.low <= pos.stopLoss : candle.high >= pos.stopLoss;
-      const tpHit = isLong ? candle.high >= pos.takeProfit : candle.low <= pos.takeProfit;
-      if (slHit) return this.closeTrade(pos.stopLoss, candle.closeTime, 'SL');
-      if (tpHit) return this.closeTrade(pos.takeProfit, candle.closeTime, 'TP');
-      return null;
-    }
-
     const bestPrice = isLong ? candle.high : candle.low;
     const priceDiff = isLong
       ? bestPrice - pos.entryPrice
       : pos.entryPrice - bestPrice;
 
     let newSl = pos.stopLoss;
+
+    // BREAKEVEN LOCK — independent of trailing. Activates when profit >= trailBreakevenAt.
+    // Moves SL to entry + tiny buffer (covers commissions) to protect gains.
+    if (this.trailBreakevenAt > 0 && priceDiff >= this.trailBreakevenAt) {
+      const buffer = pos.entryPrice * 0.0005; // ~$37 at BTC $75k
+      const beSl = isLong
+        ? pos.entryPrice + buffer
+        : pos.entryPrice - buffer;
+      if (isLong ? beSl > newSl : beSl < newSl) {
+        newSl = beSl;
+        pos.trailingPhase = Math.max(pos.trailingPhase, 1);
+      }
+    }
+
+    // Only run trailing logic if enableTrailing (BE lock above runs regardless)
+    if (!this.enableTrailing) {
+      pos.stopLoss = newSl;
+      const slHit = isLong ? candle.low <= pos.stopLoss : candle.high >= pos.stopLoss;
+      const tpHit = isLong ? candle.high >= pos.takeProfit : candle.low <= pos.takeProfit;
+      if (slHit) return this.closeTrade(pos.stopLoss, candle.closeTime, pos.trailingPhase > 0 ? 'TRAILING_SL' : 'SL');
+      if (tpHit) return this.closeTrade(pos.takeProfit, candle.closeTime, 'TP');
+      return null;
+    }
 
     if (this.trailMode === 'tp-distance') {
       // TP-distance mode: trail based on % of distance to TP

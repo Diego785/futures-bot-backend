@@ -33,7 +33,7 @@ async function main() {
     slAtrMultiplier: parseFloat(getArg('sl-atr', '2')),
     slMinPercent: parseFloat(getArg('sl-pct', '0.005')),
     rrRatio: parseFloat(getArg('rr', '1.5')),
-    enableTrailing: getArg('no-trailing', '') === '' ? true : false,
+    enableTrailing: !hasFlag('no-trailing'),
     requireOBFVG: getArg('require-obfvg', '') !== '',
     pullbackMaxWaitCandles: parseInt(getArg('max-wait', '12'), 10),
     pullbackSlBuffer: parseFloat(getArg('ob-sl-buffer', '0.3')),
@@ -57,6 +57,8 @@ async function main() {
     pullbackLooseHtf: hasFlag('loose-htf'),
     pullbackMinAtrPct: parseFloat(getArg('min-atr-pct', '0')),
     pullbackFreshChoch: hasFlag('fresh-choch'),
+    entrySlippage: parseFloat(getArg('entry-slippage', '0')),
+    trailBreakevenAt: parseFloat(getArg('trail-breakeven-at', '0')),
   };
 
   console.log('');

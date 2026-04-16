@@ -83,6 +83,7 @@ export class BacktestService {
       config.trailMode ?? 'entry-pct',
       config.trailFixed ?? 100,
       config.trailActivation ?? config.trailFixed ?? 100,
+      config.trailBreakevenAt ?? 0,
     );
 
     const warmup = 100;
@@ -537,10 +538,12 @@ export class BacktestService {
                 // Price must have reached the zone
                 if (candle.low > zone.high) continue;
 
-                entryPrice = zone.high;
+                const signalEntry = zone.high;
                 const slRaw = zone.low - features.atr14 * config.pullbackSlBuffer;
-                const slDist = Math.max(entryPrice - slRaw, entryPrice * config.slMinPercent);
-                sl = entryPrice - slDist;
+                const slDist = Math.max(signalEntry - slRaw, signalEntry * config.slMinPercent);
+                // Apply entry slippage (LONG pays MORE than signal when filled via MARKET)
+                entryPrice = signalEntry + (config.entrySlippage || 0);
+                sl = entryPrice - slDist; // preserve slDist, SL shifts with entry
 
                 // Don't enter if SL would be hit same candle
                 if (candle.low <= sl) continue;
@@ -557,10 +560,12 @@ export class BacktestService {
                 if (candle.open > zone.high) continue;
                 if (candle.high < zone.low) continue;
 
-                entryPrice = zone.low;
+                const signalEntry = zone.low;
                 const slRaw = zone.high + features.atr14 * config.pullbackSlBuffer;
-                const slDist = Math.max(slRaw - entryPrice, entryPrice * config.slMinPercent);
-                sl = entryPrice + slDist;
+                const slDist = Math.max(slRaw - signalEntry, signalEntry * config.slMinPercent);
+                // Apply entry slippage (SHORT receives LESS than signal when filled via MARKET)
+                entryPrice = signalEntry - (config.entrySlippage || 0);
+                sl = entryPrice + slDist; // preserve slDist, SL shifts with entry
 
                 if (candle.high >= sl) continue;
 

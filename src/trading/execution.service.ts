@@ -157,24 +157,15 @@ export class ExecutionService {
         entrySide as 'BUY' | 'SELL',
       );
 
-      // Get current mark price for aggressive LIMIT pricing
-      const positions = await this.binanceRest.getPositionRisk(symbol);
-      const markPrice =
-        positions.length > 0
-          ? parseFloat(positions[0].markPrice)
-          : signal.entryPrice;
-
-      // Offset to ensure fill: +$15 for BUY, -$15 for SELL
-      const limitOffset = 15;
-      const limitPrice = roundToTickSize(
-        entrySide === 'BUY'
-          ? markPrice + limitOffset
-          : markPrice - limitOffset,
-        tickSize,
-      );
+      // LIMIT at signal entry price (zone boundary) — wait for price to pullback to zone.
+      // NO MARKET fallback: if price doesn't retrace, skip the trade entirely.
+      // Rationale: backtest+real-data analysis shows MARKET fallbacks have 17% WR,
+      // LIMIT fills have 80% WR. Chasing momentum destroys the strategy's edge.
+      const limitPrice = roundToTickSize(signal.entryPrice, tickSize);
+      const LIMIT_WAIT_MS = 60_000; // 60s — give price time to pull back to zone
 
       this.logger.log(
-        `Placing ${entrySide} LIMIT order: ${quantity} ${symbol} @ ${limitPrice} (mark=${markPrice.toFixed(2)})`,
+        `Placing ${entrySide} LIMIT order: ${quantity} ${symbol} @ ${limitPrice} (zone boundary, wait ${LIMIT_WAIT_MS / 1000}s)`,
       );
 
       let entryResponse;
@@ -189,15 +180,14 @@ export class ExecutionService {
           newClientOrderId: entryClientId,
         });
 
-        // If LIMIT not filled immediately, wait up to 10s then fallback to MARKET
         if (entryResponse.status !== 'FILLED') {
           this.logger.log(
-            `LIMIT order status: ${entryResponse.status}, waiting for fill...`,
+            `LIMIT order status: ${entryResponse.status}, waiting up to ${LIMIT_WAIT_MS / 1000}s for fill...`,
           );
-          await new Promise((r) => setTimeout(r, 10000));
+          await new Promise((r) => setTimeout(r, LIMIT_WAIT_MS));
 
-          // Re-check order status — Binance doesn't have getOrder for algo, but regular order works
-          // If still not filled, cancel and use MARKET
+          // Try to cancel. If cancel succeeds → order wasn't filled → skip trade.
+          // If cancel fails → order was already filled during wait → proceed.
           try {
             const cancelResp = await this.binanceRest.cancelOrder(
               symbol,
@@ -208,32 +198,20 @@ export class ExecutionService {
               cancelResp.status === 'NEW'
             ) {
               this.logger.warn(
-                'LIMIT order not filled in 10s, falling back to MARKET',
+                `LIMIT order not filled in ${LIMIT_WAIT_MS / 1000}s at zone boundary ${limitPrice}. Skipping trade (no MARKET fallback).`,
               );
-              entryResponse = await this.binanceRest.placeOrder({
-                symbol,
-                side: entrySide,
-                type: 'MARKET',
-                quantity,
-              });
+              return null;
             }
           } catch {
-            // Cancel failed = order was already filled
-            this.logger.log('LIMIT order already filled during wait');
+            // Cancel failed = order was filled during the wait. Continue.
+            this.logger.log('LIMIT order filled during wait, proceeding');
           }
         }
       } catch (limitErr) {
-        // LIMIT failed, fallback to MARKET
-        this.logger.warn(
-          `LIMIT order failed, falling back to MARKET: ${limitErr}`,
+        this.logger.error(
+          `LIMIT order placement failed: ${limitErr}. Skipping trade.`,
         );
-        entryResponse = await this.binanceRest.placeOrder({
-          symbol,
-          side: entrySide,
-          type: 'MARKET',
-          quantity,
-          newClientOrderId: entryClientId + '_MKT',
-        });
+        return null;
       }
 
       // Save entry order
