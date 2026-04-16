@@ -386,7 +386,7 @@ export class ExecutionService {
 
       this.logger.log(
         `Trade opened: ${savedTrade.id} ${signal.action} ${quantity} ${symbol} ` +
-          `entry=${entryResponse.avgPrice} SL=${slPrice} TP=${tpPrice}`,
+          `entry=${savedTrade.entryPrice} SL=${slPrice} TP=${tpPrice}`,
       );
 
       return savedTrade;
@@ -576,9 +576,12 @@ export class ExecutionService {
     const direction = trade.direction === 'LONG' ? 1 : -1;
     const pricePnl = (exitPrice - entryPrice) * qty * direction;
 
-    // PnL must include round-trip commission. Start with fallback estimate, then try income API.
-    let totalCommission = qty * entryPrice * 0.001; // 0.1% round-trip (taker both sides)
+    // PnL must include round-trip commission. Entry was LIMIT (maker 0.02%), exit MARKET (taker 0.05%).
+    let totalCommission = qty * entryPrice * 0.0002 + qty * exitPrice * 0.0005; // maker + taker
     let netPnl = pricePnl - totalCommission;
+
+    // Wait 1s for Binance to finalize income records
+    await new Promise((r) => setTimeout(r, 1000));
 
     // Fetch REAL PnL from Binance income history (authoritative)
     try {
@@ -610,8 +613,9 @@ export class ExecutionService {
         );
       }
     } catch (err: any) {
+      const binanceMsg = err?.response?.data?.msg || err?.response?.data || err?.message || err;
       this.logger.warn(
-        `Income API failed: ${err?.message || err}; using estimated commission (PnL=${netPnl.toFixed(4)} comm=${totalCommission.toFixed(4)})`,
+        `Income API failed: ${binanceMsg}; using estimated commission (PnL=${netPnl.toFixed(4)} comm=${totalCommission.toFixed(4)})`,
       );
     }
 
@@ -695,13 +699,18 @@ export class ExecutionService {
     }
 
     // Update trade — PnL must include BOTH entry AND exit commissions.
-    // event.o.n is only the exit commission; entry commission was charged earlier.
-    // Multiply by 2 to approximate round-trip fees (symmetric taker rate).
+    // event.o.n is the exit commission (MARKET taker).
+    // Entry was LIMIT (maker 0.02%), so estimate entry commission from trade notional.
     const exitPrice = parseFloat(event.o.ap);
     const wsExitCommission = Math.abs(parseFloat(event.o.n || '0'));
-    let totalCommission = wsExitCommission * 2; // entry + exit approx
+    const entryNotional = Number(trade.entryPrice) * Number(trade.quantity);
+    const estimatedEntryCommission = entryNotional * 0.0002; // maker 0.02%
+    let totalCommission = wsExitCommission + estimatedEntryCommission;
     let netPnl = parseFloat(event.o.rp) - totalCommission;
     let incomeApiSucceeded = false;
+
+    // Wait 1s for Binance to finalize income records before querying
+    await new Promise((r) => setTimeout(r, 1000));
 
     // Fetch REAL PnL from Binance income history (authoritative: includes commissions + funding)
     try {
@@ -734,8 +743,9 @@ export class ExecutionService {
         );
       }
     } catch (err: any) {
+      const binanceMsg = err?.response?.data?.msg || err?.response?.data || err?.message || err;
       this.logger.warn(
-        `Income API failed: ${err?.message || err}; using WS fallback (PnL=${netPnl.toFixed(4)} comm=${totalCommission.toFixed(4)})`,
+        `Income API failed: ${binanceMsg}; using WS fallback (PnL=${netPnl.toFixed(4)} comm=${totalCommission.toFixed(4)})`,
       );
     }
 
