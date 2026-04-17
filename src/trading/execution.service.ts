@@ -1225,10 +1225,12 @@ export class ExecutionService {
               `exit=${exitPrice?.toFixed(2) ?? 'unknown'} PnL=${realizedPnl.toFixed(4)}`,
           );
         }
-      } catch (err) {
+      } catch (err: any) {
+        const errMsg = err?.message || String(err);
+        const errStack = err?.stack || 'no stack';
+        const errData = err?.response?.data ? JSON.stringify(err.response.data) : '';
         this.logger.error(
-          `Reconciliation failed for trade ${trade.id}`,
-          err,
+          `Reconciliation failed for trade ${trade.id}: ${errMsg}${errData ? ' | binance=' + errData : ''}\nSTACK: ${errStack}`,
         );
       }
     }
