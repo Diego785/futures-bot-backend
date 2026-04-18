@@ -585,11 +585,11 @@ export class ExecutionService {
 
     // Fetch REAL PnL from Binance income history (authoritative)
     try {
-      const tradeOpenTime = new Date(trade.openedAt).getTime() - 120_000;
+      const { startTime, endTime } = this.safeIncomeWindow(trade.openedAt);
       const incomeEntries = await this.binanceRest.getIncome(
         trade.symbol,
-        tradeOpenTime,
-        Date.now(),
+        startTime,
+        endTime,
         100,
       );
       let grossPnl = 0;
@@ -714,11 +714,11 @@ export class ExecutionService {
 
     // Fetch REAL PnL from Binance income history (authoritative: includes commissions + funding)
     try {
-      const tradeOpenTime = new Date(trade.openedAt).getTime() - 120_000;
+      const { startTime, endTime } = this.safeIncomeWindow(trade.openedAt);
       const incomeEntries = await this.binanceRest.getIncome(
         trade.symbol,
-        tradeOpenTime,
-        Date.now(),
+        startTime,
+        endTime,
         100,
       );
       let grossPnl = 0;
@@ -766,6 +766,31 @@ export class ExecutionService {
     } finally {
       this.closingTrades.delete(filledOrder.tradeId);
     }
+  }
+
+  /**
+   * Compute a safe [startTime, endTime] window for Binance Income API.
+   * Handles cases where trade.openedAt may parse to an unexpected time
+   * (timezone quirks, TypeORM string coercion) by clamping to a sane range.
+   * Binance rejects with "Start time is greater than end time" if startTime >= endTime.
+   */
+  private safeIncomeWindow(openedAt: Date | string | null | undefined): {
+    startTime: number;
+    endTime: number;
+  } {
+    const now = Date.now();
+    const endTime = now + 60_000; // 1min forward buffer for clock skew
+
+    let startTime = now - 24 * 60 * 60 * 1000; // default fallback: 24h lookback
+    if (openedAt) {
+      const parsed = new Date(openedAt).getTime();
+      if (Number.isFinite(parsed) && parsed > 0 && parsed < now) {
+        startTime = parsed - 120_000; // 2min before trade opened
+      }
+    }
+    // Final safety clamp: guarantee startTime < endTime with at least 1s gap
+    if (startTime >= endTime - 1000) startTime = endTime - 60_000;
+    return { startTime, endTime };
   }
 
   private async updateDailyPnl(pnl: number): Promise<void> {
@@ -923,11 +948,13 @@ export class ExecutionService {
               where: { tradeId: trade.id, purpose: 'ENTRY' },
               order: { executedQty: 'DESC' },
             });
-            if (entryOrder && entryOrder.avgPrice > 0 && Math.abs(entryOrder.avgPrice - entryPrice) > 1) {
+            // TypeORM returns numeric columns as strings — coerce before math/formatting
+            const orderAvgPrice = Number(entryOrder?.avgPrice ?? 0);
+            if (entryOrder && orderAvgPrice > 0 && Math.abs(orderAvgPrice - entryPrice) > 1) {
               this.logger.log(
-                `Entry price corrected: ${entryPrice.toFixed(1)} → ${entryOrder.avgPrice.toFixed(1)} (real fill)`,
+                `Entry price corrected: ${entryPrice.toFixed(1)} → ${orderAvgPrice.toFixed(1)} (real fill)`,
               );
-              entryPrice = entryOrder.avgPrice;
+              entryPrice = orderAvgPrice;
               trade.entryPrice = entryPrice;
               await this.tradeRepo.save(trade);
             }
@@ -1132,11 +1159,11 @@ export class ExecutionService {
             // Wait 2s for Binance to process the trade before querying income
             await new Promise((r) => setTimeout(r, 2000));
             try {
-              const tradeOpenTime = new Date(trade.openedAt).getTime() - 120_000;
+              const { startTime, endTime } = this.safeIncomeWindow(trade.openedAt);
               const incomeEntries = await this.binanceRest.getIncome(
                 trade.symbol,
-                tradeOpenTime,
-                Date.now(),
+                startTime,
+                endTime,
                 100,
               );
               let grossPnl = 0;
