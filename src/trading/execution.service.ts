@@ -162,7 +162,11 @@ export class ExecutionService {
       // Rationale: backtest+real-data analysis shows MARKET fallbacks have 17% WR,
       // LIMIT fills have 80% WR. Chasing momentum destroys the strategy's edge.
       const limitPrice = roundToTickSize(signal.entryPrice, tickSize);
-      const LIMIT_WAIT_MS = 60_000; // 60s — give price time to pull back to zone
+      // 180s — give price more time to pull back to zone after signal trigger.
+      // Changed from 60s on 2026-04-21 after observing 0% fill rate over 4 days
+      // with skip distances of $34-$114 requiring more than 60s at typical ATR.
+      // Protection via LIMIT-only remains intact; only the wait window is extended.
+      const LIMIT_WAIT_MS = 180_000;
 
       this.logger.log(
         `Placing ${entrySide} LIMIT order: ${quantity} ${symbol} @ ${limitPrice} (zone boundary, wait ${LIMIT_WAIT_MS / 1000}s)`,
