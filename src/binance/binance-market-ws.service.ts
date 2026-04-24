@@ -21,6 +21,7 @@ export class BinanceMarketWsService implements OnModuleDestroy {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private healthCheckTimer: ReturnType<typeof setInterval> | null = null;
   private lastMessageTime = 0;
+  private lastPongTime = 0;
   private destroyed = false;
 
   private readonly MAX_RECONNECT_DELAY_MS = 30_000;
@@ -91,6 +92,20 @@ export class BinanceMarketWsService implements OnModuleDestroy {
     const url = `${this.wsUrl}/ws/${stream}`;
     this.logger.log(`Connecting to market WS: ${url}`);
 
+    // Cleanup any stale socket reference before creating a new one.
+    // scheduleReconnect() does not call cleanup(), so without this the old
+    // WS object lingers with its listeners attached until GC.
+    if (this.ws) {
+      this.ws.removeAllListeners();
+      if (
+        this.ws.readyState === WebSocket.OPEN ||
+        this.ws.readyState === WebSocket.CONNECTING
+      ) {
+        this.ws.terminate();
+      }
+      this.ws = null;
+    }
+
     try {
       this.ws = new WebSocket(url);
     } catch {
@@ -102,6 +117,7 @@ export class BinanceMarketWsService implements OnModuleDestroy {
     this.ws.on('open', () => {
       this.reconnectAttempts = 0;
       this.lastMessageTime = Date.now();
+      this.lastPongTime = Date.now();
       this.startHealthCheck();
       this.logger.log(`Market WS connected: ${stream}`);
     });
@@ -160,6 +176,10 @@ export class BinanceMarketWsService implements OnModuleDestroy {
     this.ws.on('ping', (data: Buffer) => {
       this.ws?.pong(data);
     });
+
+    this.ws.on('pong', () => {
+      this.lastPongTime = Date.now();
+    });
   }
 
   private startHealthCheck(): void {
@@ -167,16 +187,21 @@ export class BinanceMarketWsService implements OnModuleDestroy {
     this.healthCheckTimer = setInterval(() => {
       if (!this.ws || !this.currentStream || this.destroyed) return;
 
-      const elapsed = Date.now() - this.lastMessageTime;
-      if (elapsed > this.STALE_THRESHOLD_MS) {
+      // Staleness is measured against last pong, not last business message.
+      // Relying on kline updates conflated market inactivity with connection
+      // death and triggered false reconnects during quiet periods.
+      const elapsedPong = Date.now() - this.lastPongTime;
+      if (elapsedPong > this.STALE_THRESHOLD_MS) {
         this.logger.warn(
-          `Market WS stale: no message for ${(elapsed / 1000).toFixed(0)}s — forcing reconnect`,
+          `Market WS stale: no pong for ${(elapsedPong / 1000).toFixed(0)}s — forcing reconnect`,
         );
-        // Force reconnect
         if (this.ws) {
           this.ws.terminate();
         }
-      } else if (this.ws.readyState === WebSocket.OPEN) {
+        return;
+      }
+
+      if (this.ws.readyState === WebSocket.OPEN) {
         this.ws.ping();
       }
     }, this.HEALTH_CHECK_INTERVAL_MS);
