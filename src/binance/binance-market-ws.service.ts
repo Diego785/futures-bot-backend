@@ -26,7 +26,8 @@ export class BinanceMarketWsService implements OnModuleDestroy {
 
   private readonly MAX_RECONNECT_DELAY_MS = 30_000;
   private readonly HEALTH_CHECK_INTERVAL_MS = 120_000; // 2 minutes
-  private readonly STALE_THRESHOLD_MS = 300_000; // 5 minutes without message = stale
+  private readonly STALE_PONG_THRESHOLD_MS = 300_000; // 5 min no pong = connection dead
+  private readonly STALE_MESSAGE_THRESHOLD_MS = 1_200_000; // 20 min no data despite pongs = silent stream
 
   private readonly candleCloseSubject = new Subject<{
     symbol: string;
@@ -115,7 +116,6 @@ export class BinanceMarketWsService implements OnModuleDestroy {
     }
 
     this.ws.on('open', () => {
-      this.reconnectAttempts = 0;
       this.lastMessageTime = Date.now();
       this.lastPongTime = Date.now();
       this.startHealthCheck();
@@ -123,6 +123,16 @@ export class BinanceMarketWsService implements OnModuleDestroy {
     });
 
     this.ws.on('message', (data: Buffer | string) => {
+      // Reset backoff only when actual data flows. If the socket opens
+      // but serves a silent stream (Binance edge case post-1006), we want
+      // exponential backoff to keep growing so we stop hammering a
+      // broken endpoint.
+      if (this.reconnectAttempts !== 0) {
+        this.logger.log(
+          `Market WS data flowing after ${this.reconnectAttempts} reconnect attempt(s)`,
+        );
+        this.reconnectAttempts = 0;
+      }
       this.lastMessageTime = Date.now();
       try {
         const payload = JSON.parse(data.toString()) as KlineWsPayload;
@@ -187,17 +197,28 @@ export class BinanceMarketWsService implements OnModuleDestroy {
     this.healthCheckTimer = setInterval(() => {
       if (!this.ws || !this.currentStream || this.destroyed) return;
 
-      // Staleness is measured against last pong, not last business message.
-      // Relying on kline updates conflated market inactivity with connection
-      // death and triggered false reconnects during quiet periods.
+      // Primary: pong-based liveness — catches real TCP/WS death fast.
       const elapsedPong = Date.now() - this.lastPongTime;
-      if (elapsedPong > this.STALE_THRESHOLD_MS) {
+      if (elapsedPong > this.STALE_PONG_THRESHOLD_MS) {
         this.logger.warn(
           `Market WS stale: no pong for ${(elapsedPong / 1000).toFixed(0)}s — forcing reconnect`,
         );
-        if (this.ws) {
-          this.ws.terminate();
-        }
+        if (this.ws) this.ws.terminate();
+        return;
+      }
+
+      // Secondary: silent-stream detection.
+      // After abnormal close (code 1006) Binance occasionally serves a
+      // connection that responds to pings/pongs but never delivers kline
+      // data — pong health check misses this. kline_15m emits multiple
+      // messages per minute even in quiet markets, so 20 min of silence
+      // despite healthy pongs means the subscription is dead.
+      const elapsedMessage = Date.now() - this.lastMessageTime;
+      if (elapsedMessage > this.STALE_MESSAGE_THRESHOLD_MS) {
+        this.logger.warn(
+          `Market WS silent: no data for ${(elapsedMessage / 1000).toFixed(0)}s despite healthy pongs — forcing reconnect`,
+        );
+        if (this.ws) this.ws.terminate();
         return;
       }
 
