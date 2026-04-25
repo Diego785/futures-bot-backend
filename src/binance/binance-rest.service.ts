@@ -65,12 +65,17 @@ export class BinanceRestService implements OnModuleInit {
     symbol: string,
     interval: string,
     limit = 100,
+    startTime?: number,
+    endTime?: number,
   ): Promise<BinanceKlineRaw[]> {
-    return this.publicRequest('GET', BINANCE_API.KLINES, {
+    const params: Record<string, string> = {
       symbol,
       interval,
       limit: limit.toString(),
-    });
+    };
+    if (startTime !== undefined) params.startTime = startTime.toString();
+    if (endTime !== undefined) params.endTime = endTime.toString();
+    return this.publicRequest('GET', BINANCE_API.KLINES, params);
   }
 
   // ─── Signed endpoints ───

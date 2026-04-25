@@ -173,6 +173,7 @@ export class ExecutionService {
       );
 
       let entryResponse;
+      const orderPlacedTime = Date.now();
       try {
         entryResponse = await this.binanceRest.placeOrder({
           symbol,
@@ -204,6 +205,19 @@ export class ExecutionService {
               this.logger.warn(
                 `LIMIT order not filled in ${LIMIT_WAIT_MS / 1000}s at zone boundary ${limitPrice}. Skipping trade (no MARKET fallback).`,
               );
+
+              // Phase 1A — Shadow mode: log what a conditional MARKET fallback
+              // would have done, but never execute. Used to measure whether
+              // recoverable fills are being lost to LIMIT-only design before
+              // committing to any active fallback. See plan tender-dreaming-iverson.
+              await this.shadowEvaluateFallback(
+                signal,
+                symbol,
+                parseFloat(limitPrice),
+                orderPlacedTime,
+                LIMIT_WAIT_MS,
+              );
+
               return null;
             }
           } catch {
@@ -1362,6 +1376,161 @@ export class ExecutionService {
       trade.status = 'CLOSED_KILL_SWITCH';
       trade.closedAt = new Date();
       await this.tradeRepo.save(trade);
+    }
+  }
+
+  /**
+   * Phase 1A — Shadow mode evaluation for conditional MARKET fallback.
+   *
+   * Called after a LIMIT entry expired without fill. Inspects 1m klines from
+   * the wait window to decide whether a conditional MARKET fallback would
+   * have been eligible, and logs the outcome with `[SHADOW]` prefix.
+   * Never executes any order — purely observational.
+   *
+   * Activates only when LIMIT_FALLBACK_MODE=shadow. When mode=off (default)
+   * this method returns early. When mode=active, this scaffolding will be
+   * extended in Fase 1B Camino A to actually place a MARKET order.
+   *
+   * Eligibility gates (all AND):
+   *  1. Zone touched at any point during the 180s wait window.
+   *  2. Touch was recent — within 60s of the wait window's deterministic end.
+   *     `timeSinceTouchAtWaitEnd = (orderPlacedTime + LIMIT_WAIT_MS) - lastTouchTime`
+   *     uses fixed timestamps so latency between cancel and this evaluation
+   *     does not affect the calculation.
+   *  3. Current price (last 1m kline close) still structurally close to the
+   *     entry. Tolerance derived from ATR (signal.atr × 0.5), since the
+   *     signal does not carry zone bounds. ATR × 0.5 approximates half a
+   *     typical zone height.
+   *  4. No post-touch invalidation (last kline close still within tolerance
+   *     of the LIMIT side).
+   *  5. Slippage between current price and limit price ≤ MAX_SLIPPAGE_USDT.
+   */
+  private async shadowEvaluateFallback(
+    signal: ValidatedSignal,
+    symbol: string,
+    limitPrice: number,
+    orderPlacedTime: number,
+    limitWaitMs: number,
+  ): Promise<void> {
+    const mode = process.env.LIMIT_FALLBACK_MODE ?? 'off';
+    if (mode !== 'shadow' && mode !== 'active') {
+      return;
+    }
+
+    // mode === 'active' is reserved for Fase 1B Camino A; current code only
+    // logs in shadow regardless. Guard against accidental activation now.
+    if (mode === 'active') {
+      this.logger.warn(
+        `[SHADOW] LIMIT_FALLBACK_MODE=active requested, but Phase 1A only logs. Treating as shadow.`,
+      );
+    }
+
+    try {
+      const waitEndTime = orderPlacedTime + limitWaitMs;
+
+      // Fetch 1m klines covering the entire wait window plus one extra
+      // candle on each side to absorb boundary effects. limit=10 is well
+      // above the ~3-4 needed for a 180s window at 1m granularity.
+      const klines = await this.binanceRest.getKlines(
+        symbol,
+        '1m',
+        10,
+        orderPlacedTime,
+        waitEndTime + 60_000,
+      );
+
+      if (!klines || klines.length === 0) {
+        this.logger.log(`[SHADOW] Skip: no klines returned for wait window`);
+        return;
+      }
+
+      // Detect zone touches. For LONG, "zone touched" means low <= limitPrice.
+      // For SHORT, high >= limitPrice. Index 2=high, 3=low, 4=close, 6=closeTime.
+      const isLong = signal.action === 'LONG';
+      const touchEvents = klines.filter((k) =>
+        isLong ? parseFloat(k[3]) <= limitPrice : parseFloat(k[2]) >= limitPrice,
+      );
+
+      if (touchEvents.length === 0) {
+        this.logger.log(
+          `[SHADOW] Skip: zone never touched during ${limitWaitMs / 1000}s wait (limitPrice=${limitPrice}, ${klines.length} klines inspected)`,
+        );
+        return;
+      }
+
+      // Recent touch — relative to deterministic wait end, not Date.now().
+      const lastTouchKline = touchEvents[touchEvents.length - 1];
+      const lastTouchTime = lastTouchKline[6]; // closeTime
+      const timeSinceTouchAtWaitEnd = waitEndTime - lastTouchTime;
+      const recentTouch =
+        timeSinceTouchAtWaitEnd >= 0 && timeSinceTouchAtWaitEnd <= 60_000;
+
+      // Current price ≈ last kline close (within 60s of true mark price).
+      const lastKline = klines[klines.length - 1];
+      const currentPrice = parseFloat(lastKline[4]);
+
+      // Structural tolerance: ATR × 0.5 ≈ half a typical zone height.
+      // Signal does not carry zone bounds, so ATR is used as proxy.
+      const structuralTolerance = signal.atr * 0.5;
+      const priceStructurallyValid = isLong
+        ? currentPrice >= limitPrice - structuralTolerance &&
+          currentPrice <= limitPrice + structuralTolerance
+        : currentPrice >= limitPrice - structuralTolerance &&
+          currentPrice <= limitPrice + structuralTolerance;
+
+      // No post-touch invalidation: last close has not blown through the
+      // structural tolerance on the wrong side. For LONG, close should not
+      // have collapsed far below limitPrice (which would imply the zone is
+      // failing). For SHORT, close should not have spiked far above.
+      const lastClose = parseFloat(lastKline[4]);
+      const noInvalidation = isLong
+        ? lastClose >= limitPrice - structuralTolerance
+        : lastClose <= limitPrice + structuralTolerance;
+
+      // Slippage cap.
+      const slippage = Math.abs(currentPrice - limitPrice);
+      const maxSlippage = Number(
+        process.env.LIMIT_FALLBACK_MAX_SLIPPAGE_USDT ?? 20,
+      );
+      const slippageOk = slippage <= maxSlippage;
+
+      const eligible =
+        recentTouch && priceStructurallyValid && noInvalidation && slippageOk;
+
+      if (eligible) {
+        this.logger.warn(
+          `[SHADOW] Would MARKET fallback at ${currentPrice.toFixed(2)} ` +
+            `(slippage=$${slippage.toFixed(2)}, ` +
+            `touch→waitEnd=${(timeSinceTouchAtWaitEnd / 1000).toFixed(0)}s, ` +
+            `tolerance=$${structuralTolerance.toFixed(2)}, touches=${touchEvents.length})`,
+        );
+      } else {
+        const reasons: string[] = [];
+        if (!recentTouch) {
+          reasons.push(
+            `stale touch (touch→waitEnd=${(timeSinceTouchAtWaitEnd / 1000).toFixed(0)}s, threshold=60s)`,
+          );
+        }
+        if (!priceStructurallyValid) {
+          reasons.push(
+            `price out of tolerance (current=${currentPrice.toFixed(2)}, ` +
+              `limit=${limitPrice.toFixed(2)}, tolerance=±$${structuralTolerance.toFixed(2)})`,
+          );
+        }
+        if (!noInvalidation) {
+          reasons.push('post-touch invalidation');
+        }
+        if (!slippageOk) {
+          reasons.push(
+            `slippage too high ($${slippage.toFixed(2)} > $${maxSlippage.toFixed(2)})`,
+          );
+        }
+        this.logger.log(`[SHADOW] Skip: ${reasons.join(', ')}`);
+      }
+    } catch (err) {
+      this.logger.warn(
+        `[SHADOW] evaluation failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 }
