@@ -1,3 +1,9 @@
+// Canonical Candle now lives in src/exchange/interfaces — re-exported here for
+// back-compat with existing Binance-specific consumers. New code should import
+// from `src/exchange/interfaces/exchange.interfaces` directly.
+export type { Candle } from '../../exchange/interfaces/exchange.interfaces';
+import type { Candle } from '../../exchange/interfaces/exchange.interfaces';
+
 // ─── Raw kline array from GET /fapi/v1/klines ───
 export type BinanceKlineRaw = [
   number, // 0: openTime
@@ -13,19 +19,6 @@ export type BinanceKlineRaw = [
   string, // 10: takerBuyQuoteVolume
   string, // 11: ignore
 ];
-
-// ─── Parsed candle for internal use ───
-export interface Candle {
-  openTime: number;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-  closeTime: number;
-  quoteVolume: number;
-  trades: number;
-}
 
 // ─── Exchange Info ───
 export interface BinanceSymbolFilter {

@@ -1,8 +1,10 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject } from '@nestjs/common';
 import { BotStateService } from './bot-state.service';
 import { ExecutionService } from '../trading/execution.service';
-import { BinanceMarketWsService } from '../binance/binance-market-ws.service';
-import { BinanceUserWsService } from '../binance/binance-user-ws.service';
+import {
+  IMarketDataPort,
+  IUserDataPort,
+} from '../exchange/interfaces/exchange.interfaces';
 import { DashboardGateway } from '../dashboard/dashboard.gateway';
 
 @Injectable()
@@ -12,8 +14,10 @@ export class KillSwitchService {
   constructor(
     private readonly botState: BotStateService,
     private readonly execution: ExecutionService,
-    private readonly binanceMarketWs: BinanceMarketWsService,
-    private readonly binanceUserWs: BinanceUserWsService,
+    @Inject(IMarketDataPort)
+    private readonly marketData: IMarketDataPort,
+    @Inject(IUserDataPort)
+    private readonly userData: IUserDataPort,
     private readonly dashboardGateway: DashboardGateway,
   ) {}
 
@@ -27,8 +31,8 @@ export class KillSwitchService {
     await this.execution.closeAllPositions(this.botState.symbol);
 
     // 3. Disconnect WebSockets
-    this.binanceMarketWs.unsubscribe();
-    await this.binanceUserWs.stop();
+    this.marketData.unsubscribe();
+    await this.userData.stop();
 
     // 4. Notify dashboard
     this.dashboardGateway.emitError(`Kill switch activated: ${reason}`);

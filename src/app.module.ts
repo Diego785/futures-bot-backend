@@ -6,7 +6,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { LoggerModule } from 'nestjs-pino';
 import { validate } from './common/config/env.validation';
 import { HealthModule } from './health/health.module';
-import { BinanceModule } from './binance/binance.module';
+import { ExchangeModule } from './exchange/exchange.module';
 import { StrategyModule } from './strategy/strategy.module';
 import { TradingModule } from './trading/trading.module';
 import { BotModule } from './bot/bot.module';
@@ -63,7 +63,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
 
     // ─── Feature Modules ───
     HealthModule,
-    BinanceModule,
+    ExchangeModule,
     StrategyModule,
     TradingModule,
     BotModule,

@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { HttpModule } from '@nestjs/axios';
-import { BinanceModule } from '../binance/binance.module';
+import { ExchangeModule } from '../exchange/exchange.module';
 import { IndicatorsService } from './indicators.service';
 import { SmcService } from './smc.service';
 import { DeepSeekService } from './deepseek.service';
@@ -11,7 +11,7 @@ import { HybridSignalService } from './hybrid-signal.service';
 import { PullbackObSignalService } from './pullback-ob-signal.service';
 
 @Module({
-  imports: [HttpModule.register({ timeout: 30_000 }), BinanceModule],
+  imports: [HttpModule.register({ timeout: 30_000 }), ExchangeModule],
   providers: [
     IndicatorsService,
     SmcService,

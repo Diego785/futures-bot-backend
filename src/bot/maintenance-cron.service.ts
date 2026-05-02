@@ -1,7 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { BotStateService } from './bot-state.service';
-import { BinanceUserWsService } from '../binance/binance-user-ws.service';
+import { IUserDataPort } from '../exchange/interfaces/exchange.interfaces';
 import { ExecutionService } from '../trading/execution.service';
 
 @Injectable()
@@ -10,15 +10,16 @@ export class MaintenanceCronService {
 
   constructor(
     private readonly botState: BotStateService,
-    private readonly binanceUserWs: BinanceUserWsService,
+    @Inject(IUserDataPort)
+    private readonly userData: IUserDataPort,
     private readonly execution: ExecutionService,
   ) {}
 
-  // ListenKey keepalive every 30 minutes
+  // ListenKey keepalive every 30 minutes (Binance only — Bybit no-op)
   @Cron('0 */30 * * * *')
   async keepaliveListenKey(): Promise<void> {
     if (!this.botState.enabled) return;
-    await this.binanceUserWs.keepalive();
+    await this.userData.keepalive();
   }
 
   // Reconcile positions every 1 minute (syncs entry price, detects closed positions)

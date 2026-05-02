@@ -37,7 +37,8 @@ export class BinanceUserWsService implements OnModuleDestroy {
     private readonly config: ConfigService,
     private readonly binanceRest: BinanceRestService,
   ) {
-    this.wsUrl = this.config.getOrThrow<string>('BINANCE_FUTURES_WS_URL');
+    // Lenient read — see BinanceMarketWsService for rationale.
+    this.wsUrl = this.config.get<string>('BINANCE_FUTURES_WS_URL', '');
     const restUrl = this.config.get<string>('BINANCE_FUTURES_BASE_URL', '');
     this.isDemoMode = restUrl.includes('demo-');
     if (this.isDemoMode) {

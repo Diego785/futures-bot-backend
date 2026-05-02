@@ -6,13 +6,18 @@ import {
   Query,
   Param,
   Logger,
+  Inject,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Signal } from '../trading/entities/signal.entity';
 import { Trade } from '../trading/entities/trade.entity';
 import { DailyPnl } from '../trading/entities/daily-pnl.entity';
-import { BinanceRestService } from '../binance/binance-rest.service';
+import {
+  IExchangeRest,
+  type Balance,
+  type Position,
+} from '../exchange/interfaces/exchange.interfaces';
 import { StartBotDto } from './dto/bot-control.dto';
 import { PaginatedQueryDto } from './dto/paginated-query.dto';
 import { BotStateService } from '../bot/bot-state.service';
@@ -28,7 +33,8 @@ export class DashboardController {
   constructor(
     private readonly botState: BotStateService,
     private readonly killSwitch: KillSwitchService,
-    private readonly binanceRest: BinanceRestService,
+    @Inject(IExchangeRest)
+    private readonly exchange: IExchangeRest,
     private readonly preFilterGate: PreFilterGateService,
     private readonly dashboardGateway: DashboardGateway,
     private readonly fcmService: FcmService,
@@ -43,24 +49,20 @@ export class DashboardController {
   @Get('status')
   async getStatus() {
     const state = this.botState.getState();
-    let balance: import('../common/interfaces/binance.interfaces').BinanceAccountBalance | null = null;
-    let position: import('../common/interfaces/binance.interfaces').BinancePositionRisk | null = null;
+    let balance: Balance | null = null;
+    let position: Position | null = null;
 
     try {
-      const balances = await this.binanceRest.getAccountBalance();
-      balance = balances.find((b) => b.asset === 'USDT') ?? null;
-    } catch (err) {
+      balance = await this.exchange.getBalance('USDT');
+    } catch (err: any) {
       console.error('Balance fetch failed:', err?.response?.data || err?.message || err);
     }
 
     try {
-      const positions = await this.binanceRest.getPositionRisk(
-        state.symbol,
-      );
-      position = positions.find(
-        (p) => parseFloat(p.positionAmt) !== 0,
-      ) ?? null;
-    } catch (err) {
+      const positions = await this.exchange.getPositions(state.symbol);
+      position =
+        positions.find((p) => parseFloat(p.positionAmt) !== 0) ?? null;
+    } catch (err: any) {
       console.error('Position fetch failed:', err?.response?.data || err?.message || err);
     }
 
@@ -70,12 +72,13 @@ export class DashboardController {
     });
 
     return {
+      exchange: this.exchange.provider,
       bot: state,
       balance: balance
         ? {
             total: balance.balance,
             available: balance.availableBalance,
-            unrealizedPnl: balance.crossUnPnl,
+            unrealizedPnl: balance.crossUnrealizedPnl,
           }
         : null,
       position,
@@ -87,7 +90,7 @@ export class DashboardController {
             losses: dailyPnl.lossesCount,
           }
         : null,
-      rateLimit: this.binanceRest.getUsedWeight(),
+      rateLimit: this.exchange.getUsedWeight(),
       gate: this.preFilterGate.getStats(),
     };
   }
@@ -154,7 +157,7 @@ export class DashboardController {
   @Get('positions')
   async getPositions() {
     try {
-      const positions = await this.binanceRest.getPositionRisk();
+      const positions = await this.exchange.getPositions();
       return positions.filter((p) => parseFloat(p.positionAmt) !== 0);
     } catch {
       return [];
@@ -164,8 +167,7 @@ export class DashboardController {
   @Get('balance')
   async getBalance() {
     try {
-      const balances = await this.binanceRest.getAccountBalance();
-      return balances.find((b) => b.asset === 'USDT') ?? null;
+      return await this.exchange.getBalance('USDT');
     } catch {
       return null;
     }
@@ -203,5 +205,4 @@ export class DashboardController {
     });
     return records;
   }
-
 }

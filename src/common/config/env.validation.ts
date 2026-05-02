@@ -6,11 +6,21 @@ export const envSchema = z.object({
     .default('development'),
   PORT: z.coerce.number().int().default(3300),
 
-  // Binance
-  BINANCE_FUTURES_BASE_URL: z.string().url(),
-  BINANCE_FUTURES_WS_URL: z.string(),
-  BINANCE_API_KEY: z.string().min(1),
-  BINANCE_API_SECRET: z.string().min(1),
+  // Exchange selection
+  EXCHANGE_PROVIDER: z.enum(['binance', 'bybit']),
+
+  // Binance (required when EXCHANGE_PROVIDER=binance; harmless otherwise)
+  BINANCE_FUTURES_BASE_URL: z.string().url().optional(),
+  BINANCE_FUTURES_WS_URL: z.string().optional(),
+  BINANCE_API_KEY: z.string().optional(),
+  BINANCE_API_SECRET: z.string().optional(),
+
+  // Bybit (required when EXCHANGE_PROVIDER=bybit; harmless otherwise)
+  BYBIT_BASE_URL: z.string().url().optional(),
+  BYBIT_WS_PUBLIC_URL: z.string().optional(),
+  BYBIT_WS_PRIVATE_URL: z.string().optional(),
+  BYBIT_API_KEY: z.string().optional(),
+  BYBIT_API_SECRET: z.string().optional(),
 
   // DeepSeek
   DEEPSEEK_API_KEY: z.string().min(1),

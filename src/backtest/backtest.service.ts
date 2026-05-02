@@ -699,6 +699,7 @@ export class BacktestService {
     startDate?: string,
     endDate?: string,
   ): Promise<Candle[]> {
+    const provider = resolveBacktestProvider();
     const intervalMs: Record<string, number> = {
       '1m': 60_000,
       '5m': 300_000,
@@ -708,10 +709,8 @@ export class BacktestService {
 
     const ms = intervalMs[interval] || 900_000;
 
-    // Use date range if provided, otherwise fallback to days
     let endTimeMs = Date.now();
     let totalCandles: number;
-
     if (startDate && endDate) {
       const startMs = new Date(startDate + 'T00:00:00Z').getTime();
       endTimeMs = new Date(endDate + 'T23:59:59Z').getTime();
@@ -720,6 +719,22 @@ export class BacktestService {
       totalCandles = Math.ceil((days * 24 * 60 * 60 * 1000) / ms);
     }
 
+    this.logger.log(
+      `Downloading ${totalCandles} ${interval} candles for ${symbol} from ${provider}`,
+    );
+
+    if (provider === 'bybit') {
+      return this.downloadKlinesBybit(symbol, interval, totalCandles, endTimeMs, ms);
+    }
+    return this.downloadKlinesBinance(symbol, interval, totalCandles, endTimeMs);
+  }
+
+  private async downloadKlinesBinance(
+    symbol: string,
+    interval: string,
+    totalCandles: number,
+    endTimeMs: number,
+  ): Promise<Candle[]> {
     const allCandles: Candle[] = [];
     let endTime = endTimeMs;
 
@@ -733,30 +748,125 @@ export class BacktestService {
         const response = await firstValueFrom(
           this.httpService.get<BinanceKlineRaw[]>(url),
         );
-
         if (!response.data || response.data.length === 0) break;
-
         const candles = response.data.map(parseKline);
         allCandles.unshift(...candles);
-
-        // Move endTime to before the earliest candle
         endTime = candles[0].openTime - 1;
-
         this.logger.log(
-          `Downloaded ${allCandles.length}/${totalCandles} candles`,
+          `Downloaded ${allCandles.length}/${totalCandles} candles (Binance)`,
         );
       } catch (err) {
-        this.logger.error(`Failed to download klines: ${err}`);
+        this.logger.error(`Failed to download Binance klines: ${err}`);
         break;
       }
 
-      // Small delay to avoid rate limits (500ms to handle large date ranges)
       await new Promise((r) => setTimeout(r, 500));
     }
 
-    // Sort by time
     allCandles.sort((a, b) => a.openTime - b.openTime);
-
     return allCandles;
+  }
+
+  private async downloadKlinesBybit(
+    symbol: string,
+    interval: string,
+    totalCandles: number,
+    endTimeMs: number,
+    intervalMsValue: number,
+  ): Promise<Candle[]> {
+    const bybitInterval = mapBybitInterval(interval);
+    const allCandles: Candle[] = [];
+    let endTime = endTimeMs;
+
+    while (allCandles.length < totalCandles) {
+      const limit = Math.min(1000, totalCandles - allCandles.length); // Bybit max=1000
+      const url =
+        `https://api.bybit.com/v5/market/kline` +
+        `?category=linear&symbol=${symbol}&interval=${bybitInterval}` +
+        `&end=${endTime}&limit=${limit}`;
+
+      try {
+        const response = await firstValueFrom(
+          this.httpService.get<{
+            retCode: number;
+            retMsg: string;
+            result: { list: string[][] };
+          }>(url),
+        );
+        if (response.data.retCode !== 0) {
+          this.logger.error(
+            `Bybit API error ${response.data.retCode}: ${response.data.retMsg}`,
+          );
+          break;
+        }
+        const list = response.data.result?.list ?? [];
+        if (list.length === 0) break;
+        // Bybit returns DESC (newest first); reverse for ASC.
+        const candles = list
+          .slice()
+          .reverse()
+          .map(
+            (row): Candle => {
+              const openTime = parseInt(row[0], 10);
+              return {
+                openTime,
+                open: parseFloat(row[1]),
+                high: parseFloat(row[2]),
+                low: parseFloat(row[3]),
+                close: parseFloat(row[4]),
+                volume: parseFloat(row[5]),
+                closeTime: openTime + intervalMsValue - 1,
+                quoteVolume: parseFloat(row[6] ?? '0'),
+                trades: 0,
+              };
+            },
+          );
+        allCandles.unshift(...candles);
+        endTime = candles[0].openTime - 1;
+        this.logger.log(
+          `Downloaded ${allCandles.length}/${totalCandles} candles (Bybit)`,
+        );
+      } catch (err) {
+        this.logger.error(`Failed to download Bybit klines: ${err}`);
+        break;
+      }
+
+      await new Promise((r) => setTimeout(r, 200)); // Bybit allows higher rate
+    }
+
+    allCandles.sort((a, b) => a.openTime - b.openTime);
+    return allCandles;
+  }
+}
+
+// ─── helpers ────────────────────────────────────────────────────────────────
+
+function resolveBacktestProvider(): 'binance' | 'bybit' {
+  // CLI override: --exchange=binance|bybit
+  const cliArg = process.argv.find((a) => a.startsWith('--exchange='));
+  const fromCli = cliArg ? cliArg.split('=')[1].toLowerCase() : '';
+  if (fromCli === 'binance' || fromCli === 'bybit') return fromCli;
+  // Else fall back to env var; default 'binance' to preserve historical
+  // backtest behavior when run from a setup that has only Binance configured.
+  const env = (process.env.EXCHANGE_PROVIDER ?? 'binance').toLowerCase();
+  return env === 'bybit' ? 'bybit' : 'binance';
+}
+
+function mapBybitInterval(interval: string): string {
+  const m = interval.match(/^(\d+)([mhdw])$/);
+  if (!m) return interval;
+  const n = m[1];
+  const unit = m[2];
+  switch (unit) {
+    case 'm':
+      return n;
+    case 'h':
+      return (parseInt(n, 10) * 60).toString();
+    case 'd':
+      return 'D';
+    case 'w':
+      return 'W';
+    default:
+      return interval;
   }
 }

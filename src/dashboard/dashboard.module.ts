@@ -1,6 +1,6 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { BinanceModule } from '../binance/binance.module';
+import { ExchangeModule } from '../exchange/exchange.module';
 import { StrategyModule } from '../strategy/strategy.module';
 import { Signal } from '../trading/entities/signal.entity';
 import { Trade } from '../trading/entities/trade.entity';
@@ -13,7 +13,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
 @Module({
   imports: [
     TypeOrmModule.forFeature([Signal, Trade, DailyPnl]),
-    BinanceModule,
+    ExchangeModule,
     StrategyModule,
     forwardRef(() => BotModule),
     NotificationsModule,

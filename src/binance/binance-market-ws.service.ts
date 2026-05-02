@@ -24,10 +24,17 @@ export class BinanceMarketWsService implements OnModuleDestroy {
   private lastPongTime = 0;
   private destroyed = false;
 
-  private readonly MAX_RECONNECT_DELAY_MS = 30_000;
+  // Backoff cap raised from 30s → 30 min after the soft-ban incident: short
+  // fixed retries kept hammering Binance and apparently extended the throttle.
+  // Combined with a hard ceiling on consecutive failures (circuit breaker)
+  // we trade a longer downtime for not provoking the upstream further.
+  private readonly INITIAL_BACKOFF_MS = 30_000;
+  private readonly MAX_RECONNECT_DELAY_MS = 30 * 60_000;
+  private readonly MAX_CONSECUTIVE_FAILS = 10;
   private readonly HEALTH_CHECK_INTERVAL_MS = 120_000; // 2 minutes
   private readonly STALE_PONG_THRESHOLD_MS = 300_000; // 5 min no pong = connection dead
   private readonly STALE_MESSAGE_THRESHOLD_MS = 1_200_000; // 20 min no data despite pongs = silent stream
+  private circuitOpen = false;
 
   private readonly candleCloseSubject = new Subject<{
     symbol: string;
@@ -44,7 +51,10 @@ export class BinanceMarketWsService implements OnModuleDestroy {
   private readonly PRICE_THROTTLE_MS = 5_000; // max 1 price emit per 5s
 
   constructor(private readonly config: ConfigService) {
-    this.wsUrl = this.config.getOrThrow<string>('BINANCE_FUTURES_WS_URL');
+    // Lenient read so the service can be instantiated even when EXCHANGE_PROVIDER=bybit
+    // and Binance creds aren't configured. subscribe() will fail loudly if called
+    // without a wsUrl, which only happens when this provider is actually selected.
+    this.wsUrl = this.config.get<string>('BINANCE_FUTURES_WS_URL', '');
   }
 
   subscribe(symbol: string, interval: string): void {
@@ -57,6 +67,8 @@ export class BinanceMarketWsService implements OnModuleDestroy {
 
     this.cleanup();
     this.destroyed = false;
+    this.circuitOpen = false; // explicit reset on user-initiated subscribe
+    this.reconnectAttempts = 0;
     this.currentStream = stream;
     this.connect(stream);
   }
@@ -238,17 +250,28 @@ export class BinanceMarketWsService implements OnModuleDestroy {
   private scheduleReconnect(): void {
     if (this.destroyed || !this.currentStream) return;
 
+    if (this.reconnectAttempts >= this.MAX_CONSECUTIVE_FAILS) {
+      this.circuitOpen = true;
+      this.logger.error(
+        `Binance market WS reached ${this.MAX_CONSECUTIVE_FAILS} consecutive failures — opening circuit. ` +
+          `Stopping reconnect attempts to avoid extending any upstream throttle. ` +
+          `Restart bot or call subscribe() to retry.`,
+      );
+      return;
+    }
+
+    // Exponential: 30s, 60s, 120s, 240s, 480s, 960s, 1800s (capped at 30min).
     const delay = Math.min(
-      1000 * Math.pow(2, this.reconnectAttempts),
+      this.INITIAL_BACKOFF_MS * Math.pow(2, this.reconnectAttempts),
       this.MAX_RECONNECT_DELAY_MS,
     );
     this.reconnectAttempts++;
     this.logger.log(
-      `Reconnecting market WS in ${delay}ms (attempt ${this.reconnectAttempts})`,
+      `Reconnecting market WS in ${delay}ms (attempt ${this.reconnectAttempts}/${this.MAX_CONSECUTIVE_FAILS})`,
     );
 
     this.reconnectTimer = setTimeout(() => {
-      if (this.currentStream && !this.destroyed) {
+      if (this.currentStream && !this.destroyed && !this.circuitOpen) {
         this.connect(this.currentStream);
       }
     }, delay);

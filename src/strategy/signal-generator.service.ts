@@ -1,6 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { BinanceRestService } from '../binance/binance-rest.service';
+import { IExchangeRest } from '../exchange/interfaces/exchange.interfaces';
 import { IndicatorsService, type IndicatorFeatures } from './indicators.service';
 import { SmcService, type SmcFeatures } from './smc.service';
 import { DeepSeekService, type DeltaChanges, type HtfContext } from './deepseek.service';
@@ -10,7 +10,6 @@ import { PreFilterGateService, type GateResult } from './pre-filter-gate.service
 import { SignalCacheService } from './signal-cache.service';
 import { deepSeekResponseSchema } from './schemas/deepseek-response.schema';
 import { signalSchema, type ValidatedSignal } from './schemas/signal.schema';
-import { parseKline } from '../common/interfaces/binance.interfaces';
 
 export interface AnalysisSummary {
   price: number;
@@ -78,7 +77,8 @@ export class SignalGeneratorService {
   private cyclesSinceLastAction = 0;
 
   constructor(
-    private readonly binanceRest: BinanceRestService,
+    @Inject(IExchangeRest)
+    private readonly exchange: IExchangeRest,
     private readonly indicators: IndicatorsService,
     private readonly smc: SmcService,
     private readonly deepseek: DeepSeekService,
@@ -95,9 +95,8 @@ export class SignalGeneratorService {
     symbol: string,
     interval: string,
   ): Promise<GenerateSignalResult> {
-    // 1. Fetch historical candles (5m)
-    const rawKlines = await this.binanceRest.getKlines(symbol, interval, 100);
-    const candles = rawKlines.map(parseKline);
+    // 1. Fetch historical candles
+    const candles = await this.exchange.getKlines(symbol, interval, 100);
 
     if (candles.length < 30) {
       this.logger.warn(`Insufficient candles for ${symbol}: ${candles.length}`);
@@ -377,8 +376,7 @@ export class SignalGeneratorService {
    * Fetch 1H candles and compute indicators + SMC for higher timeframe context
    */
   private async computeHtfContext(symbol: string): Promise<HtfContext | null> {
-    const rawKlines = await this.binanceRest.getKlines(symbol, '1h', 100);
-    const candles = rawKlines.map(parseKline);
+    const candles = await this.exchange.getKlines(symbol, '1h', 100);
 
     if (candles.length < 30) return null;
 

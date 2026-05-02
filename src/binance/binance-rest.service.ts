@@ -29,6 +29,11 @@ export class BinanceRestService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
+    if (this.config.get<string>('EXCHANGE_PROVIDER') !== 'binance') {
+      // Binance not selected — skip init so missing creds don't crash boot.
+      // The factory in ExchangeModule won't resolve to this service.
+      return;
+    }
     this.apiKey = this.config.getOrThrow<string>('BINANCE_API_KEY');
     this.apiSecret = this.config.getOrThrow<string>('BINANCE_API_SECRET');
     this.baseUrl = this.config.getOrThrow<string>('BINANCE_FUTURES_BASE_URL');

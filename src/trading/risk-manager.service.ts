@@ -1,9 +1,11 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { BinanceRestService } from '../binance/binance-rest.service';
-import { ExchangeInfoService } from '../binance/exchange-info.service';
+import {
+  IExchangeRest,
+  IExchangeInfoService,
+} from '../exchange/interfaces/exchange.interfaces';
 import { DailyPnl } from './entities/daily-pnl.entity';
 import { Trade } from './entities/trade.entity';
 import type { ValidatedSignal } from '../strategy/schemas/signal.schema';
@@ -21,8 +23,10 @@ export class RiskManagerService {
 
   constructor(
     private readonly config: ConfigService,
-    private readonly binanceRest: BinanceRestService,
-    private readonly exchangeInfo: ExchangeInfoService,
+    @Inject(IExchangeRest)
+    private readonly exchange: IExchangeRest,
+    @Inject(IExchangeInfoService)
+    private readonly exchangeInfo: IExchangeInfoService,
     @InjectRepository(DailyPnl)
     private readonly dailyPnlRepo: Repository<DailyPnl>,
     @InjectRepository(Trade)
@@ -120,21 +124,21 @@ export class RiskManagerService {
       };
     }
 
-    // Also verify with Binance
+    // Also verify with the exchange
     try {
-      const positions = await this.binanceRest.getPositionRisk(symbol);
+      const positions = await this.exchange.getPositions(symbol);
       const activePos = positions.find(
         (p) => parseFloat(p.positionAmt) !== 0,
       );
       if (activePos) {
         return {
           approved: false,
-          reason: `Existing position on Binance: ${activePos.positionAmt} ${symbol}`,
+          reason: `Existing position on ${this.exchange.provider}: ${activePos.positionAmt} ${symbol}`,
         };
       }
     } catch (err) {
       this.logger.warn(
-        'Failed to check Binance positions, proceeding with DB check only',
+        'Failed to check exchange positions, proceeding with DB check only',
         err,
       );
     }

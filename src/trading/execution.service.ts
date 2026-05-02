@@ -1,9 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { BinanceRestService } from '../binance/binance-rest.service';
-import { ExchangeInfoService } from '../binance/exchange-info.service';
 import { RiskManagerService } from './risk-manager.service';
 import { Signal } from './entities/signal.entity';
 import { Order } from './entities/order.entity';
@@ -15,10 +13,20 @@ import {
 } from '../common/utils/precision.util';
 import { generateClientOrderId } from '../common/utils/client-order-id.util';
 import type { ValidatedSignal } from '../strategy/schemas/signal.schema';
-import type {
-  OrderTradeUpdatePayload,
-  AlgoUpdatePayload,
-} from '../common/interfaces/binance.interfaces';
+import {
+  IExchangeRest,
+  IExchangeInfoService,
+  OrderSide,
+  PositionSide,
+  OrderType,
+  OrderStatus,
+  ConditionalStatus,
+  TimeInForce,
+  IncomeType,
+  type OrderUpdate,
+  type ConditionalUpdate,
+  type UserTrade,
+} from '../exchange/interfaces/exchange.interfaces';
 import { FcmService } from '../notifications/fcm.service';
 
 @Injectable()
@@ -31,8 +39,10 @@ export class ExecutionService {
 
   constructor(
     private readonly config: ConfigService,
-    private readonly binanceRest: BinanceRestService,
-    private readonly exchangeInfo: ExchangeInfoService,
+    @Inject(IExchangeRest)
+    private readonly exchange: IExchangeRest,
+    @Inject(IExchangeInfoService)
+    private readonly exchangeInfo: IExchangeInfoService,
     private readonly riskManager: RiskManagerService,
     @InjectRepository(Signal)
     private readonly signalRepo: Repository<Signal>,
@@ -57,8 +67,7 @@ export class ExecutionService {
 
     try {
       // 1. Get available balance
-      const balances = await this.binanceRest.getAccountBalance();
-      const usdtBalance = balances.find((b) => b.asset === 'USDT');
+      const usdtBalance = await this.exchange.getBalance('USDT');
       const available = usdtBalance
         ? parseFloat(usdtBalance.availableBalance)
         : 0;
@@ -80,16 +89,12 @@ export class ExecutionService {
 
       // If the floored qty drops actual notional below the exchange minimum,
       // bump it up one step — but only if the resulting margin still fits in balance.
-      // Without this, Math.floor can produce orders Binance will reject
-      // (e.g. 0.001 BTC @ $73k = $73 notional vs $100 min).
       if (actualNotional < exchangeMinNotional) {
         const step = parseFloat(stepSize);
         const bumpedQty = parseFloat(quantity) + step;
         const bumpedNotional = bumpedQty * signal.entryPrice;
         const requiredMargin = bumpedNotional / maxLeverage;
 
-        // Reserve $0.20 for entry+exit commissions (~0.05% × 2 × $150 notional ≈ $0.15).
-        // No percentage buffer — SL/MAX_DAILY_LOSS/isolated margin already handle risk.
         const commissionReserve = 0.20;
         if (requiredMargin + commissionReserve <= available) {
           quantity = roundToStepSize(bumpedQty, stepSize);
@@ -122,7 +127,7 @@ export class ExecutionService {
       }
 
       // 3. Set leverage
-      await this.binanceRest.changeLeverage(symbol, maxLeverage);
+      await this.exchange.changeLeverage(symbol, maxLeverage);
 
       // 4. Enforce minimum SL distance (safety net)
       const slSafetyAtrMult = this.config.get<number>('SL_SAFETY_ATR_MULT', 2);
@@ -136,7 +141,6 @@ export class ExecutionService {
         const dirMul = signal.action === 'LONG' ? -1 : 1;
         const oldSl = signal.stopLoss;
         signal.stopLoss = signal.entryPrice + dirMul * minSlDistance;
-        // Also expand TP to maintain R:R
         const tpMul = signal.action === 'LONG' ? 1 : -1;
         signal.takeProfit =
           signal.entryPrice + tpMul * minSlDistance * 1.5;
@@ -147,25 +151,19 @@ export class ExecutionService {
       }
 
       // 5. Determine sides
-      const entrySide = signal.action === 'LONG' ? 'BUY' : 'SELL';
-      const closeSide = signal.action === 'LONG' ? 'SELL' : 'BUY';
+      const entrySide: OrderSide =
+        signal.action === 'LONG' ? OrderSide.BUY : OrderSide.SELL;
+      const closeSide: OrderSide =
+        signal.action === 'LONG' ? OrderSide.SELL : OrderSide.BUY;
 
-      // 5. Place LIMIT entry order (maker fee 0.02% vs taker 0.05%)
+      // 6. Place LIMIT entry order (maker fee 0.02% vs taker 0.05%)
       const entryClientId = generateClientOrderId(
         'ENTRY',
         signalEntity.id,
         entrySide as 'BUY' | 'SELL',
       );
 
-      // LIMIT at signal entry price (zone boundary) — wait for price to pullback to zone.
-      // NO MARKET fallback: if price doesn't retrace, skip the trade entirely.
-      // Rationale: backtest+real-data analysis shows MARKET fallbacks have 17% WR,
-      // LIMIT fills have 80% WR. Chasing momentum destroys the strategy's edge.
       const limitPrice = roundToTickSize(signal.entryPrice, tickSize);
-      // 180s — give price more time to pull back to zone after signal trigger.
-      // Changed from 60s on 2026-04-21 after observing 0% fill rate over 4 days
-      // with skip distances of $34-$114 requiring more than 60s at typical ATR.
-      // Protection via LIMIT-only remains intact; only the wait window is extended.
       const LIMIT_WAIT_MS = 180_000;
 
       this.logger.log(
@@ -175,17 +173,17 @@ export class ExecutionService {
       let entryResponse;
       const orderPlacedTime = Date.now();
       try {
-        entryResponse = await this.binanceRest.placeOrder({
+        entryResponse = await this.exchange.placeOrder({
           symbol,
           side: entrySide,
-          type: 'LIMIT',
+          type: OrderType.LIMIT,
           quantity,
           price: limitPrice,
-          timeInForce: 'GTC',
-          newClientOrderId: entryClientId,
+          timeInForce: TimeInForce.GTC,
+          clientOrderId: entryClientId,
         });
 
-        if (entryResponse.status !== 'FILLED') {
+        if (entryResponse.status !== OrderStatus.FILLED) {
           this.logger.log(
             `LIMIT order status: ${entryResponse.status}, waiting up to ${LIMIT_WAIT_MS / 1000}s for fill...`,
           );
@@ -193,36 +191,28 @@ export class ExecutionService {
 
           // Try to cancel. If cancel succeeds → order wasn't filled → skip trade.
           // If cancel fails → order was already filled during wait → proceed.
+          let canceled = false;
           try {
-            const cancelResp = await this.binanceRest.cancelOrder(
-              symbol,
-              entryClientId,
-            );
-            if (
-              cancelResp.status === 'CANCELED' ||
-              cancelResp.status === 'NEW'
-            ) {
-              this.logger.warn(
-                `LIMIT order not filled in ${LIMIT_WAIT_MS / 1000}s at zone boundary ${limitPrice}. Skipping trade (no MARKET fallback).`,
-              );
-
-              // Phase 1A — Shadow mode: log what a conditional MARKET fallback
-              // would have done, but never execute. Used to measure whether
-              // recoverable fills are being lost to LIMIT-only design before
-              // committing to any active fallback. See plan tender-dreaming-iverson.
-              await this.shadowEvaluateFallback(
-                signal,
-                symbol,
-                parseFloat(limitPrice),
-                orderPlacedTime,
-                LIMIT_WAIT_MS,
-              );
-
-              return null;
-            }
+            await this.exchange.cancelOrder(symbol, entryClientId);
+            canceled = true;
           } catch {
             // Cancel failed = order was filled during the wait. Continue.
             this.logger.log('LIMIT order filled during wait, proceeding');
+          }
+          if (canceled) {
+            this.logger.warn(
+              `LIMIT order not filled in ${LIMIT_WAIT_MS / 1000}s at zone boundary ${limitPrice}. Skipping trade (no MARKET fallback).`,
+            );
+
+            await this.shadowEvaluateFallback(
+              signal,
+              symbol,
+              parseFloat(limitPrice),
+              orderPlacedTime,
+              LIMIT_WAIT_MS,
+            );
+
+            return null;
           }
         }
       } catch (limitErr) {
@@ -235,10 +225,10 @@ export class ExecutionService {
       // Save entry order
       const entryOrder = this.orderRepo.create({
         clientOrderId: entryClientId,
-        binanceOrderId: entryResponse.orderId,
+        binanceOrderId: parseInt(entryResponse.orderId, 10),
         symbol,
         side: entrySide,
-        type: entryResponse.type || 'LIMIT',
+        type: entryResponse.type || OrderType.LIMIT,
         quantity: parseFloat(quantity),
         executedQty: parseFloat(entryResponse.executedQty || '0'),
         avgPrice: parseFloat(entryResponse.avgPrice || '0'),
@@ -248,14 +238,15 @@ export class ExecutionService {
       });
       await this.orderRepo.save(entryOrder);
 
-      // 5b. Recalculate SL/TP if actual fill price differs significantly from signal entry.
-      // For MARKET fills, entryResponse.avgPrice is often 0 — query userTrades to get real fill.
+      // 7. Recalculate SL/TP if actual fill price differs significantly
       let actualFillPrice = parseFloat(entryResponse.avgPrice || '0');
       if (actualFillPrice <= 0) {
         await new Promise((r) => setTimeout(r, 500));
         try {
-          const userTrades = await this.binanceRest.getUserTrades(symbol, 10);
-          const orderFills = userTrades.filter((t) => t.orderId === entryResponse.orderId);
+          const userTrades = await this.exchange.getUserTrades(symbol, 10);
+          const orderFills = userTrades.filter(
+            (t) => t.orderId === entryResponse.orderId,
+          );
           if (orderFills.length > 0) {
             let totalQty = 0;
             let totalNotional = 0;
@@ -294,7 +285,7 @@ export class ExecutionService {
         );
       }
 
-      // 6. Place STOP_MARKET (stop loss) via Algo Order API
+      // 8. Place STOP_MARKET (stop loss) — exchange-agnostic conditional
       const slPrice = roundToTickSize(signal.stopLoss, tickSize);
       const slClientId = generateClientOrderId(
         'SL',
@@ -303,34 +294,33 @@ export class ExecutionService {
       );
 
       this.logger.log(
-        `Placing STOP_MARKET (algo): ${closeSide} ${quantity} ${symbol} @ ${slPrice}`,
+        `Placing STOP_MARKET (conditional): ${closeSide} ${quantity} ${symbol} @ ${slPrice}`,
       );
 
-      const slResponse = await this.binanceRest.placeAlgoOrder({
+      const slResponse = await this.exchange.placeStopLoss({
         symbol,
         side: closeSide,
-        type: 'STOP_MARKET',
         triggerPrice: slPrice,
         quantity,
-        reduceOnly: 'true',
-        clientAlgoId: slClientId,
+        reduceOnly: true,
+        clientOrderId: slClientId,
       });
 
       const slOrder = this.orderRepo.create({
         clientOrderId: slClientId,
-        binanceOrderId: slResponse.algoId,
+        binanceOrderId: parseInt(slResponse.conditionalId, 10),
         symbol,
         side: closeSide,
-        type: 'STOP_MARKET',
+        type: OrderType.STOP_MARKET,
         stopPrice: parseFloat(slPrice),
         quantity: parseFloat(quantity),
-        status: slResponse.algoStatus,
+        status: slResponse.status,
         purpose: 'STOP_LOSS',
         signalId: signalEntity.id,
       });
       await this.orderRepo.save(slOrder);
 
-      // 7. Place TAKE_PROFIT_MARKET via Algo Order API
+      // 9. Place TAKE_PROFIT_MARKET — exchange-agnostic conditional
       const tpPrice = roundToTickSize(signal.takeProfit, tickSize);
       const tpClientId = generateClientOrderId(
         'TP',
@@ -339,30 +329,29 @@ export class ExecutionService {
       );
 
       this.logger.log(
-        `Placing TAKE_PROFIT_MARKET (algo): ${closeSide} ${quantity} ${symbol} @ ${tpPrice}`,
+        `Placing TAKE_PROFIT_MARKET (conditional): ${closeSide} ${quantity} ${symbol} @ ${tpPrice}`,
       );
 
       let tpOrder: any = null;
       try {
-        const tpResponse = await this.binanceRest.placeAlgoOrder({
+        const tpResponse = await this.exchange.placeTakeProfit({
           symbol,
           side: closeSide,
-          type: 'TAKE_PROFIT_MARKET',
           triggerPrice: tpPrice,
           quantity,
-          reduceOnly: 'true',
-          clientAlgoId: tpClientId,
+          reduceOnly: true,
+          clientOrderId: tpClientId,
         });
 
         tpOrder = this.orderRepo.create({
           clientOrderId: tpClientId,
-          binanceOrderId: tpResponse.algoId,
+          binanceOrderId: parseInt(tpResponse.conditionalId, 10),
           symbol,
           side: closeSide,
-          type: 'TAKE_PROFIT_MARKET',
+          type: OrderType.TAKE_PROFIT_MARKET,
           stopPrice: parseFloat(tpPrice),
           quantity: parseFloat(quantity),
-          status: tpResponse.algoStatus,
+          status: tpResponse.status,
           purpose: 'TAKE_PROFIT',
           signalId: signalEntity.id,
         });
@@ -373,7 +362,7 @@ export class ExecutionService {
         );
       }
 
-      // 8. Create Trade entity — ALWAYS, even if TP failed
+      // 10. Create Trade entity — ALWAYS, even if TP failed
       const parsedAvg = parseFloat(entryResponse.avgPrice || '0');
       const entryPrice = parsedAvg > 0 ? parsedAvg : signal.entryPrice;
 
@@ -399,7 +388,7 @@ export class ExecutionService {
       }
       await this.orderRepo.save(ordersToLink);
 
-      // 9. Record trade execution
+      // 11. Record trade execution
       this.riskManager.recordTradeExecuted();
 
       this.logger.log(
@@ -417,9 +406,8 @@ export class ExecutionService {
       this.logger.error(
         `Execution failed for ${symbol}: ${JSON.stringify(msg)}`,
       );
-      // Attempt cleanup: cancel any open orders for this signal
       try {
-        await this.binanceRest.cancelAllOpenOrders(symbol);
+        await this.exchange.cancelAllOpenOrders(symbol);
       } catch {
         // Best-effort cleanup
       }
@@ -427,13 +415,9 @@ export class ExecutionService {
     }
   }
 
-  async handleOrderUpdate(
-    event: OrderTradeUpdatePayload,
-  ): Promise<void> {
-    const o = event.o;
-    const clientOrderId = o.c;
+  async handleOrderUpdate(update: OrderUpdate): Promise<void> {
+    const clientOrderId = update.clientOrderId;
 
-    // Find order by clientOrderId
     const order = await this.orderRepo.findOne({
       where: { clientOrderId },
     });
@@ -443,21 +427,20 @@ export class ExecutionService {
       return;
     }
 
-    // Update order status
-    order.status = o.X;
-    order.executedQty = parseFloat(o.z);
-    order.avgPrice = parseFloat(o.ap);
+    order.status = update.status;
+    order.executedQty = parseFloat(update.cumFilledQty);
+    order.avgPrice = parseFloat(update.avgPrice);
     await this.orderRepo.save(order);
 
     this.logger.log(
-      `Order update: ${clientOrderId} status=${o.X} exec=${o.z} avg=${o.ap}`,
+      `Order update: ${clientOrderId} status=${update.status} exec=${update.cumFilledQty} avg=${update.avgPrice}`,
     );
 
     // Link tradeId for trailing SL orders that lost their tradeId reference
     if (!order.tradeId && clientOrderId.startsWith('FAB_TSL_')) {
       const parts = clientOrderId.split('_');
       if (parts.length >= 3) {
-        const partialTradeId = parts[2]; // first 8 chars of trade UUID
+        const partialTradeId = parts[2];
         const openTrade = await this.tradeRepo.findOne({
           where: { status: 'OPEN' },
           order: { openedAt: 'DESC' },
@@ -472,7 +455,7 @@ export class ExecutionService {
 
     // Sync trade entry price when ENTRY order fills with real avg price
     if (
-      o.X === 'FILLED' &&
+      update.status === OrderStatus.FILLED &&
       order.purpose === 'ENTRY' &&
       order.avgPrice > 0 &&
       order.tradeId
@@ -490,173 +473,175 @@ export class ExecutionService {
     }
 
     // Check if this is a SL or TP fill
-    if (o.X === 'FILLED' && (order.purpose === 'STOP_LOSS' || order.purpose === 'TAKE_PROFIT')) {
-      await this.handleBracketFill(order, event);
+    if (
+      update.status === OrderStatus.FILLED &&
+      (order.purpose === 'STOP_LOSS' || order.purpose === 'TAKE_PROFIT')
+    ) {
+      await this.handleBracketFill(order, update);
     }
   }
 
-  async handleAlgoUpdate(event: AlgoUpdatePayload): Promise<void> {
-    const o = event.o;
-    const clientAlgoId = o.caid;
+  async handleConditionalUpdate(update: ConditionalUpdate): Promise<void> {
+    const clientOrderId = update.clientOrderId;
 
-    // Find order by clientAlgoId (stored as clientOrderId)
     let order = await this.orderRepo.findOne({
-      where: { clientOrderId: clientAlgoId },
+      where: { clientOrderId },
     });
 
-    // Fallback: lookup by binanceOrderId (algoId) if clientAlgoId lookup fails
-    if (!order && o.aid) {
+    // Fallback: lookup by binanceOrderId if clientOrderId lookup fails
+    if (!order && update.conditionalId) {
       order = await this.orderRepo.findOne({
-        where: { binanceOrderId: o.aid },
+        where: { binanceOrderId: parseInt(update.conditionalId, 10) },
       });
       if (order) {
-        this.logger.log(`Algo order found by algoId fallback: ${o.aid} (caid=${clientAlgoId})`);
+        this.logger.log(`Conditional order found by id fallback: ${update.conditionalId} (cid=${clientOrderId})`);
       }
     }
 
     if (!order) {
-      this.logger.debug(`Algo order not tracked: ${clientAlgoId} (aid=${o.aid})`);
+      this.logger.debug(`Conditional order not tracked: ${clientOrderId} (id=${update.conditionalId})`);
       return;
     }
 
     this.logger.log(
-      `Algo update: ${clientAlgoId} status=${o.X} type=${o.o} symbol=${o.s}`,
+      `Conditional update: ${clientOrderId} status=${update.status} type=${update.orderType} symbol=${update.symbol}`,
     );
 
-    // Update order status based on algo status (only FINISHED — TRIGGERED is intermediate)
-    if (o.X === 'FINISHED') {
-      order.status = 'FILLED';
-      order.executedQty = parseFloat(o.aq) || order.quantity;
-      order.avgPrice = parseFloat(o.ap) || order.stopPrice || 0;
+    if (update.status === ConditionalStatus.FINISHED) {
+      order.status = OrderStatus.FILLED;
+      order.executedQty = parseFloat(update.executedQty ?? '0') || order.quantity;
+      order.avgPrice = parseFloat(update.avgPrice ?? '0') || order.stopPrice || 0;
       await this.orderRepo.save(order);
 
-      // This is a SL or TP fill — handle bracket closure
       if (order.purpose === 'STOP_LOSS' || order.purpose === 'TAKE_PROFIT') {
-        await this.handleAlgoBracketFill(order, event);
+        await this.handleConditionalBracketFill(order, update);
       }
-    } else if (o.X === 'CANCELED' || o.X === 'EXPIRED' || o.X === 'REJECTED') {
-      order.status = o.X === 'REJECTED' ? 'REJECTED' : 'CANCELED';
+    } else if (
+      update.status === ConditionalStatus.CANCELED ||
+      update.status === ConditionalStatus.EXPIRED ||
+      update.status === ConditionalStatus.REJECTED
+    ) {
+      order.status =
+        update.status === ConditionalStatus.REJECTED
+          ? OrderStatus.REJECTED
+          : OrderStatus.CANCELED;
       await this.orderRepo.save(order);
-      if (o.rm) {
-        this.logger.warn(`Algo order ${clientAlgoId} ${o.X}: ${o.rm}`);
+      if (update.failureReason) {
+        this.logger.warn(`Conditional ${clientOrderId} ${update.status}: ${update.failureReason}`);
       }
     }
   }
 
-  private async handleAlgoBracketFill(
+  private async handleConditionalBracketFill(
     filledOrder: Order,
-    event: AlgoUpdatePayload,
+    update: ConditionalUpdate,
   ): Promise<void> {
     if (!filledOrder.tradeId) return;
 
-    // Prevent concurrent close of same trade (race condition guard)
     if (this.closingTrades.has(filledOrder.tradeId)) {
-      this.logger.debug(`Trade ${filledOrder.tradeId} already being closed, skipping algo handler`);
+      this.logger.debug(`Trade ${filledOrder.tradeId} already being closed, skipping conditional handler`);
       return;
     }
     this.closingTrades.add(filledOrder.tradeId);
 
     try {
-    const trade = await this.tradeRepo.findOne({
-      where: { id: filledOrder.tradeId },
-    });
+      const trade = await this.tradeRepo.findOne({
+        where: { id: filledOrder.tradeId },
+      });
 
-    if (!trade || trade.status !== 'OPEN') return;
+      if (!trade || trade.status !== 'OPEN') return;
 
-    // Cancel the opposite bracket order
-    const oppositeType =
-      filledOrder.purpose === 'STOP_LOSS' ? 'TAKE_PROFIT' : 'STOP_LOSS';
+      const oppositeType =
+        filledOrder.purpose === 'STOP_LOSS' ? 'TAKE_PROFIT' : 'STOP_LOSS';
 
-    const oppositeOrder = await this.orderRepo.findOne({
-      where: {
-        tradeId: trade.id,
-        purpose: oppositeType,
-      },
-    });
+      const oppositeOrder = await this.orderRepo.findOne({
+        where: {
+          tradeId: trade.id,
+          purpose: oppositeType,
+        },
+      });
 
-    if (oppositeOrder && oppositeOrder.status === 'NEW') {
+      if (oppositeOrder && oppositeOrder.status === 'NEW') {
+        try {
+          await this.exchange.cancelConditional(
+            trade.symbol,
+            String(oppositeOrder.binanceOrderId),
+          );
+          oppositeOrder.status = 'CANCELED';
+          await this.orderRepo.save(oppositeOrder);
+          this.logger.log(
+            `Canceled opposite conditional: ${oppositeOrder.clientOrderId}`,
+          );
+        } catch (err) {
+          this.logger.warn('Failed to cancel opposite bracket conditional', err);
+        }
+      }
+
+      const exitPrice = parseFloat(update.avgPrice ?? '0') || filledOrder.stopPrice || 0;
+      const entryPrice = Number(trade.entryPrice);
+      const qty = Number(trade.quantity);
+      const direction = trade.direction === 'LONG' ? 1 : -1;
+      const pricePnl = (exitPrice - entryPrice) * qty * direction;
+
+      let totalCommission = qty * entryPrice * 0.0002 + qty * exitPrice * 0.0005;
+      let netPnl = pricePnl - totalCommission;
+
+      await new Promise((r) => setTimeout(r, 1000));
+
       try {
-        await this.binanceRest.cancelAlgoOrder(oppositeOrder.binanceOrderId);
-        oppositeOrder.status = 'CANCELED';
-        await this.orderRepo.save(oppositeOrder);
-        this.logger.log(
-          `Canceled opposite algo order: ${oppositeOrder.clientOrderId}`,
-        );
-      } catch (err) {
-        this.logger.warn('Failed to cancel opposite bracket algo order', err);
-      }
-    }
-
-    // Update trade
-    const exitPrice = parseFloat(event.o.ap) || filledOrder.stopPrice || 0;
-    const entryPrice = Number(trade.entryPrice);
-    const qty = Number(trade.quantity);
-    const direction = trade.direction === 'LONG' ? 1 : -1;
-    const pricePnl = (exitPrice - entryPrice) * qty * direction;
-
-    // PnL must include round-trip commission. Entry was LIMIT (maker 0.02%), exit MARKET (taker 0.05%).
-    let totalCommission = qty * entryPrice * 0.0002 + qty * exitPrice * 0.0005; // maker + taker
-    let netPnl = pricePnl - totalCommission;
-
-    // Wait 1s for Binance to finalize income records
-    await new Promise((r) => setTimeout(r, 1000));
-
-    // Fetch REAL PnL from Binance income history (authoritative)
-    try {
-      const { startTime, endTime } = this.safeIncomeWindow(trade.openedAt);
-      const incomeEntries = await this.binanceRest.getIncome(
-        trade.symbol,
-        startTime,
-        endTime,
-        100,
-      );
-      let grossPnl = 0;
-      let commissions = 0;
-      let funding = 0;
-      for (const entry of incomeEntries) {
-        const amount = parseFloat(entry.income);
-        if (entry.incomeType === 'REALIZED_PNL') grossPnl += amount;
-        else if (entry.incomeType === 'COMMISSION') commissions += amount;
-        else if (entry.incomeType === 'FUNDING_FEE') funding += amount;
-      }
-      if (grossPnl !== 0 || commissions !== 0) {
-        totalCommission = Math.abs(commissions);
-        netPnl = grossPnl + commissions + funding;
-        this.logger.log(
-          `Income breakdown: gross=${grossPnl.toFixed(4)} comm=${commissions.toFixed(4)} fund=${funding.toFixed(4)} net=${netPnl.toFixed(4)}`,
-        );
-      } else {
+        const { startTime, endTime } = this.safeIncomeWindow(trade.openedAt);
+        const incomeEntries = await this.exchange.getIncome({
+          symbol: trade.symbol,
+          startTime,
+          endTime,
+          limit: 100,
+        });
+        let grossPnl = 0;
+        let commissions = 0;
+        let funding = 0;
+        for (const entry of incomeEntries) {
+          const amount = parseFloat(entry.income);
+          if (entry.incomeType === IncomeType.REALIZED_PNL) grossPnl += amount;
+          else if (entry.incomeType === IncomeType.COMMISSION) commissions += amount;
+          else if (entry.incomeType === IncomeType.FUNDING_FEE) funding += amount;
+        }
+        if (grossPnl !== 0 || commissions !== 0) {
+          totalCommission = Math.abs(commissions);
+          netPnl = grossPnl + commissions + funding;
+          this.logger.log(
+            `Income breakdown: gross=${grossPnl.toFixed(4)} comm=${commissions.toFixed(4)} fund=${funding.toFixed(4)} net=${netPnl.toFixed(4)}`,
+          );
+        } else {
+          this.logger.warn(
+            `Income API returned no relevant entries; using estimated commission (PnL=${netPnl.toFixed(4)} comm=${totalCommission.toFixed(4)})`,
+          );
+        }
+      } catch (err: any) {
+        const msg = err?.response?.data?.msg || err?.response?.data || err?.message || err;
         this.logger.warn(
-          `Income API returned no relevant entries; using estimated commission (PnL=${netPnl.toFixed(4)} comm=${totalCommission.toFixed(4)})`,
+          `Income API failed: ${msg}; using estimated commission (PnL=${netPnl.toFixed(4)} comm=${totalCommission.toFixed(4)})`,
         );
       }
-    } catch (err: any) {
-      const binanceMsg = err?.response?.data?.msg || err?.response?.data || err?.message || err;
-      this.logger.warn(
-        `Income API failed: ${binanceMsg}; using estimated commission (PnL=${netPnl.toFixed(4)} comm=${totalCommission.toFixed(4)})`,
+
+      trade.exitPrice = exitPrice;
+      trade.realizedPnl = netPnl;
+      trade.commission = totalCommission;
+      trade.status =
+        filledOrder.purpose === 'STOP_LOSS' ? 'CLOSED_SL' : 'CLOSED_TP';
+      trade.closedAt = new Date();
+      await this.tradeRepo.save(trade);
+
+      await this.updateDailyPnl(netPnl);
+
+      this.logger.log(
+        `Trade closed (conditional): ${trade.id} ${trade.status} PnL=${netPnl.toFixed(4)} (price=${pricePnl.toFixed(4)}, comm=${totalCommission.toFixed(4)})`,
       );
-    }
-
-    trade.exitPrice = exitPrice;
-    trade.realizedPnl = netPnl;
-    trade.commission = totalCommission;
-    trade.status =
-      filledOrder.purpose === 'STOP_LOSS' ? 'CLOSED_SL' : 'CLOSED_TP';
-    trade.closedAt = new Date();
-    await this.tradeRepo.save(trade);
-
-    // Update daily PnL
-    await this.updateDailyPnl(netPnl);
-
-    this.logger.log(
-      `Trade closed (algo): ${trade.id} ${trade.status} PnL=${netPnl.toFixed(4)} (price=${pricePnl.toFixed(4)}, comm=${totalCommission.toFixed(4)})`,
-    );
-    this.fcmService.notifyTradeClosed(
-      trade.direction,
-      trade.symbol,
-      trade.status,
-      netPnl,
-    ).catch(() => {});
+      this.fcmService.notifyTradeClosed(
+        trade.direction,
+        trade.symbol,
+        trade.status,
+        netPnl,
+      ).catch(() => {});
     } finally {
       this.closingTrades.delete(filledOrder.tradeId);
     }
@@ -664,14 +649,13 @@ export class ExecutionService {
 
   private async handleBracketFill(
     filledOrder: Order,
-    event: OrderTradeUpdatePayload,
+    update: OrderUpdate,
   ): Promise<void> {
     if (!filledOrder.tradeId) {
       this.logger.warn(`handleBracketFill: order ${filledOrder.clientOrderId} has no tradeId`);
       return;
     }
 
-    // Prevent concurrent close of same trade (race condition guard)
     if (this.closingTrades.has(filledOrder.tradeId)) {
       this.logger.debug(`Trade ${filledOrder.tradeId} already being closed, skipping order handler`);
       return;
@@ -679,134 +663,120 @@ export class ExecutionService {
     this.closingTrades.add(filledOrder.tradeId);
 
     try {
-    const trade = await this.tradeRepo.findOne({
-      where: { id: filledOrder.tradeId },
-    });
+      const trade = await this.tradeRepo.findOne({
+        where: { id: filledOrder.tradeId },
+      });
 
-    if (!trade || trade.status !== 'OPEN') {
-      this.logger.warn(
-        `handleBracketFill: trade ${filledOrder.tradeId} not found or not OPEN (status=${trade?.status})`,
-      );
-      return;
-    }
-
-    // Cancel the opposite bracket order
-    const oppositeType =
-      filledOrder.purpose === 'STOP_LOSS' ? 'TAKE_PROFIT' : 'STOP_LOSS';
-
-    const oppositeOrder = await this.orderRepo.findOne({
-      where: {
-        tradeId: trade.id,
-        purpose: oppositeType,
-        status: 'NEW',
-      },
-    });
-
-    if (oppositeOrder) {
-      try {
-        // Algo orders (SL/TP) use algoId stored in binanceOrderId
-        await this.binanceRest.cancelAlgoOrder(oppositeOrder.binanceOrderId);
-        oppositeOrder.status = 'CANCELED';
-        await this.orderRepo.save(oppositeOrder);
-        this.logger.log(
-          `Canceled opposite algo order: ${oppositeOrder.clientOrderId} (algoId=${oppositeOrder.binanceOrderId})`,
-        );
-      } catch (err) {
-        this.logger.warn('Failed to cancel opposite bracket order', err);
-      }
-    }
-
-    // Update trade — PnL must include BOTH entry AND exit commissions.
-    // event.o.n is the exit commission (MARKET taker).
-    // Entry was LIMIT (maker 0.02%), so estimate entry commission from trade notional.
-    const exitPrice = parseFloat(event.o.ap);
-    const wsExitCommission = Math.abs(parseFloat(event.o.n || '0'));
-    const entryNotional = Number(trade.entryPrice) * Number(trade.quantity);
-    const estimatedEntryCommission = entryNotional * 0.0002; // maker 0.02%
-    let totalCommission = wsExitCommission + estimatedEntryCommission;
-    let netPnl = parseFloat(event.o.rp) - totalCommission;
-    let incomeApiSucceeded = false;
-
-    // Wait 1s for Binance to finalize income records before querying
-    await new Promise((r) => setTimeout(r, 1000));
-
-    // Fetch REAL PnL from Binance income history (authoritative: includes commissions + funding)
-    try {
-      const { startTime, endTime } = this.safeIncomeWindow(trade.openedAt);
-      const incomeEntries = await this.binanceRest.getIncome(
-        trade.symbol,
-        startTime,
-        endTime,
-        100,
-      );
-      let grossPnl = 0;
-      let commissions = 0;
-      let funding = 0;
-      for (const entry of incomeEntries) {
-        const amount = parseFloat(entry.income);
-        if (entry.incomeType === 'REALIZED_PNL') grossPnl += amount;
-        else if (entry.incomeType === 'COMMISSION') commissions += amount;
-        else if (entry.incomeType === 'FUNDING_FEE') funding += amount;
-      }
-      if (grossPnl !== 0 || commissions !== 0) {
-        totalCommission = Math.abs(commissions);
-        netPnl = grossPnl + commissions + funding;
-        incomeApiSucceeded = true;
-        this.logger.log(
-          `Income breakdown: gross=${grossPnl.toFixed(4)} comm=${commissions.toFixed(4)} fund=${funding.toFixed(4)} net=${netPnl.toFixed(4)}`,
-        );
-      } else {
+      if (!trade || trade.status !== 'OPEN') {
         this.logger.warn(
-          `Income API returned no relevant entries; using WS fallback (PnL=${netPnl.toFixed(4)} comm=${totalCommission.toFixed(4)})`,
+          `handleBracketFill: trade ${filledOrder.tradeId} not found or not OPEN (status=${trade?.status})`,
+        );
+        return;
+      }
+
+      const oppositeType =
+        filledOrder.purpose === 'STOP_LOSS' ? 'TAKE_PROFIT' : 'STOP_LOSS';
+
+      const oppositeOrder = await this.orderRepo.findOne({
+        where: {
+          tradeId: trade.id,
+          purpose: oppositeType,
+          status: 'NEW',
+        },
+      });
+
+      if (oppositeOrder) {
+        try {
+          await this.exchange.cancelConditional(
+            trade.symbol,
+            String(oppositeOrder.binanceOrderId),
+          );
+          oppositeOrder.status = 'CANCELED';
+          await this.orderRepo.save(oppositeOrder);
+          this.logger.log(
+            `Canceled opposite conditional: ${oppositeOrder.clientOrderId} (id=${oppositeOrder.binanceOrderId})`,
+          );
+        } catch (err) {
+          this.logger.warn('Failed to cancel opposite bracket order', err);
+        }
+      }
+
+      const exitPrice = parseFloat(update.avgPrice);
+      const wsExitCommission = Math.abs(parseFloat(update.commission || '0'));
+      const entryNotional = Number(trade.entryPrice) * Number(trade.quantity);
+      const estimatedEntryCommission = entryNotional * 0.0002;
+      let totalCommission = wsExitCommission + estimatedEntryCommission;
+      let netPnl = parseFloat(update.realizedPnl) - totalCommission;
+
+      await new Promise((r) => setTimeout(r, 1000));
+
+      try {
+        const { startTime, endTime } = this.safeIncomeWindow(trade.openedAt);
+        const incomeEntries = await this.exchange.getIncome({
+          symbol: trade.symbol,
+          startTime,
+          endTime,
+          limit: 100,
+        });
+        let grossPnl = 0;
+        let commissions = 0;
+        let funding = 0;
+        for (const entry of incomeEntries) {
+          const amount = parseFloat(entry.income);
+          if (entry.incomeType === IncomeType.REALIZED_PNL) grossPnl += amount;
+          else if (entry.incomeType === IncomeType.COMMISSION) commissions += amount;
+          else if (entry.incomeType === IncomeType.FUNDING_FEE) funding += amount;
+        }
+        if (grossPnl !== 0 || commissions !== 0) {
+          totalCommission = Math.abs(commissions);
+          netPnl = grossPnl + commissions + funding;
+          this.logger.log(
+            `Income breakdown: gross=${grossPnl.toFixed(4)} comm=${commissions.toFixed(4)} fund=${funding.toFixed(4)} net=${netPnl.toFixed(4)}`,
+          );
+        } else {
+          this.logger.warn(
+            `Income API returned no relevant entries; using WS fallback (PnL=${netPnl.toFixed(4)} comm=${totalCommission.toFixed(4)})`,
+          );
+        }
+      } catch (err: any) {
+        const msg = err?.response?.data?.msg || err?.response?.data || err?.message || err;
+        this.logger.warn(
+          `Income API failed: ${msg}; using WS fallback (PnL=${netPnl.toFixed(4)} comm=${totalCommission.toFixed(4)})`,
         );
       }
-    } catch (err: any) {
-      const binanceMsg = err?.response?.data?.msg || err?.response?.data || err?.message || err;
-      this.logger.warn(
-        `Income API failed: ${binanceMsg}; using WS fallback (PnL=${netPnl.toFixed(4)} comm=${totalCommission.toFixed(4)})`,
+
+      trade.exitPrice = exitPrice;
+      trade.realizedPnl = netPnl;
+      trade.commission = totalCommission;
+      trade.status =
+        filledOrder.purpose === 'STOP_LOSS' ? 'CLOSED_SL' : 'CLOSED_TP';
+      trade.closedAt = new Date();
+      await this.tradeRepo.save(trade);
+
+      await this.updateDailyPnl(netPnl);
+
+      this.logger.log(
+        `Trade closed: ${trade.id} ${trade.status} PnL=${netPnl.toFixed(4)} (comm=${totalCommission.toFixed(4)})`,
       );
-    }
-
-    trade.exitPrice = exitPrice;
-    trade.realizedPnl = netPnl;
-    trade.commission = totalCommission;
-    trade.status =
-      filledOrder.purpose === 'STOP_LOSS' ? 'CLOSED_SL' : 'CLOSED_TP';
-    trade.closedAt = new Date();
-    await this.tradeRepo.save(trade);
-
-    // Update daily PnL
-    await this.updateDailyPnl(netPnl);
-
-    this.logger.log(
-      `Trade closed: ${trade.id} ${trade.status} PnL=${netPnl.toFixed(4)} (comm=${totalCommission.toFixed(4)})`,
-    );
     } finally {
       this.closingTrades.delete(filledOrder.tradeId);
     }
   }
 
-  /**
-   * Compute a safe [startTime, endTime] window for Binance Income API.
-   * Handles cases where trade.openedAt may parse to an unexpected time
-   * (timezone quirks, TypeORM string coercion) by clamping to a sane range.
-   * Binance rejects with "Start time is greater than end time" if startTime >= endTime.
-   */
   private safeIncomeWindow(openedAt: Date | string | null | undefined): {
     startTime: number;
     endTime: number;
   } {
     const now = Date.now();
-    const endTime = now + 60_000; // 1min forward buffer for clock skew
+    const endTime = now + 60_000;
 
-    let startTime = now - 24 * 60 * 60 * 1000; // default fallback: 24h lookback
+    let startTime = now - 24 * 60 * 60 * 1000;
     if (openedAt) {
       const parsed = new Date(openedAt).getTime();
       if (Number.isFinite(parsed) && parsed > 0 && parsed < now) {
-        startTime = parsed - 120_000; // 2min before trade opened
+        startTime = parsed - 120_000;
       }
     }
-    // Final safety clamp: guarantee startTime < endTime with at least 1s gap
     if (startTime >= endTime - 1000) startTime = endTime - 60_000;
     return { startTime, endTime };
   }
@@ -844,441 +814,419 @@ export class ExecutionService {
     this.isReconciling = true;
 
     try {
-    const openTrades = await this.tradeRepo.find({
-      where: { status: 'OPEN' },
-      relations: ['orders'],
-    });
+      const openTrades = await this.tradeRepo.find({
+        where: { status: 'OPEN' },
+        relations: ['orders'],
+      });
 
-    if (openTrades.length === 0) return;
+      if (openTrades.length === 0) return;
 
-    for (const trade of openTrades) {
-      try {
-        const positions = await this.binanceRest.getPositionRisk(
-          trade.symbol,
-        );
-        const activePos = positions.find(
-          (p) => parseFloat(p.positionAmt) !== 0,
-        );
-
-        if (activePos) {
-          // Position still open — sync entry price from Binance if DB has 0
-          const binanceEntry = parseFloat(activePos.entryPrice);
-          if (Number(trade.entryPrice) === 0 && binanceEntry > 0) {
-            trade.entryPrice = binanceEntry;
-            await this.tradeRepo.save(trade);
-            this.logger.log(
-              `Synced entry price for trade ${trade.id}: ${binanceEntry}`,
-            );
-          }
-
-          // Sync entry order status if still NEW
-          const entryOrder = trade.orders?.find(
-            (o) => o.purpose === 'ENTRY' && o.status === 'NEW',
+      for (const trade of openTrades) {
+        try {
+          const positions = await this.exchange.getPositions(trade.symbol);
+          const activePos = positions.find(
+            (p) => parseFloat(p.positionAmt) !== 0,
           );
-          if (entryOrder && binanceEntry > 0) {
-            entryOrder.status = 'FILLED';
-            entryOrder.executedQty = parseFloat(activePos.positionAmt);
-            entryOrder.avgPrice = binanceEntry;
-            await this.orderRepo.save(entryOrder);
-          }
 
-          // Software SL/TP check (demo mode workaround — algo orders may be silently ignored)
-          const markPrice = parseFloat(activePos.markPrice);
-          const sl = Number(trade.stopLoss);
-          const tp = Number(trade.takeProfit);
-          const isLong = trade.direction === 'LONG';
+          if (activePos) {
+            const exchangeEntry = parseFloat(activePos.entryPrice);
+            if (Number(trade.entryPrice) === 0 && exchangeEntry > 0) {
+              trade.entryPrice = exchangeEntry;
+              await this.tradeRepo.save(trade);
+              this.logger.log(
+                `Synced entry price for trade ${trade.id}: ${exchangeEntry}`,
+              );
+            }
 
-          const slHit = sl > 0 && (isLong ? markPrice <= sl : markPrice >= sl);
-          const tpHit = tp > 0 && (isLong ? markPrice >= tp : markPrice <= tp);
+            const entryOrder = trade.orders?.find(
+              (o) => o.purpose === 'ENTRY' && o.status === 'NEW',
+            );
+            if (entryOrder && exchangeEntry > 0) {
+              entryOrder.status = OrderStatus.FILLED;
+              entryOrder.executedQty = parseFloat(activePos.positionAmt);
+              entryOrder.avgPrice = exchangeEntry;
+              await this.orderRepo.save(entryOrder);
+            }
 
-          if (slHit || tpHit) {
-            // Re-check trade is still OPEN (WS handler may have closed it)
+            const markPrice = parseFloat(activePos.markPrice);
+            const sl = Number(trade.stopLoss);
+            const tp = Number(trade.takeProfit);
+            const isLong = trade.direction === 'LONG';
+
+            const slHit = sl > 0 && (isLong ? markPrice <= sl : markPrice >= sl);
+            const tpHit = tp > 0 && (isLong ? markPrice >= tp : markPrice <= tp);
+
+            if (slHit || tpHit) {
+              const freshTrade = await this.tradeRepo.findOne({
+                where: { id: trade.id },
+              });
+              if (!freshTrade || freshTrade.status !== 'OPEN') {
+                this.logger.log(
+                  `Trade ${trade.id} already closed by WS handler, skipping software SL/TP`,
+                );
+              } else {
+                const closeSide: OrderSide = isLong
+                  ? OrderSide.SELL
+                  : OrderSide.BUY;
+                const absQty = Math.abs(
+                  parseFloat(activePos.positionAmt),
+                ).toString();
+
+                this.logger.warn(
+                  `Software ${slHit ? 'SL' : 'TP'} triggered for trade ${trade.id} ` +
+                    `at mark ${markPrice} (SL=${sl}, TP=${tp})`,
+                );
+
+                await this.exchange.placeOrder({
+                  symbol: trade.symbol,
+                  side: closeSide,
+                  type: OrderType.MARKET,
+                  quantity: absQty,
+                  reduceOnly: true,
+                });
+
+                const entryPrice = Number(trade.entryPrice);
+                const qty = Number(trade.quantity);
+                const direction = isLong ? 1 : -1;
+                const estimatedPnl =
+                  (markPrice - entryPrice) * qty * direction;
+
+                trade.exitPrice = markPrice;
+                trade.realizedPnl = estimatedPnl;
+                trade.status = slHit ? 'CLOSED_SL' : 'CLOSED_TP';
+                trade.closedAt = new Date();
+
+                for (const order of trade.orders || []) {
+                  if (
+                    order.status === 'NEW' &&
+                    (order.purpose === 'STOP_LOSS' ||
+                      order.purpose === 'TAKE_PROFIT')
+                  ) {
+                    try {
+                      await this.exchange.cancelConditional(
+                        trade.symbol,
+                        String(order.binanceOrderId),
+                      );
+                    } catch {
+                      // best-effort
+                    }
+                    order.status = 'CANCELED';
+                    await this.orderRepo.save(order);
+                  }
+                }
+
+                await this.tradeRepo.save(trade);
+                await this.updateDailyPnl(estimatedPnl);
+
+                this.logger.log(
+                  `Trade closed via software ${slHit ? 'SL' : 'TP'}: ${trade.id} ` +
+                    `PnL=${estimatedPnl.toFixed(4)}`,
+                );
+              }
+            }
+
+            // === TRAILING SL ===
+            let entryPrice = Number(trade.entryPrice);
+            if (entryPrice > 0) {
+              const entryOrder = await this.orderRepo.findOne({
+                where: { tradeId: trade.id, purpose: 'ENTRY' },
+                order: { executedQty: 'DESC' },
+              });
+              const orderAvgPrice = Number(entryOrder?.avgPrice ?? 0);
+              if (entryOrder && orderAvgPrice > 0 && Math.abs(orderAvgPrice - entryPrice) > 1) {
+                this.logger.log(
+                  `Entry price corrected: ${entryPrice.toFixed(1)} → ${orderAvgPrice.toFixed(1)} (real fill)`,
+                );
+                entryPrice = orderAvgPrice;
+                trade.entryPrice = entryPrice;
+                await this.tradeRepo.save(trade);
+              }
+            }
+
+            // POST-ENTRY MONITOR
+            if (entryPrice > 0 && !slHit && !tpHit) {
+              const minutesSinceOpen = (Date.now() - new Date(trade.openedAt).getTime()) / 60_000;
+              if (minutesSinceOpen <= 15) {
+                const instantPnl = isLong
+                  ? (markPrice - entryPrice) * Number(trade.quantity)
+                  : (entryPrice - markPrice) * Number(trade.quantity);
+                const excursion = this.tradeExcursions.get(trade.id) ?? { mfe: 0, mae: 0 };
+                if (instantPnl > excursion.mfe) excursion.mfe = instantPnl;
+                if (instantPnl < excursion.mae) excursion.mae = instantPnl;
+                this.tradeExcursions.set(trade.id, excursion);
+
+                const slDist = Math.abs(markPrice - Number(trade.stopLoss));
+                const tpDist = Math.abs(markPrice - Number(trade.takeProfit));
+                this.logger.log(
+                  `POST-ENTRY MONITOR ${trade.id.substring(0, 8)} t=${minutesSinceOpen.toFixed(1)}min ` +
+                    `price=${markPrice.toFixed(1)} entry=${entryPrice.toFixed(1)} ` +
+                    `PnL=${instantPnl >= 0 ? '+' : ''}$${instantPnl.toFixed(4)} ` +
+                    `MFE=+$${excursion.mfe.toFixed(4)} MAE=-$${Math.abs(excursion.mae).toFixed(4)} ` +
+                    `SL_dist=$${slDist.toFixed(1)} TP_dist=$${tpDist.toFixed(1)}`,
+                );
+              } else if (this.tradeExcursions.has(trade.id)) {
+                this.tradeExcursions.delete(trade.id);
+              }
+            }
+
+            // TRAILING SL
+            if (entryPrice > 0 && !slHit && !tpHit) {
+              const priceDiff = isLong
+                ? markPrice - entryPrice
+                : entryPrice - markPrice;
+              const trailFixed = Number(this.config.get('TRAIL_FIXED', 50));
+              const trailActivation = Number(this.config.get('TRAIL_ACTIVATION', trailFixed));
+
+              let newSl: number | null = null;
+
+              if (priceDiff >= trailActivation) {
+                newSl = isLong
+                  ? markPrice - trailFixed
+                  : markPrice + trailFixed;
+              }
+
+              if (newSl !== null) {
+                const currentSl = Number(trade.stopLoss);
+                const slDiff = Math.abs(newSl - currentSl);
+                const isBetter = isLong
+                  ? newSl > currentSl
+                  : newSl < currentSl;
+                const isSignificant = slDiff > 5;
+
+                if (isBetter && isSignificant) {
+                  const existingSlOrders = await this.orderRepo.find({
+                    where: {
+                      tradeId: trade.id,
+                      purpose: 'STOP_LOSS',
+                      status: 'NEW',
+                    },
+                  });
+                  for (const slOrder of existingSlOrders) {
+                    try {
+                      await this.exchange.cancelConditional(
+                        trade.symbol,
+                        String(slOrder.binanceOrderId),
+                      );
+                      slOrder.status = 'CANCELED';
+                      await this.orderRepo.save(slOrder);
+                    } catch {
+                      slOrder.status = 'CANCELED';
+                      await this.orderRepo.save(slOrder);
+                    }
+                  }
+
+                  const tickSize = this.exchangeInfo.getTickSize(trade.symbol);
+                  const closeSide: OrderSide = isLong
+                    ? OrderSide.SELL
+                    : OrderSide.BUY;
+                  const roundedSl = roundToTickSize(newSl, tickSize);
+
+                  try {
+                    const tslClientId = `FAB_TSL_${trade.id.substring(0, 8)}_${Date.now().toString(36)}`;
+                    const newSlResponse = await this.exchange.placeStopLoss({
+                      symbol: trade.symbol,
+                      side: closeSide,
+                      triggerPrice: roundedSl,
+                      quantity: Math.abs(
+                        parseFloat(activePos.positionAmt),
+                      ).toString(),
+                      reduceOnly: true,
+                      clientOrderId: tslClientId,
+                    });
+
+                    const newSlOrder = this.orderRepo.create({
+                      clientOrderId: tslClientId,
+                      binanceOrderId: parseInt(newSlResponse.conditionalId, 10),
+                      symbol: trade.symbol,
+                      side: closeSide,
+                      type: OrderType.STOP_MARKET,
+                      quantity: Math.abs(
+                        parseFloat(activePos.positionAmt),
+                      ),
+                      status: 'NEW',
+                      purpose: 'STOP_LOSS',
+                      stopPrice: parseFloat(roundedSl),
+                      tradeId: trade.id,
+                    });
+                    const savedSlOrder = await this.orderRepo.save(newSlOrder);
+                    if (!savedSlOrder.tradeId) {
+                      savedSlOrder.tradeId = trade.id;
+                      await this.orderRepo.save(savedSlOrder);
+                      this.logger.warn(`TSL order tradeId re-saved for ${tslClientId}`);
+                    }
+
+                    trade.stopLoss = parseFloat(roundedSl);
+                    await this.tradeRepo.save(trade);
+
+                    this.logger.log(
+                      `Trailing SL moved for ${trade.id}: ${currentSl.toFixed(2)} → ${roundedSl} ` +
+                        `(priceDiff=$${priceDiff.toFixed(2)}, activation=$${trailActivation}, trailFixed=$${trailFixed})`,
+                    );
+                  } catch (err) {
+                    this.logger.error(
+                      `Failed to place trailing SL for ${trade.id}`,
+                      err,
+                    );
+                  }
+                }
+              }
+            }
+          } else {
             const freshTrade = await this.tradeRepo.findOne({
               where: { id: trade.id },
             });
             if (!freshTrade || freshTrade.status !== 'OPEN') {
               this.logger.log(
-                `Trade ${trade.id} already closed by WS handler, skipping software SL/TP`,
+                `Trade ${trade.id} already closed by WS handler, skipping reconcile`,
               );
-            } else {
-              const closeSide = isLong ? 'SELL' : 'BUY';
-              const absQty = Math.abs(
-                parseFloat(activePos.positionAmt),
-              ).toString();
+              continue;
+            }
 
+            this.logger.warn(
+              `Trade ${trade.id} marked OPEN but no position found on exchange. Closing.`,
+            );
+
+            let exitPrice: number | null = null;
+            let realizedPnl = 0;
+            let commission = 0;
+
+            try {
+              const fills = await this.exchange.getUserTrades(trade.symbol);
+              const closeSide: OrderSide =
+                trade.direction === 'LONG' ? OrderSide.SELL : OrderSide.BUY;
+              const tradeOpenTime = new Date(trade.openedAt).getTime();
+
+              const exitFills = fills.filter(
+                (f) => f.side === closeSide && f.time > tradeOpenTime,
+              );
+
+              if (exitFills.length > 0) {
+                let totalQty = 0;
+                let totalNotional = 0;
+                for (const f of exitFills) {
+                  const fQty = parseFloat(f.qty);
+                  const fPrice = parseFloat(f.price);
+                  totalQty += fQty;
+                  totalNotional += fQty * fPrice;
+                  realizedPnl += parseFloat(f.realizedPnl);
+                  commission += parseFloat(f.commission);
+                }
+                exitPrice = totalQty > 0 ? totalNotional / totalQty : null;
+                this.logger.log(
+                  `Found ${exitFills.length} exit fills for trade ${trade.id}: ` +
+                    `exitPrice=${exitPrice?.toFixed(2)}, pnl=${realizedPnl.toFixed(4)}`,
+                );
+              }
+            } catch (err) {
               this.logger.warn(
-                `Software ${slHit ? 'SL' : 'TP'} triggered for trade ${trade.id} ` +
-                  `at mark ${markPrice} (SL=${sl}, TP=${tp})`,
+                `Could not fetch user trades for ${trade.id}`,
+                err,
               );
+            }
 
-              await this.binanceRest.placeOrder({
-                symbol: trade.symbol,
-                side: closeSide,
-                type: 'MARKET',
-                quantity: absQty,
-                reduceOnly: 'true',
-              });
+            if (exitPrice === null && realizedPnl === 0) {
+              await new Promise((r) => setTimeout(r, 2000));
+              try {
+                const { startTime, endTime } = this.safeIncomeWindow(trade.openedAt);
+                const incomeEntries = await this.exchange.getIncome({
+                  symbol: trade.symbol,
+                  startTime,
+                  endTime,
+                  limit: 100,
+                });
+                let grossPnl = 0;
+                let commissions = 0;
+                let funding = 0;
+                for (const entry of incomeEntries) {
+                  const amount = parseFloat(entry.income);
+                  if (entry.incomeType === IncomeType.REALIZED_PNL) grossPnl += amount;
+                  else if (entry.incomeType === IncomeType.COMMISSION) commissions += amount;
+                  else if (entry.incomeType === IncomeType.FUNDING_FEE) funding += amount;
+                }
+                if (grossPnl !== 0 || commissions !== 0) {
+                  realizedPnl = grossPnl + commissions + funding;
+                  commission = Math.abs(commissions);
+                  this.logger.log(
+                    `Reconcile income fallback for ${trade.id}: gross=${grossPnl.toFixed(4)} ` +
+                      `comm=${commissions.toFixed(4)} fund=${funding.toFixed(4)} net=${realizedPnl.toFixed(4)}`,
+                  );
+                }
+              } catch (incErr) {
+                this.logger.warn(`Failed to fetch income for reconcile of ${trade.id}`, incErr);
+              }
 
-              const entryPrice = Number(trade.entryPrice);
-              const qty = Number(trade.quantity);
-              const direction = isLong ? 1 : -1;
-              const estimatedPnl =
-                (markPrice - entryPrice) * qty * direction;
+              if (exitPrice === null && realizedPnl === 0) {
+                const entryPrice = Number(trade.entryPrice);
+                const qty = Number(trade.quantity);
+                if (entryPrice > 0 && qty > 0) {
+                  this.logger.warn(
+                    `No exit fills found for trade ${trade.id}. Entry=${entryPrice}, Qty=${qty}. ` +
+                      `Cannot determine exit price.`,
+                  );
+                }
+              }
+            }
 
-              trade.exitPrice = markPrice;
-              trade.realizedPnl = estimatedPnl;
-              trade.status = slHit ? 'CLOSED_SL' : 'CLOSED_TP';
-              trade.closedAt = new Date();
+            let closedStatus = 'CLOSED_MANUAL';
+            if (exitPrice && trade.stopLoss && trade.takeProfit) {
+              const slDist = Math.abs(
+                exitPrice - Number(trade.stopLoss),
+              );
+              const tpDist = Math.abs(
+                exitPrice - Number(trade.takeProfit),
+              );
+              if (slDist < tpDist && slDist / exitPrice < 0.003) {
+                closedStatus = 'CLOSED_SL';
+              } else if (tpDist < slDist && tpDist / exitPrice < 0.003) {
+                closedStatus = 'CLOSED_TP';
+              }
+            }
 
-              for (const order of trade.orders || []) {
-                if (
-                  order.status === 'NEW' &&
-                  (order.purpose === 'STOP_LOSS' ||
-                    order.purpose === 'TAKE_PROFIT')
-                ) {
-                  try {
-                    await this.binanceRest.cancelAlgoOrder(
-                      order.binanceOrderId,
-                    );
-                  } catch {
-                    // best-effort
-                  }
+            if (exitPrice) trade.exitPrice = exitPrice;
+            if (realizedPnl !== 0) trade.realizedPnl = realizedPnl;
+            if (commission !== 0) trade.commission = commission;
+            trade.status = closedStatus;
+            trade.closedAt = new Date();
+
+            for (const order of trade.orders || []) {
+              if (
+                order.status === 'NEW' &&
+                (order.purpose === 'STOP_LOSS' || order.purpose === 'TAKE_PROFIT')
+              ) {
+                try {
+                  await this.exchange.cancelConditional(
+                    trade.symbol,
+                    String(order.binanceOrderId),
+                  );
+                  order.status = 'CANCELED';
+                  await this.orderRepo.save(order);
+                } catch {
                   order.status = 'CANCELED';
                   await this.orderRepo.save(order);
                 }
               }
-
-              await this.tradeRepo.save(trade);
-              await this.updateDailyPnl(estimatedPnl);
-
-              this.logger.log(
-                `Trade closed via software ${slHit ? 'SL' : 'TP'}: ${trade.id} ` +
-                  `PnL=${estimatedPnl.toFixed(4)}`,
-              );
-            }
-          }
-
-          // === TRAILING SL — Fixed-amount mode: SL follows price at $TRAIL_FIXED distance ===
-          let entryPrice = Number(trade.entryPrice);
-          // Correct entry price from actual fill if zone boundary differs from real fill
-          if (entryPrice > 0) {
-            const entryOrder = await this.orderRepo.findOne({
-              where: { tradeId: trade.id, purpose: 'ENTRY' },
-              order: { executedQty: 'DESC' },
-            });
-            // TypeORM returns numeric columns as strings — coerce before math/formatting
-            const orderAvgPrice = Number(entryOrder?.avgPrice ?? 0);
-            if (entryOrder && orderAvgPrice > 0 && Math.abs(orderAvgPrice - entryPrice) > 1) {
-              this.logger.log(
-                `Entry price corrected: ${entryPrice.toFixed(1)} → ${orderAvgPrice.toFixed(1)} (real fill)`,
-              );
-              entryPrice = orderAvgPrice;
-              trade.entryPrice = entryPrice;
-              await this.tradeRepo.save(trade);
-            }
-          }
-          // === POST-ENTRY MONITOR — log MFE/MAE for first 15 min after trade open ===
-          if (entryPrice > 0 && !slHit && !tpHit) {
-            const minutesSinceOpen = (Date.now() - new Date(trade.openedAt).getTime()) / 60_000;
-            if (minutesSinceOpen <= 15) {
-              const instantPnl = isLong
-                ? (markPrice - entryPrice) * Number(trade.quantity)
-                : (entryPrice - markPrice) * Number(trade.quantity);
-              const excursion = this.tradeExcursions.get(trade.id) ?? { mfe: 0, mae: 0 };
-              if (instantPnl > excursion.mfe) excursion.mfe = instantPnl;
-              if (instantPnl < excursion.mae) excursion.mae = instantPnl;
-              this.tradeExcursions.set(trade.id, excursion);
-
-              const slDist = Math.abs(markPrice - Number(trade.stopLoss));
-              const tpDist = Math.abs(markPrice - Number(trade.takeProfit));
-              this.logger.log(
-                `POST-ENTRY MONITOR ${trade.id.substring(0, 8)} t=${minutesSinceOpen.toFixed(1)}min ` +
-                  `price=${markPrice.toFixed(1)} entry=${entryPrice.toFixed(1)} ` +
-                  `PnL=${instantPnl >= 0 ? '+' : ''}$${instantPnl.toFixed(4)} ` +
-                  `MFE=+$${excursion.mfe.toFixed(4)} MAE=-$${Math.abs(excursion.mae).toFixed(4)} ` +
-                  `SL_dist=$${slDist.toFixed(1)} TP_dist=$${tpDist.toFixed(1)}`,
-              );
-            } else if (this.tradeExcursions.has(trade.id)) {
-              // Cleanup after monitoring window
-              this.tradeExcursions.delete(trade.id);
-            }
-          }
-
-          // === TRAILING SL — Fixed-amount mode: SL follows price at $TRAIL_FIXED distance ===
-          if (entryPrice > 0 && !slHit && !tpHit) {
-            const priceDiff = isLong
-              ? markPrice - entryPrice
-              : entryPrice - markPrice;
-            const trailFixed = Number(this.config.get('TRAIL_FIXED', 50));
-            const trailActivation = Number(this.config.get('TRAIL_ACTIVATION', trailFixed));
-
-            let newSl: number | null = null;
-
-            if (priceDiff >= trailActivation) {
-              // SL trails behind best price by trailFixed amount
-              newSl = isLong
-                ? markPrice - trailFixed
-                : markPrice + trailFixed;
             }
 
-            if (newSl !== null) {
-              const currentSl = Number(trade.stopLoss);
-              const slDiff = Math.abs(newSl - currentSl);
-              const isBetter = isLong
-                ? newSl > currentSl
-                : newSl < currentSl;
-              // Only move SL if improvement is meaningful (> $5) to avoid spam orders
-              const isSignificant = slDiff > 5;
+            await this.tradeRepo.save(trade);
 
-              if (isBetter && isSignificant) {
-                // Cancel ALL existing SL algo orders from DB (not just in-memory)
-                const existingSlOrders = await this.orderRepo.find({
-                  where: {
-                    tradeId: trade.id,
-                    purpose: 'STOP_LOSS',
-                    status: 'NEW',
-                  },
-                });
-                for (const slOrder of existingSlOrders) {
-                  try {
-                    await this.binanceRest.cancelAlgoOrder(
-                      slOrder.binanceOrderId,
-                    );
-                    slOrder.status = 'CANCELED';
-                    await this.orderRepo.save(slOrder);
-                  } catch {
-                    // best-effort — order may already be canceled
-                    slOrder.status = 'CANCELED';
-                    await this.orderRepo.save(slOrder);
-                  }
-                }
-
-                // Place new SL at better price
-                const tickSize = this.exchangeInfo.getTickSize(
-                  trade.symbol,
-                );
-                const closeSide = isLong ? 'SELL' : 'BUY';
-                const roundedSl = roundToTickSize(newSl, tickSize);
-
-                try {
-                  const tslClientId = `FAB_TSL_${trade.id.substring(0, 8)}_${Date.now().toString(36)}`;
-                  const newSlResponse =
-                    await this.binanceRest.placeAlgoOrder({
-                      symbol: trade.symbol,
-                      side: closeSide,
-                      type: 'STOP_MARKET',
-                      triggerPrice: roundedSl,
-                      quantity: Math.abs(
-                        parseFloat(activePos.positionAmt),
-                      ).toString(),
-                      reduceOnly: 'true',
-                      clientAlgoId: tslClientId,
-                    });
-
-                  const newSlOrder = this.orderRepo.create({
-                    clientOrderId: tslClientId,
-                    binanceOrderId: newSlResponse.algoId,
-                    symbol: trade.symbol,
-                    side: closeSide,
-                    type: 'STOP_MARKET',
-                    quantity: Math.abs(
-                      parseFloat(activePos.positionAmt),
-                    ),
-                    status: 'NEW',
-                    purpose: 'STOP_LOSS',
-                    stopPrice: parseFloat(roundedSl),
-                    tradeId: trade.id,
-                  });
-                  const savedSlOrder = await this.orderRepo.save(newSlOrder);
-                  // Verify tradeId was persisted (guard against ORM quirks)
-                  if (!savedSlOrder.tradeId) {
-                    savedSlOrder.tradeId = trade.id;
-                    await this.orderRepo.save(savedSlOrder);
-                    this.logger.warn(`TSL order tradeId re-saved for ${tslClientId}`);
-                  }
-
-                  trade.stopLoss = parseFloat(roundedSl);
-                  await this.tradeRepo.save(trade);
-
-                  this.logger.log(
-                    `Trailing SL moved for ${trade.id}: ${currentSl.toFixed(2)} → ${roundedSl} ` +
-                      `(priceDiff=$${priceDiff.toFixed(2)}, activation=$${trailActivation}, trailFixed=$${trailFixed})`,
-                  );
-                } catch (err) {
-                  this.logger.error(
-                    `Failed to place trailing SL for ${trade.id}`,
-                    err,
-                  );
-                }
-              }
+            if (realizedPnl !== 0) {
+              await this.updateDailyPnl(realizedPnl);
             }
-          }
-        } else {
-          // Re-check trade is still OPEN (WS handler may have closed it)
-          const freshTrade = await this.tradeRepo.findOne({
-            where: { id: trade.id },
-          });
-          if (!freshTrade || freshTrade.status !== 'OPEN') {
+
             this.logger.log(
-              `Trade ${trade.id} already closed by WS handler, skipping reconcile`,
+              `Trade reconciled: ${trade.id} ${closedStatus} ` +
+                `exit=${exitPrice?.toFixed(2) ?? 'unknown'} PnL=${realizedPnl.toFixed(4)}`,
             );
-            continue;
           }
-
-          // Position closed on Binance — fetch fills to get exit data
-          this.logger.warn(
-            `Trade ${trade.id} marked OPEN but no position found on Binance. Closing.`,
-          );
-
-          let exitPrice: number | null = null;
-          let realizedPnl = 0;
-          let commission = 0;
-
-          try {
-            const fills = await this.binanceRest.getUserTrades(
-              trade.symbol,
-            );
-            const closeSide =
-              trade.direction === 'LONG' ? 'SELL' : 'BUY';
-            const tradeOpenTime = new Date(trade.openedAt).getTime();
-
-            // Filter: fills after trade opened, on the closing side
-            const exitFills = fills.filter(
-              (f) => f.side === closeSide && f.time > tradeOpenTime,
-            );
-
-            if (exitFills.length > 0) {
-              let totalQty = 0;
-              let totalNotional = 0;
-              for (const f of exitFills) {
-                const fQty = parseFloat(f.qty);
-                const fPrice = parseFloat(f.price);
-                totalQty += fQty;
-                totalNotional += fQty * fPrice;
-                realizedPnl += parseFloat(f.realizedPnl);
-                commission += parseFloat(f.commission);
-              }
-              exitPrice = totalQty > 0 ? totalNotional / totalQty : null;
-              this.logger.log(
-                `Found ${exitFills.length} exit fills for trade ${trade.id}: ` +
-                  `exitPrice=${exitPrice?.toFixed(2)}, pnl=${realizedPnl.toFixed(4)}`,
-              );
-            }
-          } catch (err) {
-            this.logger.warn(
-              `Could not fetch user trades for ${trade.id}`,
-              err,
-            );
-            // Fallback: estimate PnL from entry price if we have mark price data
-          }
-
-          // If no fills found via userTrades, fallback to income API
-          if (exitPrice === null && realizedPnl === 0) {
-            // Wait 2s for Binance to process the trade before querying income
-            await new Promise((r) => setTimeout(r, 2000));
-            try {
-              const { startTime, endTime } = this.safeIncomeWindow(trade.openedAt);
-              const incomeEntries = await this.binanceRest.getIncome(
-                trade.symbol,
-                startTime,
-                endTime,
-                100,
-              );
-              let grossPnl = 0;
-              let commissions = 0;
-              let funding = 0;
-              for (const entry of incomeEntries) {
-                const amount = parseFloat(entry.income);
-                if (entry.incomeType === 'REALIZED_PNL') grossPnl += amount;
-                else if (entry.incomeType === 'COMMISSION') commissions += amount;
-                else if (entry.incomeType === 'FUNDING_FEE') funding += amount;
-              }
-              if (grossPnl !== 0 || commissions !== 0) {
-                realizedPnl = grossPnl + commissions + funding;
-                commission = Math.abs(commissions);
-                this.logger.log(
-                  `Reconcile income fallback for ${trade.id}: gross=${grossPnl.toFixed(4)} ` +
-                    `comm=${commissions.toFixed(4)} fund=${funding.toFixed(4)} net=${realizedPnl.toFixed(4)}`,
-                );
-              }
-            } catch (incErr) {
-              this.logger.warn(`Failed to fetch income for reconcile of ${trade.id}`, incErr);
-            }
-
-            // If still no data, log the gap
-            if (exitPrice === null && realizedPnl === 0) {
-              const entryPrice = Number(trade.entryPrice);
-              const qty = Number(trade.quantity);
-              if (entryPrice > 0 && qty > 0) {
-                this.logger.warn(
-                  `No exit fills found for trade ${trade.id}. Entry=${entryPrice}, Qty=${qty}. ` +
-                    `Cannot determine exit price.`,
-                );
-              }
-            }
-          }
-
-          // Determine close status based on exit price proximity to SL/TP
-          let closedStatus = 'CLOSED_MANUAL';
-          if (exitPrice && trade.stopLoss && trade.takeProfit) {
-            const slDist = Math.abs(
-              exitPrice - Number(trade.stopLoss),
-            );
-            const tpDist = Math.abs(
-              exitPrice - Number(trade.takeProfit),
-            );
-            if (slDist < tpDist && slDist / exitPrice < 0.003) {
-              closedStatus = 'CLOSED_SL';
-            } else if (tpDist < slDist && tpDist / exitPrice < 0.003) {
-              closedStatus = 'CLOSED_TP';
-            }
-          }
-
-          if (exitPrice) trade.exitPrice = exitPrice;
-          if (realizedPnl !== 0) trade.realizedPnl = realizedPnl;
-          if (commission !== 0) trade.commission = commission;
-          trade.status = closedStatus;
-          trade.closedAt = new Date();
-
-          // Cancel remaining algo orders (SL/TP) since position is gone
-          for (const order of trade.orders || []) {
-            if (
-              order.status === 'NEW' &&
-              (order.purpose === 'STOP_LOSS' || order.purpose === 'TAKE_PROFIT')
-            ) {
-              try {
-                await this.binanceRest.cancelAlgoOrder(order.binanceOrderId);
-                order.status = 'CANCELED';
-                await this.orderRepo.save(order);
-              } catch {
-                // May already be canceled/triggered
-                order.status = 'CANCELED';
-                await this.orderRepo.save(order);
-              }
-            }
-          }
-
-          await this.tradeRepo.save(trade);
-
-          // Update daily PnL if we have data
-          if (realizedPnl !== 0) {
-            await this.updateDailyPnl(realizedPnl);
-          }
-
-          this.logger.log(
-            `Trade reconciled: ${trade.id} ${closedStatus} ` +
-              `exit=${exitPrice?.toFixed(2) ?? 'unknown'} PnL=${realizedPnl.toFixed(4)}`,
+        } catch (err: any) {
+          const errMsg = err?.message || String(err);
+          const errStack = err?.stack || 'no stack';
+          const errData = err?.response?.data ? JSON.stringify(err.response.data) : '';
+          this.logger.error(
+            `Reconciliation failed for trade ${trade.id}: ${errMsg}${errData ? ' | exchange=' + errData : ''}\nSTACK: ${errStack}`,
           );
         }
-      } catch (err: any) {
-        const errMsg = err?.message || String(err);
-        const errStack = err?.stack || 'no stack';
-        const errData = err?.response?.data ? JSON.stringify(err.response.data) : '';
-        this.logger.error(
-          `Reconciliation failed for trade ${trade.id}: ${errMsg}${errData ? ' | binance=' + errData : ''}\nSTACK: ${errStack}`,
-        );
       }
-    }
     } finally {
       this.isReconciling = false;
     }
@@ -1287,34 +1235,32 @@ export class ExecutionService {
   async closeAllPositions(symbol: string): Promise<void> {
     this.logger.warn(`CLOSING ALL POSITIONS for ${symbol}`);
 
-    // 1. Cancel all open orders (regular + algo/conditional)
     try {
-      await this.binanceRest.cancelAllOpenOrders(symbol);
+      await this.exchange.cancelAllOpenOrders(symbol);
     } catch (err) {
       this.logger.error('Failed to cancel open orders', err);
     }
     try {
-      await this.binanceRest.cancelAllAlgoOrders(symbol);
+      await this.exchange.cancelAllConditionals(symbol);
     } catch (err) {
-      this.logger.error('Failed to cancel algo orders', err);
+      this.logger.error('Failed to cancel conditional orders', err);
     }
 
-    // 2. Get current position
     try {
-      const positions = await this.binanceRest.getPositionRisk(symbol);
+      const positions = await this.exchange.getPositions(symbol);
       for (const pos of positions) {
         const amt = parseFloat(pos.positionAmt);
         if (amt === 0) continue;
 
-        const side = amt > 0 ? 'SELL' : 'BUY';
+        const side: OrderSide = amt > 0 ? OrderSide.SELL : OrderSide.BUY;
         const absQty = Math.abs(amt).toString();
 
-        await this.binanceRest.placeOrder({
+        await this.exchange.placeOrder({
           symbol,
           side,
-          type: 'MARKET',
+          type: OrderType.MARKET,
           quantity: absQty,
-          reduceOnly: 'true',
+          reduceOnly: true,
         });
 
         this.logger.log(
@@ -1325,25 +1271,22 @@ export class ExecutionService {
       this.logger.error('Failed to close positions', err);
     }
 
-    // 3. Update DB — fetch fills to get exit data
     const openTrades = await this.tradeRepo.find({
       where: { symbol, status: 'OPEN' },
     });
 
-    // Brief delay to allow fills to settle on Binance
     await new Promise((r) => setTimeout(r, 1000));
 
-    let fills: import('../common/interfaces/binance.interfaces').BinanceUserTrade[] =
-      [];
+    let fills: UserTrade[] = [];
     try {
-      fills = await this.binanceRest.getUserTrades(symbol);
+      fills = await this.exchange.getUserTrades(symbol);
     } catch {
       this.logger.warn('Could not fetch user trades for kill switch PnL');
     }
 
     for (const trade of openTrades) {
-      // Try to find exit fills for this trade
-      const closeSide = trade.direction === 'LONG' ? 'SELL' : 'BUY';
+      const closeSide: OrderSide =
+        trade.direction === 'LONG' ? OrderSide.SELL : OrderSide.BUY;
       const tradeOpenTime = new Date(trade.openedAt).getTime();
       const exitFills = fills.filter(
         (f) => f.side === closeSide && f.time > tradeOpenTime,
@@ -1381,29 +1324,7 @@ export class ExecutionService {
 
   /**
    * Phase 1A — Shadow mode evaluation for conditional MARKET fallback.
-   *
-   * Called after a LIMIT entry expired without fill. Inspects 1m klines from
-   * the wait window to decide whether a conditional MARKET fallback would
-   * have been eligible, and logs the outcome with `[SHADOW]` prefix.
-   * Never executes any order — purely observational.
-   *
-   * Activates only when LIMIT_FALLBACK_MODE=shadow. When mode=off (default)
-   * this method returns early. When mode=active, this scaffolding will be
-   * extended in Fase 1B Camino A to actually place a MARKET order.
-   *
-   * Eligibility gates (all AND):
-   *  1. Zone touched at any point during the 180s wait window.
-   *  2. Touch was recent — within 60s of the wait window's deterministic end.
-   *     `timeSinceTouchAtWaitEnd = (orderPlacedTime + LIMIT_WAIT_MS) - lastTouchTime`
-   *     uses fixed timestamps so latency between cancel and this evaluation
-   *     does not affect the calculation.
-   *  3. Current price (last 1m kline close) still structurally close to the
-   *     entry. Tolerance derived from ATR (signal.atr × 0.5), since the
-   *     signal does not carry zone bounds. ATR × 0.5 approximates half a
-   *     typical zone height.
-   *  4. No post-touch invalidation (last kline close still within tolerance
-   *     of the LIMIT side).
-   *  5. Slippage between current price and limit price ≤ MAX_SLIPPAGE_USDT.
+   * Uses neutral Candle objects from IExchangeRest.getKlines.
    */
   private async shadowEvaluateFallback(
     signal: ValidatedSignal,
@@ -1417,8 +1338,6 @@ export class ExecutionService {
       return;
     }
 
-    // mode === 'active' is reserved for Fase 1B Camino A; current code only
-    // logs in shadow regardless. Guard against accidental activation now.
     if (mode === 'active') {
       this.logger.warn(
         `[SHADOW] LIMIT_FALLBACK_MODE=active requested, but Phase 1A only logs. Treating as shadow.`,
@@ -1428,10 +1347,7 @@ export class ExecutionService {
     try {
       const waitEndTime = orderPlacedTime + limitWaitMs;
 
-      // Fetch 1m klines covering the entire wait window plus one extra
-      // candle on each side to absorb boundary effects. limit=10 is well
-      // above the ~3-4 needed for a 180s window at 1m granularity.
-      const klines = await this.binanceRest.getKlines(
+      const klines = await this.exchange.getKlines(
         symbol,
         '1m',
         10,
@@ -1444,11 +1360,9 @@ export class ExecutionService {
         return;
       }
 
-      // Detect zone touches. For LONG, "zone touched" means low <= limitPrice.
-      // For SHORT, high >= limitPrice. Index 2=high, 3=low, 4=close, 6=closeTime.
       const isLong = signal.action === 'LONG';
       const touchEvents = klines.filter((k) =>
-        isLong ? parseFloat(k[3]) <= limitPrice : parseFloat(k[2]) >= limitPrice,
+        isLong ? k.low <= limitPrice : k.high >= limitPrice,
       );
 
       if (touchEvents.length === 0) {
@@ -1458,19 +1372,15 @@ export class ExecutionService {
         return;
       }
 
-      // Recent touch — relative to deterministic wait end, not Date.now().
       const lastTouchKline = touchEvents[touchEvents.length - 1];
-      const lastTouchTime = lastTouchKline[6]; // closeTime
+      const lastTouchTime = lastTouchKline.closeTime;
       const timeSinceTouchAtWaitEnd = waitEndTime - lastTouchTime;
       const recentTouch =
         timeSinceTouchAtWaitEnd >= 0 && timeSinceTouchAtWaitEnd <= 60_000;
 
-      // Current price ≈ last kline close (within 60s of true mark price).
       const lastKline = klines[klines.length - 1];
-      const currentPrice = parseFloat(lastKline[4]);
+      const currentPrice = lastKline.close;
 
-      // Structural tolerance: ATR × 0.5 ≈ half a typical zone height.
-      // Signal does not carry zone bounds, so ATR is used as proxy.
       const structuralTolerance = signal.atr * 0.5;
       const priceStructurallyValid = isLong
         ? currentPrice >= limitPrice - structuralTolerance &&
@@ -1478,16 +1388,11 @@ export class ExecutionService {
         : currentPrice >= limitPrice - structuralTolerance &&
           currentPrice <= limitPrice + structuralTolerance;
 
-      // No post-touch invalidation: last close has not blown through the
-      // structural tolerance on the wrong side. For LONG, close should not
-      // have collapsed far below limitPrice (which would imply the zone is
-      // failing). For SHORT, close should not have spiked far above.
-      const lastClose = parseFloat(lastKline[4]);
+      const lastClose = lastKline.close;
       const noInvalidation = isLong
         ? lastClose >= limitPrice - structuralTolerance
         : lastClose <= limitPrice + structuralTolerance;
 
-      // Slippage cap.
       const slippage = Math.abs(currentPrice - limitPrice);
       const maxSlippage = Number(
         process.env.LIMIT_FALLBACK_MAX_SLIPPAGE_USDT ?? 20,

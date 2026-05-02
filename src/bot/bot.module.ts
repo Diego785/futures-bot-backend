@@ -4,15 +4,20 @@ import {
   OnModuleInit,
   OnModuleDestroy,
   Logger,
+  Inject,
 } from '@nestjs/common';
 import { InjectQueue, BullModule } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { Subscription } from 'rxjs';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { QUEUE_NAMES } from '../common/constants/binance.constants';
-import { BinanceModule } from '../binance/binance.module';
-import { BinanceMarketWsService } from '../binance/binance-market-ws.service';
-import { BinanceUserWsService } from '../binance/binance-user-ws.service';
+import { ExchangeModule } from '../exchange/exchange.module';
+import {
+  IMarketDataPort,
+  IUserDataPort,
+  ConditionalStatus,
+  OrderStatus,
+} from '../exchange/interfaces/exchange.interfaces';
 import { StrategyModule } from '../strategy/strategy.module';
 import { TradingModule } from '../trading/trading.module';
 import { Signal } from '../trading/entities/signal.entity';
@@ -29,7 +34,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
   imports: [
     BullModule.registerQueue({ name: QUEUE_NAMES.STRATEGY_CYCLE }),
     TypeOrmModule.forFeature([Signal]),
-    BinanceModule,
+    ExchangeModule,
     StrategyModule,
     TradingModule,
     forwardRef(() => DashboardModule),
@@ -49,12 +54,14 @@ export class BotModule implements OnModuleInit, OnModuleDestroy {
   private priceSub: Subscription | null = null;
   private stateSub: Subscription | null = null;
   private orderUpdateSub: Subscription | null = null;
-  private algoUpdateSub: Subscription | null = null;
+  private conditionalUpdateSub: Subscription | null = null;
 
   constructor(
     private readonly botState: BotStateService,
-    private readonly binanceMarketWs: BinanceMarketWsService,
-    private readonly binanceUserWs: BinanceUserWsService,
+    @Inject(IMarketDataPort)
+    private readonly marketData: IMarketDataPort,
+    @Inject(IUserDataPort)
+    private readonly userData: IUserDataPort,
     private readonly execution: ExecutionService,
     private readonly dashboardGateway: DashboardGateway,
     @InjectQueue(QUEUE_NAMES.STRATEGY_CYCLE)
@@ -63,7 +70,7 @@ export class BotModule implements OnModuleInit, OnModuleDestroy {
 
   onModuleInit(): void {
     // Subscribe to candle close events -> enqueue BullMQ jobs
-    this.candleSub = this.binanceMarketWs.onCandleClose$.subscribe(
+    this.candleSub = this.marketData.onCandleClose$.subscribe(
       ({ symbol, candle }) => {
         if (!this.botState.enabled || symbol !== this.botState.symbol) {
           return;
@@ -91,7 +98,7 @@ export class BotModule implements OnModuleInit, OnModuleDestroy {
     );
 
     // Subscribe to price ticks -> emit to dashboard
-    this.priceSub = this.binanceMarketWs.onPrice$.subscribe(
+    this.priceSub = this.marketData.onPrice$.subscribe(
       ({ symbol, price }) => {
         this.dashboardGateway.emitPriceUpdate(symbol, price);
       },
@@ -100,62 +107,61 @@ export class BotModule implements OnModuleInit, OnModuleDestroy {
     // Subscribe to bot state changes -> connect/disconnect WS
     this.stateSub = this.botState.onStateChange$.subscribe((state) => {
       if (state.enabled) {
-        this.binanceMarketWs.subscribe(state.symbol, state.timeframe);
-        this.binanceUserWs.start().catch((err) => {
+        this.marketData.subscribe(state.symbol, state.timeframe);
+        this.userData.start().catch((err) => {
           this.logger.error('Failed to start user data stream', err);
         });
       } else {
-        this.binanceMarketWs.unsubscribe();
-        this.binanceUserWs.stop().catch((err) => {
+        this.marketData.unsubscribe();
+        this.userData.stop().catch((err) => {
           this.logger.error('Failed to stop user data stream', err);
         });
       }
     });
 
-    // Subscribe to order updates from user data stream -> execution service
-    this.orderUpdateSub = this.binanceUserWs.onOrderUpdate$.subscribe(
-      (event) => {
-        this.execution
-          .handleOrderUpdate(event)
-          .then(() => {
-            // Emit to dashboard
-            this.dashboardGateway.emitOrderUpdate({
-              clientOrderId: event.o.c,
-              status: event.o.X,
-              symbol: event.o.s,
-              side: event.o.S,
-              executedQty: event.o.z,
-              avgPrice: event.o.ap,
-              realizedProfit: event.o.rp,
-            });
-          })
-          .catch((err) => {
-            this.logger.error('Failed to handle order update', err);
+    // Order updates from user data stream -> execution service
+    this.orderUpdateSub = this.userData.onOrderUpdate$.subscribe((update) => {
+      this.execution
+        .handleOrderUpdate(update)
+        .then(() => {
+          this.dashboardGateway.emitOrderUpdate({
+            clientOrderId: update.clientOrderId,
+            status: update.status,
+            symbol: update.symbol,
+            side: update.side,
+            executedQty: update.cumFilledQty,
+            avgPrice: update.avgPrice,
+            realizedProfit: update.realizedPnl,
           });
-      },
-    );
+        })
+        .catch((err) => {
+          this.logger.error('Failed to handle order update', err);
+        });
+    });
 
-    // Subscribe to algo updates (SL/TP conditional orders) from user data stream
-    this.algoUpdateSub = this.binanceUserWs.onAlgoUpdate$.subscribe(
-      (event) => {
+    // Conditional updates (SL/TP) from user data stream -> execution service
+    this.conditionalUpdateSub = this.userData.onConditionalUpdate$.subscribe(
+      (update) => {
         this.execution
-          .handleAlgoUpdate(event)
+          .handleConditionalUpdate(update)
           .then(() => {
-            const o = event.o;
-            if (o.X === 'TRIGGERED' || o.X === 'FINISHED') {
+            if (
+              update.status === ConditionalStatus.TRIGGERED ||
+              update.status === ConditionalStatus.FINISHED
+            ) {
               this.dashboardGateway.emitOrderUpdate({
-                clientOrderId: o.caid,
-                status: 'FILLED',
-                symbol: o.s,
-                side: o.S,
-                executedQty: o.aq,
-                avgPrice: o.ap,
+                clientOrderId: update.clientOrderId,
+                status: OrderStatus.FILLED,
+                symbol: update.symbol,
+                side: update.side,
+                executedQty: update.executedQty ?? '0',
+                avgPrice: update.avgPrice ?? '0',
                 realizedProfit: '0',
               });
             }
           })
           .catch((err) => {
-            this.logger.error('Failed to handle algo update', err);
+            this.logger.error('Failed to handle conditional update', err);
           });
       },
     );
@@ -168,6 +174,6 @@ export class BotModule implements OnModuleInit, OnModuleDestroy {
     this.priceSub?.unsubscribe();
     this.stateSub?.unsubscribe();
     this.orderUpdateSub?.unsubscribe();
-    this.algoUpdateSub?.unsubscribe();
+    this.conditionalUpdateSub?.unsubscribe();
   }
 }
