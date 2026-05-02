@@ -17,8 +17,11 @@ export class Order {
   @Column({ unique: true })
   clientOrderId: string;
 
-  @Column({ type: 'bigint', nullable: true })
-  binanceOrderId: number;
+  // Exchange-assigned order ID. String to support providers that emit IDs
+  // larger than JS Number.MAX_SAFE_INTEGER (Bybit V5 emits 19+ digit ids).
+  // Renamed from `binanceOrderId` (bigint) — see scripts/migrate-exchange-order-id.sql.
+  @Column({ type: 'varchar', nullable: true })
+  exchangeOrderId: string;
 
   @Column()
   symbol: string;

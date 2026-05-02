@@ -225,7 +225,7 @@ export class ExecutionService {
       // Save entry order
       const entryOrder = this.orderRepo.create({
         clientOrderId: entryClientId,
-        binanceOrderId: parseInt(entryResponse.orderId, 10),
+        exchangeOrderId: entryResponse.orderId,
         symbol,
         side: entrySide,
         type: entryResponse.type || OrderType.LIMIT,
@@ -308,7 +308,7 @@ export class ExecutionService {
 
       const slOrder = this.orderRepo.create({
         clientOrderId: slClientId,
-        binanceOrderId: parseInt(slResponse.conditionalId, 10),
+        exchangeOrderId: slResponse.conditionalId,
         symbol,
         side: closeSide,
         type: OrderType.STOP_MARKET,
@@ -345,7 +345,7 @@ export class ExecutionService {
 
         tpOrder = this.orderRepo.create({
           clientOrderId: tpClientId,
-          binanceOrderId: parseInt(tpResponse.conditionalId, 10),
+          exchangeOrderId: tpResponse.conditionalId,
           symbol,
           side: closeSide,
           type: OrderType.TAKE_PROFIT_MARKET,
@@ -488,10 +488,10 @@ export class ExecutionService {
       where: { clientOrderId },
     });
 
-    // Fallback: lookup by binanceOrderId if clientOrderId lookup fails
+    // Fallback: lookup by exchangeOrderId if clientOrderId lookup fails
     if (!order && update.conditionalId) {
       order = await this.orderRepo.findOne({
-        where: { binanceOrderId: parseInt(update.conditionalId, 10) },
+        where: { exchangeOrderId: update.conditionalId },
       });
       if (order) {
         this.logger.log(`Conditional order found by id fallback: ${update.conditionalId} (cid=${clientOrderId})`);
@@ -565,7 +565,7 @@ export class ExecutionService {
         try {
           await this.exchange.cancelConditional(
             trade.symbol,
-            String(oppositeOrder.binanceOrderId),
+            oppositeOrder.exchangeOrderId,
           );
           oppositeOrder.status = 'CANCELED';
           await this.orderRepo.save(oppositeOrder);
@@ -689,12 +689,12 @@ export class ExecutionService {
         try {
           await this.exchange.cancelConditional(
             trade.symbol,
-            String(oppositeOrder.binanceOrderId),
+            oppositeOrder.exchangeOrderId,
           );
           oppositeOrder.status = 'CANCELED';
           await this.orderRepo.save(oppositeOrder);
           this.logger.log(
-            `Canceled opposite conditional: ${oppositeOrder.clientOrderId} (id=${oppositeOrder.binanceOrderId})`,
+            `Canceled opposite conditional: ${oppositeOrder.clientOrderId} (id=${oppositeOrder.exchangeOrderId})`,
           );
         } catch (err) {
           this.logger.warn('Failed to cancel opposite bracket order', err);
@@ -905,7 +905,7 @@ export class ExecutionService {
                     try {
                       await this.exchange.cancelConditional(
                         trade.symbol,
-                        String(order.binanceOrderId),
+                        order.exchangeOrderId,
                       );
                     } catch {
                       // best-effort
@@ -1005,7 +1005,7 @@ export class ExecutionService {
                     try {
                       await this.exchange.cancelConditional(
                         trade.symbol,
-                        String(slOrder.binanceOrderId),
+                        slOrder.exchangeOrderId,
                       );
                       slOrder.status = 'CANCELED';
                       await this.orderRepo.save(slOrder);
@@ -1036,7 +1036,7 @@ export class ExecutionService {
 
                     const newSlOrder = this.orderRepo.create({
                       clientOrderId: tslClientId,
-                      binanceOrderId: parseInt(newSlResponse.conditionalId, 10),
+                      exchangeOrderId: newSlResponse.conditionalId,
                       symbol: trade.symbol,
                       side: closeSide,
                       type: OrderType.STOP_MARKET,
@@ -1196,7 +1196,7 @@ export class ExecutionService {
                 try {
                   await this.exchange.cancelConditional(
                     trade.symbol,
-                    String(order.binanceOrderId),
+                    order.exchangeOrderId,
                   );
                   order.status = 'CANCELED';
                   await this.orderRepo.save(order);

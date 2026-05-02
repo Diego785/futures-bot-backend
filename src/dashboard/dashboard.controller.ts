@@ -8,6 +8,7 @@ import {
   Logger,
   Inject,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Signal } from '../trading/entities/signal.entity';
@@ -15,6 +16,10 @@ import { Trade } from '../trading/entities/trade.entity';
 import { DailyPnl } from '../trading/entities/daily-pnl.entity';
 import {
   IExchangeRest,
+  IExchangeInfoService,
+  OrderSide,
+  OrderType,
+  TimeInForce,
   type Balance,
   type Position,
 } from '../exchange/interfaces/exchange.interfaces';
@@ -25,6 +30,7 @@ import { KillSwitchService } from '../bot/kill-switch.service';
 import { PreFilterGateService } from '../strategy/pre-filter-gate.service';
 import { DashboardGateway } from './dashboard.gateway';
 import { FcmService } from '../notifications/fcm.service';
+import { roundToTickSize, roundToStepSize } from '../common/utils/precision.util';
 
 @Controller('api')
 export class DashboardController {
@@ -35,9 +41,12 @@ export class DashboardController {
     private readonly killSwitch: KillSwitchService,
     @Inject(IExchangeRest)
     private readonly exchange: IExchangeRest,
+    @Inject(IExchangeInfoService)
+    private readonly exchangeInfo: IExchangeInfoService,
     private readonly preFilterGate: PreFilterGateService,
     private readonly dashboardGateway: DashboardGateway,
     private readonly fcmService: FcmService,
+    private readonly config: ConfigService,
     @InjectRepository(Signal)
     private readonly signalRepo: Repository<Signal>,
     @InjectRepository(Trade)
@@ -115,6 +124,202 @@ export class DashboardController {
   async killBot() {
     await this.killSwitch.activate('Manual kill switch via API');
     return { success: true, message: 'Kill switch activated' };
+  }
+
+  /**
+   * Pre-flight checks before going EXECUTION_MODE=live.
+   *
+   * Runs each check independently so a single failure doesn't mask others:
+   *   1. Balance USDT >= minNotional
+   *   2. No open position on the active symbol
+   *   3. Leverage set to MAX_LEVERAGE
+   *   4. Round-trip place+cancel of a far-OOM LIMIT order
+   *      (validates HMAC sign, account permissions, symbol metadata)
+   *
+   * Pass `{ "skipPlaceOrder": true }` to skip step 4 (no orders placed at all).
+   */
+  @Post('bot/preflight')
+  async preflight(@Body() body?: { skipPlaceOrder?: boolean; symbol?: string }) {
+    const symbol = body?.symbol ?? this.botState.symbol ?? 'BTCUSDT';
+    const skipPlaceOrder = body?.skipPlaceOrder ?? false;
+    const maxLeverage = this.config.get<number>('MAX_LEVERAGE', 5);
+    const minNotional = this.exchangeInfo.getMinNotional(symbol);
+
+    type Check = {
+      name: string;
+      status: 'ok' | 'warn' | 'error';
+      value?: string;
+      message: string;
+    };
+    const checks: Check[] = [];
+
+    // 1. Balance check
+    let balance: Balance | null = null;
+    try {
+      balance = await this.exchange.getBalance('USDT');
+      const avail = balance ? parseFloat(balance.availableBalance) : 0;
+      const total = balance ? parseFloat(balance.balance) : 0;
+      const minRequired = minNotional / maxLeverage + 1; // margin + commission cushion
+      if (!balance) {
+        checks.push({
+          name: 'balance',
+          status: 'error',
+          message: 'No USDT wallet found in account.',
+        });
+      } else if (avail < minRequired) {
+        checks.push({
+          name: 'balance',
+          status: 'warn',
+          value: `total=$${total.toFixed(2)} avail=$${avail.toFixed(2)}`,
+          message: `Available below minimum margin needed ($${minRequired.toFixed(2)} for ${minNotional} USDT notional @ ${maxLeverage}x).`,
+        });
+      } else {
+        checks.push({
+          name: 'balance',
+          status: 'ok',
+          value: `total=$${total.toFixed(2)} avail=$${avail.toFixed(2)}`,
+          message: `Sufficient margin for one trade.`,
+        });
+      }
+    } catch (err: any) {
+      checks.push({
+        name: 'balance',
+        status: 'error',
+        message: extractErrMsg(err),
+      });
+    }
+
+    // 2. Position check
+    let activePosition: Position | undefined;
+    try {
+      const positions = await this.exchange.getPositions(symbol);
+      activePosition = positions.find((p) => parseFloat(p.positionAmt) !== 0);
+      if (activePosition) {
+        checks.push({
+          name: 'position',
+          status: 'warn',
+          value: `${activePosition.positionSide} ${activePosition.positionAmt} @ ${activePosition.entryPrice}`,
+          message: `Existing open position on ${symbol}. Bot will not open a new one until this closes.`,
+        });
+      } else {
+        checks.push({
+          name: 'position',
+          status: 'ok',
+          value: 'no open position',
+          message: 'Ready to open new position.',
+        });
+      }
+    } catch (err: any) {
+      checks.push({
+        name: 'position',
+        status: 'error',
+        message: extractErrMsg(err),
+      });
+    }
+
+    // 3. Leverage check
+    try {
+      await this.exchange.changeLeverage(symbol, maxLeverage);
+      checks.push({
+        name: 'leverage',
+        status: 'ok',
+        value: `${maxLeverage}x`,
+        message: 'Leverage set / already at target.',
+      });
+    } catch (err: any) {
+      checks.push({
+        name: 'leverage',
+        status: 'error',
+        message: extractErrMsg(err),
+      });
+    }
+
+    // 4. Round-trip place+cancel (most important — validates HMAC signing
+    //    and account trading permissions). Skipped if requested.
+    if (skipPlaceOrder) {
+      checks.push({
+        name: 'place_order',
+        status: 'warn',
+        message: 'Skipped (skipPlaceOrder=true). HMAC sign + trading permission unverified.',
+      });
+    } else {
+      const stepSize = this.exchangeInfo.getStepSize(symbol);
+      const tickSize = this.exchangeInfo.getTickSize(symbol);
+      const minQty = parseFloat(this.exchangeInfo.getSymbolInfo(symbol)?.minQty ?? '0.001');
+      const qty = roundToStepSize(minQty, stepSize);
+
+      // Place a LIMIT BUY at 50% below mark price — guaranteed not to fill.
+      // Need a reference price: prefer position markPrice if available, else
+      // fall back to a ticker fetch via getKlines(1m).
+      let refPrice: number | null = null;
+      if (activePosition) {
+        refPrice = parseFloat(activePosition.markPrice);
+      }
+      if (!refPrice || !Number.isFinite(refPrice) || refPrice <= 0) {
+        try {
+          const klines = await this.exchange.getKlines(symbol, '1m', 1);
+          refPrice = klines[0]?.close ?? null;
+        } catch {
+          // ignore — handled below
+        }
+      }
+
+      if (!refPrice || refPrice <= 0) {
+        checks.push({
+          name: 'place_order',
+          status: 'error',
+          message: 'Could not fetch reference price to place dummy order.',
+        });
+      } else {
+        const dummyPrice = roundToTickSize(refPrice * 0.5, tickSize);
+        const dummyClientId = `PREFLIGHT_${Date.now().toString(36)}`;
+        let placed = false;
+        try {
+          const placeResp = await this.exchange.placeOrder({
+            symbol,
+            side: OrderSide.BUY,
+            type: OrderType.LIMIT,
+            quantity: qty,
+            price: dummyPrice,
+            timeInForce: TimeInForce.GTC,
+            clientOrderId: dummyClientId,
+          });
+          placed = true;
+          // Immediately cancel — guaranteed not to have filled at 50% below mark.
+          try {
+            await this.exchange.cancelOrder(symbol, dummyClientId);
+            checks.push({
+              name: 'place_order',
+              status: 'ok',
+              value: `placed+canceled orderId=${placeResp.orderId}`,
+              message: `Round-trip OK at $${dummyPrice} (50% below mark $${refPrice.toFixed(2)}).`,
+            });
+          } catch (cancelErr: any) {
+            checks.push({
+              name: 'place_order',
+              status: 'error',
+              value: `placed=${placeResp.orderId} but cancel failed`,
+              message: `CRITICAL: dummy order placed but cancel failed: ${extractErrMsg(cancelErr)}. Cancel it manually on the exchange.`,
+            });
+          }
+        } catch (placeErr: any) {
+          checks.push({
+            name: 'place_order',
+            status: 'error',
+            value: placed ? 'placed but errored after' : 'placement rejected',
+            message: extractErrMsg(placeErr),
+          });
+        }
+      }
+    }
+
+    const ready = checks.every((c) => c.status === 'ok');
+    return {
+      exchange: this.exchange.provider,
+      symbol,
+      ready,
+      checks,
+    };
   }
 
   @Get('trades')
@@ -205,4 +410,14 @@ export class DashboardController {
     });
     return records;
   }
+}
+
+function extractErrMsg(err: any): string {
+  return (
+    err?.response?.data?.retMsg ||
+    err?.response?.data?.msg ||
+    err?.response?.data ||
+    err?.message ||
+    String(err)
+  );
 }
