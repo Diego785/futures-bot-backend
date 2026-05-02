@@ -1,5 +1,6 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Job } from 'bullmq';
@@ -29,10 +30,18 @@ export class StrategyCycleProcessor extends WorkerHost {
     private readonly execution: ExecutionService,
     private readonly dashboardGateway: DashboardGateway,
     private readonly fcmService: FcmService,
+    private readonly config: ConfigService,
     @InjectRepository(Signal)
     private readonly signalRepo: Repository<Signal>,
   ) {
     super();
+  }
+
+  private isShadowMode(): boolean {
+    const mode = (this.config.get<string>('EXECUTION_MODE') ?? 'live')
+      .toLowerCase()
+      .trim();
+    return mode === 'shadow';
   }
 
   async process(job: Job<StrategyCycleJobData>): Promise<void> {
@@ -114,10 +123,27 @@ export class StrategyCycleProcessor extends WorkerHost {
       return;
     }
 
-    // 7. Approve and execute
+    // 7. Approve
     signalEntity.status = 'APPROVED';
     await this.signalRepo.save(signalEntity);
 
+    // 8. Shadow mode short-circuit — Phase 2.2 validation.
+    // EXECUTION_MODE=shadow records what would have happened in DB and logs,
+    // but does not place any real order. Used to validate 24h in vivo before
+    // exposing capital. Switch to EXECUTION_MODE=live to resume real trading.
+    if (this.isShadowMode()) {
+      signalEntity.status = 'SHADOW_EXECUTED';
+      signalEntity.rejectionReason = `[SHADOW] would execute ${signal.action} ${signal.symbol} entry=${signal.entryPrice.toFixed(2)} SL=${signal.stopLoss.toFixed(2)} TP=${signal.takeProfit.toFixed(2)} conf=${signal.confidence.toFixed(2)}`;
+      await this.signalRepo.save(signalEntity);
+      this.logger.warn(
+        `[SHADOW] Would execute ${signal.action} ${signal.symbol} ` +
+          `entry=${signal.entryPrice.toFixed(2)} SL=${signal.stopLoss.toFixed(2)} TP=${signal.takeProfit.toFixed(2)} ` +
+          `conf=${signal.confidence.toFixed(2)} reasoning="${signal.reasoning.slice(0, 120)}"`,
+      );
+      return;
+    }
+
+    // 9. Execute (live mode)
     const trade = await this.execution.executeSignal(
       signal,
       signalEntity,

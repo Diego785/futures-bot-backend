@@ -9,6 +9,9 @@ export const envSchema = z.object({
   // Exchange selection
   EXCHANGE_PROVIDER: z.enum(['binance', 'bybit']),
 
+  // Execution mode: shadow (signals only, no orders) | live (real orders)
+  EXECUTION_MODE: z.enum(['shadow', 'live']).default('live'),
+
   // Binance (required when EXCHANGE_PROVIDER=binance; harmless otherwise)
   BINANCE_FUTURES_BASE_URL: z.string().url().optional(),
   BINANCE_FUTURES_WS_URL: z.string().optional(),
