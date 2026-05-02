@@ -1,4 +1,5 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { BinanceRestService } from './binance-rest.service';
 import type { BinanceSymbolInfo } from '../common/interfaces/binance.interfaces';
 
@@ -7,9 +8,16 @@ export class ExchangeInfoService implements OnModuleInit {
   private readonly logger = new Logger(ExchangeInfoService.name);
   private symbolMap = new Map<string, BinanceSymbolInfo>();
 
-  constructor(private readonly binanceRest: BinanceRestService) {}
+  constructor(
+    private readonly binanceRest: BinanceRestService,
+    private readonly config: ConfigService,
+  ) {}
 
   async onModuleInit(): Promise<void> {
+    if (this.config.get<string>('EXCHANGE_PROVIDER') !== 'binance') {
+      // Binance not selected — skip refresh so missing creds don't spam warnings.
+      return;
+    }
     await this.refresh();
   }
 
