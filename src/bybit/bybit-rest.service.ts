@@ -332,12 +332,16 @@ export class BybitRestService extends IExchangeRest implements OnModuleInit {
     if (!account) return null;
     const coin = account.coin?.find((c: any) => c.coin === asset);
     if (!coin) return null;
+    // Bybit V5 returns "" (empty string) instead of "0" for fresh wallets,
+    // and `??` only catches null/undefined. Normalize through numericString().
+    const walletBalance = numericString(coin.walletBalance);
+    const equity = numericString(coin.equity, walletBalance);
     return {
       asset,
-      balance: coin.walletBalance ?? '0',
-      availableBalance: coin.availableToWithdraw ?? coin.walletBalance ?? '0',
-      crossWalletBalance: coin.equity ?? coin.walletBalance ?? '0',
-      crossUnrealizedPnl: coin.unrealisedPnl ?? '0',
+      balance: walletBalance,
+      availableBalance: numericString(coin.availableToWithdraw, walletBalance),
+      crossWalletBalance: equity,
+      crossUnrealizedPnl: numericString(coin.unrealisedPnl),
       updateTime: Date.now(),
     };
   }
@@ -630,4 +634,18 @@ function getPrecisionFromTick(tick: string): number {
   const dot = tick.indexOf('.');
   if (dot === -1) return 0;
   return tick.length - dot - 1;
+}
+
+/**
+ * Normalize Bybit's mixed responses (real numeric string, "", undefined, null)
+ * to a parseable numeric string. Empty string and non-finite values fall back
+ * to `fallback`, which itself defaults to '0'.
+ */
+function numericString(value: unknown, fallback: string = '0'): string {
+  if (value === null || value === undefined) return fallback;
+  const s = String(value).trim();
+  if (s === '') return fallback;
+  const n = parseFloat(s);
+  if (!Number.isFinite(n)) return fallback;
+  return s;
 }

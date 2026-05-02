@@ -157,14 +157,27 @@ export class DashboardController {
     let balance: Balance | null = null;
     try {
       balance = await this.exchange.getBalance('USDT');
-      const avail = balance ? parseFloat(balance.availableBalance) : 0;
-      const total = balance ? parseFloat(balance.balance) : 0;
+      const availRaw = balance ? parseFloat(balance.availableBalance) : 0;
+      const totalRaw = balance ? parseFloat(balance.balance) : 0;
+      // Coerce non-finite (NaN from empty strings) to 0 so the comparison is meaningful.
+      const avail = Number.isFinite(availRaw) ? availRaw : 0;
+      const total = Number.isFinite(totalRaw) ? totalRaw : 0;
       const minRequired = minNotional / maxLeverage + 1; // margin + commission cushion
+
       if (!balance) {
         checks.push({
           name: 'balance',
           status: 'error',
-          message: 'No USDT wallet found in account.',
+          message: 'No USDT wallet found in account. Open Bybit Unified Trading Account and deposit USDT.',
+        });
+      } else if (avail <= 0) {
+        checks.push({
+          name: 'balance',
+          status: 'error',
+          value: `total=$${total.toFixed(2)} avail=$${avail.toFixed(2)}`,
+          message:
+            'USDT balance is zero. Transfer USDT into Bybit Unified Trading Account ' +
+            '(Bybit web → Assets → Transfer → destination "Unified Trading Account").',
         });
       } else if (avail < minRequired) {
         checks.push({
