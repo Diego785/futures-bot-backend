@@ -39,6 +39,56 @@ PULLBACK_MAX_WAIT_CYCLES=12        # candles to wait for pullback (bump to 20 = 
 PULLBACK_MIN_ATR_PCT=0.15          # min ATR% to create setup (was hardcoded)
 ```
 
+## Daily Telemetry (added 2026-05-14)
+
+Persistent diagnostic table `daily_telemetry` that records cycle/signal lifecycle per UTC day.
+Required for diagnosing live-vs-backtest gap empirically (without grepping docker logs).
+
+**Schema** (`src/trading/entities/daily-telemetry.entity.ts`):
+- `date` (PK), `totalCycles`, `setupsCreated`, `entriesAttempted`
+- `signalsGenerated`, `signalsExecuted`, `signalsRejected`
+- `blockedReasons` JSONB — category → count (low_volatility, htf_unclear, no_zones, etc)
+- `rejectionReasons` JSONB — risk-manager rejection category → count
+- `latestCycleAt` — heartbeat timestamp, used by 5min cron to detect bot offline
+
+**Migration**: `migrations/2026-05-14_daily_telemetry.sql` (run manually before deploy):
+```bash
+docker exec -i postgres-db psql -U postgres -d futures-bot \
+  < migrations/2026-05-14_daily_telemetry.sql
+```
+
+**Diagnostic query** (run after 24h+ of data collection):
+```sql
+SELECT date, "totalCycles", "setupsCreated", "entriesAttempted",
+       "signalsGenerated", "signalsExecuted", "signalsRejected",
+       "blockedReasons", "rejectionReasons", "latestCycleAt"
+FROM daily_telemetry ORDER BY date DESC LIMIT 7;
+```
+
+**What to look for**:
+- `totalCycles ~ 96` per day = healthy uptime (1 cycle per 15m candle)
+- `totalCycles < 60` = bot offline part of day (WS or container issue)
+- Dominant `blockedReasons` key = next strategy lever to relax
+- Dominant `rejectionReasons` key = risk-manager filter to investigate
+
+## Heartbeat Alert (added 2026-05-14)
+
+`MaintenanceCronService.heartbeatCheck()` runs every 5 min. If `latestCycleAt` is > 18 min old
+(i.e. 1 full 15m candle missed), logs ERROR + sends FCM notification "Heartbeat stale: Nmin
+sin cycles". De-duplicated to once every 30 min.
+
+Resolves detectability of bot-offline scenarios that caused the 2026-04-21/04-23 incident
+(memoria: project_ws_staleness_incident).
+
+## Zombie Trade Auto-Cleanup (added 2026-05-14)
+
+`RiskManagerService.checkExistingPosition()` now queries exchange FIRST. If exchange has no
+position but DB has trade marked OPEN, force-closes the trade as `CLOSED_ORPHAN` and approves
+the new signal. Prevents future scenarios where a reconcile failure leaves a zombie OPEN trade
+that blocks all subsequent signals.
+
+If exchange query fails (API timeout), falls back to conservative DB check (reject signal).
+
 ## Signal Flow
 1. Binance WS sends candle close event every 15m
 2. BullMQ job queued -> `StrategyCycleProcessor`

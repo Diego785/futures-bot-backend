@@ -100,11 +100,17 @@ export class TelemetryService {
 
   /**
    * Returns latestCycleAt for heartbeat checks. Used by maintenance-cron to
-   * detect bot offline / WS staleness.
+   * detect bot offline / WS staleness. Returns null if table doesn't exist
+   * yet (graceful degradation pre-migration).
    */
   async getLatestCycleAt(): Promise<Date | null> {
-    const row = await this.repo.findOne({ where: { date: this.today() } });
-    return row?.latestCycleAt ?? null;
+    try {
+      const row = await this.repo.findOne({ where: { date: this.today() } });
+      return row?.latestCycleAt ?? null;
+    } catch (err) {
+      this.logger.warn(`getLatestCycleAt failed (table may not exist): ${err}`);
+      return null;
+    }
   }
 
   /**
