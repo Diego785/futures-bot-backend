@@ -157,7 +157,7 @@ export class ExecutionService {
         signal.action === 'LONG' ? OrderSide.SELL : OrderSide.BUY;
 
       // 6. Place LIMIT entry order (maker fee 0.02% vs taker 0.05%)
-      const entryClientId = generateClientOrderId(
+      let entryClientId = generateClientOrderId(
         'ENTRY',
         signalEntity.id,
         entrySide as 'BUY' | 'SELL',
@@ -200,19 +200,103 @@ export class ExecutionService {
             this.logger.log('LIMIT order filled during wait, proceeding');
           }
           if (canceled) {
-            this.logger.warn(
-              `LIMIT order not filled in ${LIMIT_WAIT_MS / 1000}s at zone boundary ${limitPrice}. Skipping trade (no MARKET fallback).`,
+            // IOC fallback: place LIMIT with max-slip cap as Immediate-Or-Cancel.
+            // If liquidity exists within MAX_SLIP, fill happens immediately (taker).
+            // If price moved beyond MAX_SLIP, IOC cancels itself → no uncontrolled slippage.
+            // Disabled trades = bot only captures ~10% of signals; this is the main fix
+            // for the live-vs-backtest gap identified 2026-05-13.
+            const fallbackEnabled =
+              this.config.get<string>('IOC_FALLBACK_ENABLED', 'true') === 'true';
+            const maxSlipUsd = Number(
+              this.config.get<number>('IOC_FALLBACK_MAX_SLIP_USD', 50),
             );
 
-            await this.shadowEvaluateFallback(
-              signal,
-              symbol,
-              parseFloat(limitPrice),
-              orderPlacedTime,
-              LIMIT_WAIT_MS,
-            );
+            if (fallbackEnabled && maxSlipUsd > 0) {
+              const isLong = signal.action === 'LONG';
+              const slipCapPrice = isLong
+                ? signal.entryPrice + maxSlipUsd
+                : signal.entryPrice - maxSlipUsd;
+              const iocPrice = roundToTickSize(slipCapPrice, tickSize);
+              // Use 'ENTRY' prefix (the timestamp in the id makes it unique
+              // even after the original ENTRY clientId was cancelled).
+              const iocClientId = generateClientOrderId(
+                'ENTRY',
+                signalEntity.id,
+                entrySide as 'BUY' | 'SELL',
+              );
 
-            return null;
+              this.logger.log(
+                `LIMIT not filled. Trying IOC fallback @ ${iocPrice} ` +
+                  `(signal entry=${limitPrice}, max slip $${maxSlipUsd})`,
+              );
+
+              try {
+                const iocResponse = await this.exchange.placeOrder({
+                  symbol,
+                  side: entrySide,
+                  type: OrderType.LIMIT,
+                  quantity,
+                  price: iocPrice,
+                  timeInForce: TimeInForce.IOC,
+                  clientOrderId: iocClientId,
+                });
+
+                const iocFilled = parseFloat(iocResponse.executedQty || '0');
+                const expectedQty = parseFloat(quantity);
+
+                if (
+                  iocResponse.status === OrderStatus.FILLED ||
+                  iocFilled >= expectedQty * 0.99
+                ) {
+                  this.logger.log(
+                    `IOC fallback FILLED: ${iocFilled} ${symbol} ` +
+                      `@ avgPrice ${iocResponse.avgPrice} (cap was ${iocPrice})`,
+                  );
+                  entryResponse = iocResponse;
+                  entryClientId = iocClientId;
+                } else {
+                  this.logger.warn(
+                    `IOC fallback NOT filled (status=${iocResponse.status}, ` +
+                      `executed=${iocFilled}/${expectedQty}). ` +
+                      `Price drifted beyond $${maxSlipUsd} from zone. Skipping trade.`,
+                  );
+                  await this.shadowEvaluateFallback(
+                    signal,
+                    symbol,
+                    parseFloat(limitPrice),
+                    orderPlacedTime,
+                    LIMIT_WAIT_MS,
+                  );
+                  return null;
+                }
+              } catch (iocErr) {
+                this.logger.error(
+                  `IOC fallback placement failed: ${iocErr}. Skipping trade.`,
+                );
+                await this.shadowEvaluateFallback(
+                  signal,
+                  symbol,
+                  parseFloat(limitPrice),
+                  orderPlacedTime,
+                  LIMIT_WAIT_MS,
+                );
+                return null;
+              }
+            } else {
+              // IOC fallback disabled via env — preserve original abort behavior
+              this.logger.warn(
+                `LIMIT order not filled in ${LIMIT_WAIT_MS / 1000}s at zone boundary ${limitPrice}. ` +
+                  `Skipping trade (IOC fallback disabled).`,
+              );
+              await this.shadowEvaluateFallback(
+                signal,
+                symbol,
+                parseFloat(limitPrice),
+                orderPlacedTime,
+                LIMIT_WAIT_MS,
+              );
+              return null;
+            }
           }
         }
       } catch (limitErr) {

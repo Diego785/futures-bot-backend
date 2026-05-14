@@ -24,6 +24,19 @@ SL_SAFETY_MIN_PCT=0                # DISABLED for pullback-ob
 TRAIL_FIXED=50                     # Trailing SL follows price at $50 distance
 TRAILING_BE_PCT=0.5                # Legacy (unused with fixed-amount mode)
 GATE_MIN_SCORE=30
+
+# Added 2026-05-13: IOC fallback when LIMIT entry doesn't fill in 180s.
+# Previously the bot aborted the trade (captured only 10% of backtest signals).
+# IOC tries to fill at signal.entryPrice +/- IOC_FALLBACK_MAX_SLIP_USD.
+# If liquidity exists within cap -> fills as taker. If price drifted -> IOC cancels itself.
+IOC_FALLBACK_ENABLED=true          # set to "false" to revert to old "no fallback" behavior
+IOC_FALLBACK_MAX_SLIP_USD=50       # max USD slippage tolerated when filling IOC fallback
+
+# Added 2026-05-13: proactive fixes for 68% live-vs-backtest gap (17 days no-operation).
+# All flag-OFF until backtest validates each. Activate ONE at a time.
+HTF_4H_TIEBREAKER_ENABLED=false    # use 4H structure when 1H EMA+structure contradict
+PULLBACK_MAX_WAIT_CYCLES=12        # candles to wait for pullback (bump to 20 = 5h)
+PULLBACK_MIN_ATR_PCT=0.15          # min ATR% to create setup (was hardcoded)
 ```
 
 ## Signal Flow
@@ -36,7 +49,7 @@ GATE_MIN_SCORE=30
    - `pullback-ob`: State machine waits for pullback to OB/FVG zone
    - `hybrid`: EMA Crossover + Breakout (legacy)
 7. If confidence >= 0.55 -> Risk Manager validates (6 checks)
-8. Execution: LIMIT entry (10s timeout) + MARKET fallback + STOP_MARKET (SL) + TAKE_PROFIT_MARKET (TP)
+8. Execution: LIMIT entry GTC (180s timeout) -> if not filled, LIMIT IOC fallback at signal price +/- IOC_FALLBACK_MAX_SLIP_USD cap (2026-05-13) -> if also not filled, abort. SL/TP placed as STOP_MARKET / TAKE_PROFIT_MARKET conditionals.
 9. If MARKET fill differs >$50 from signal entry -> recalculates SL/TP from actual fill
 10. Trailing SL: Fixed-$50 mode (TRAIL_FIXED env var). SL follows price at $50 distance. Min $5 movement.
 11. PnL captured via /fapi/v1/income API (commissions + funding fees)

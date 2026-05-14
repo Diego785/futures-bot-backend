@@ -10,6 +10,7 @@ import { SignalGeneratorService } from '../strategy/signal-generator.service';
 import { RiskManagerService } from '../trading/risk-manager.service';
 import { ExecutionService } from '../trading/execution.service';
 import { Signal } from '../trading/entities/signal.entity';
+import { TelemetryService } from '../trading/telemetry.service';
 import { DashboardGateway } from '../dashboard/dashboard.gateway';
 import { FcmService } from '../notifications/fcm.service';
 
@@ -31,6 +32,7 @@ export class StrategyCycleProcessor extends WorkerHost {
     private readonly dashboardGateway: DashboardGateway,
     private readonly fcmService: FcmService,
     private readonly config: ConfigService,
+    private readonly telemetry: TelemetryService,
     @InjectRepository(Signal)
     private readonly signalRepo: Repository<Signal>,
   ) {
@@ -104,6 +106,7 @@ export class StrategyCycleProcessor extends WorkerHost {
       status: 'PENDING',
     });
     await this.signalRepo.save(signalEntity);
+    this.telemetry.recordSignalLifecycle('generated').catch(() => {});
 
     // 5. Emit signal to dashboard
     this.dashboardGateway.emitSignal(signalEntity as unknown as Record<string, unknown>);
@@ -152,6 +155,7 @@ export class StrategyCycleProcessor extends WorkerHost {
     if (trade) {
       signalEntity.status = 'EXECUTED';
       await this.signalRepo.save(signalEntity);
+      this.telemetry.recordSignalLifecycle('executed').catch(() => {});
       this.dashboardGateway.emitOrderUpdate(trade as unknown as Record<string, unknown>);
       this.logger.log(`Signal EXECUTED -> Trade ${trade.id}`);
       this.fcmService.notifyTradeOpened(
@@ -163,6 +167,11 @@ export class StrategyCycleProcessor extends WorkerHost {
       ).catch(() => {});
     } else {
       this.logger.warn('Execution returned null — signal not executed');
+      // Execution returned null = LIMIT timeout abort OR IOC fallback abort.
+      // Treat as rejected for telemetry so capture rate analysis stays accurate.
+      this.telemetry
+        .recordSignalLifecycle('rejected', 'Execution returned null (LIMIT/IOC abort)')
+        .catch(() => {});
     }
   }
 }

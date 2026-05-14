@@ -1,7 +1,11 @@
 import { NestFactory } from '@nestjs/core';
 import { BacktestModule } from './backtest.module';
 import { BacktestService } from './backtest.service';
-import type { BacktestConfig } from './interfaces';
+import type {
+  BacktestConfig,
+  SessionLabel,
+  Delta24hBucket,
+} from './interfaces';
 
 async function main() {
   const args = process.argv.slice(2);
@@ -10,6 +14,22 @@ async function main() {
     return arg ? arg.split('=')[1] : def;
   };
   const hasFlag = (name: string): boolean => args.includes(`--${name}`);
+
+  const validSessions: readonly SessionLabel[] = ['ASIA', 'EU', 'OVERLAP', 'US'];
+  const validDelta24h: readonly Delta24hBucket[] = ['CONSOLIDATION', 'NORMAL', 'MOMENTUM_EXTREME'];
+
+  const parseSessionList = (raw: string): SessionLabel[] => {
+    if (!raw) return [];
+    return raw.split(',').map((s) => s.trim().toUpperCase()).filter((s): s is SessionLabel =>
+      (validSessions as readonly string[]).includes(s),
+    );
+  };
+  const parseDelta24hList = (raw: string): Delta24hBucket[] => {
+    if (!raw) return [];
+    return raw.split(',').map((s) => s.trim().toUpperCase()).filter((s): s is Delta24hBucket =>
+      (validDelta24h as readonly string[]).includes(s),
+    );
+  };
 
   const timeframe = getArg('timeframe', '15m');
   const tfMinutes: Record<string, number> = {
@@ -28,7 +48,7 @@ async function main() {
     gateEntryThreshold: parseInt(getArg('gate-threshold', '60'), 10),
     initialBalance: parseFloat(getArg('balance', '100')),
     maxLeverage: parseInt(getArg('leverage', '5'), 10),
-    commissionRate: 0.0005, // 0.05% per side
+    commissionRate: parseFloat(getArg('commission', '0.00055')), // 0.055% per side = Bybit taker real (was 0.0005, 10bp optimistic)
     cooldownCandles: Math.ceil(30 / minutes), // 30 min cooldown
     slAtrMultiplier: parseFloat(getArg('sl-atr', '2')),
     slMinPercent: parseFloat(getArg('sl-pct', '0.005')),
@@ -57,11 +77,29 @@ async function main() {
     pullbackLooseHtf: hasFlag('loose-htf'),
     pullbackMinAtrPct: parseFloat(getArg('min-atr-pct', '0')),
     pullbackFreshChoch: hasFlag('fresh-choch'),
+    pullbackHtf4hTiebreaker: hasFlag('htf-4h-tiebreaker'),
     entrySlippage: parseFloat(getArg('entry-slippage', '0')),
     trailBreakevenAt: parseFloat(getArg('trail-breakeven-at', '0')),
     fillRate: parseFloat(getArg('fill-rate', '1.0')),
     adverseSlip: parseFloat(getArg('adverse-slip', '0')),
     pessimisticTrail: hasFlag('pessimistic-trail'),
+    blockSessions: parseSessionList(getArg('block-session', '')),
+    blockDelta24hBuckets: parseDelta24hList(getArg('block-delta24h-bucket', '')),
+    // System B — Session Breakout
+    sbRangeBars: parseInt(getArg('sb-range-bars', '12'), 10),
+    sbRrRatio: parseFloat(getArg('sb-rr', '1.5')),
+    sbMinRangeAtrMult: parseFloat(getArg('sb-min-range-atr', '0')),
+    sbSessions: parseSessionList(getArg('sb-sessions', 'EU,OVERLAP,US')),
+    // System B v2 — Mean Reversion
+    mrRsiLong: parseFloat(getArg('mr-rsi-long', '25')),
+    mrRsiShort: parseFloat(getArg('mr-rsi-short', '75')),
+    mrRsiReset: parseFloat(getArg('mr-rsi-reset', '50')),
+    mrSlAtrMult: parseFloat(getArg('mr-sl-atr', '1.0')),
+    mrTpAtrMult: parseFloat(getArg('mr-tp-atr', '1.5')),
+    mrCooldownBars: parseInt(getArg('mr-cooldown-bars', '6'), 10),
+    mrSessions: parseSessionList(getArg('mr-sessions', 'EU,OVERLAP,US')),
+    economicBe: hasFlag('economic-be'),
+    economicBeSafetyPct: parseFloat(getArg('economic-be-safety-pct', '0.02')),
   };
 
   console.log('');
@@ -93,6 +131,30 @@ async function main() {
     const fs = await import('fs');
     fs.writeFileSync(outputFile, JSON.stringify(report, null, 2));
     console.log(`Report saved to ${outputFile}`);
+  }
+
+  // Phase 1: export per-trade CSV for ad-hoc sub-analysis
+  const tradesCsv = getArg('export-trades-csv', '');
+  if (tradesCsv) {
+    const fs = await import('fs');
+    if (report.trades.length === 0) {
+      fs.writeFileSync(tradesCsv, '(no trades)\n');
+      console.log(`No trades to export — wrote placeholder to ${tradesCsv}`);
+    } else {
+      const headers = Object.keys(report.trades[0]);
+      const escapeCsv = (v: unknown): string => {
+        if (v === null || v === undefined) return '';
+        if (typeof v === 'string') return `"${v.replace(/"/g, '""')}"`;
+        if (typeof v === 'boolean') return v ? '1' : '0';
+        if (typeof v === 'number') return Number.isFinite(v) ? String(v) : '';
+        return String(v);
+      };
+      const rows = report.trades.map((t) =>
+        headers.map((h) => escapeCsv((t as unknown as Record<string, unknown>)[h])).join(','),
+      );
+      fs.writeFileSync(tradesCsv, [headers.join(','), ...rows].join('\n'));
+      console.log(`Trades CSV exported to ${tradesCsv} (${report.trades.length} rows × ${headers.length} cols)`);
+    }
   }
 
   await app.close();

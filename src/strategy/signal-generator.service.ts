@@ -1,6 +1,7 @@
 import { Injectable, Logger, Inject } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { IExchangeRest } from '../exchange/interfaces/exchange.interfaces';
+import { TelemetryService } from '../trading/telemetry.service';
 import { IndicatorsService, type IndicatorFeatures } from './indicators.service';
 import { SmcService, type SmcFeatures } from './smc.service';
 import { DeepSeekService, type DeltaChanges, type HtfContext } from './deepseek.service';
@@ -69,12 +70,27 @@ interface PreviousCycleData {
   timestamp: number;
 }
 
+interface DailyMetrics {
+  date: string;
+  cycles: number;
+  setupsCreated: number;
+  entriesAttempted: number;
+  blocked: Map<string, number>;
+}
+
 @Injectable()
 export class SignalGeneratorService {
   private readonly logger = new Logger(SignalGeneratorService.name);
   private readonly gateEnabled: boolean;
   private previousCycle: PreviousCycleData | null = null;
   private cyclesSinceLastAction = 0;
+  private dailyMetrics: DailyMetrics = {
+    date: '',
+    cycles: 0,
+    setupsCreated: 0,
+    entriesAttempted: 0,
+    blocked: new Map(),
+  };
 
   constructor(
     @Inject(IExchangeRest)
@@ -87,6 +103,7 @@ export class SignalGeneratorService {
     private readonly gate: PreFilterGateService,
     private readonly signalCache: SignalCacheService,
     private readonly config: ConfigService,
+    private readonly telemetry: TelemetryService,
   ) {
     this.gateEnabled = this.config.get<boolean>('GATE_ENABLED', true);
   }
@@ -133,15 +150,22 @@ export class SignalGeneratorService {
       );
     }
 
-    // 5. Fetch and compute HTF (1h) context
+    // 5. Fetch and compute HTF (1h) context + 4H structure tiebreaker (parallel)
     let htfContext: HtfContext | null = null;
+    let htf4hStructure: string | null = null;
     try {
-      htfContext = await this.computeHtfContext(symbol);
+      const [htf1h, struct4h] = await Promise.all([
+        this.computeHtfContext(symbol),
+        this.computeHtf4hStructure(symbol),
+      ]);
+      htfContext = htf1h;
+      htf4hStructure = struct4h;
       if (htfContext) {
         this.logger.log(
           `HTF(1h): structure=${htfContext.marketStructure} ` +
             `zone=${htfContext.premiumDiscount} ` +
-            `rsi=${htfContext.rsi14.toFixed(1)} cross=${htfContext.emaCrossover}`,
+            `rsi=${htfContext.rsi14.toFixed(1)} cross=${htfContext.emaCrossover} ` +
+            `| 4H structure=${htf4hStructure ?? 'n/a'}`,
         );
       }
     } catch (err) {
@@ -237,7 +261,13 @@ export class SignalGeneratorService {
         features,
         smcFeatures,
         symbol,
-        htfContext ? { emaCrossover: htfContext.emaCrossover, marketStructure: htfContext.marketStructure } : null,
+        htfContext
+          ? {
+              emaCrossover: htfContext.emaCrossover,
+              marketStructure: htfContext.marketStructure,
+              marketStructure4h: htf4hStructure,
+            }
+          : null,
       );
     } else {
       // Legacy hybrid strategy (EMA crossover + breakout)
@@ -261,6 +291,11 @@ export class SignalGeneratorService {
       `${isPullbackMode ? 'Pullback' : 'Hybrid'}: action=${hybridResult.action} confidence=${hybridResult.confidence.toFixed(2)} ` +
         `reason="${hybridResult.reasoning.slice(0, 80)}..."`,
     );
+
+    // Telemetría diaria (solo pullback mode — diagnóstico gap live vs backtest)
+    if (isPullbackMode) {
+      this.recordCycleMetrics(hybridResult.action, hybridResult.reasoning);
+    }
 
     // Skip HOLD signals
     if (hybridResult.action === 'HOLD') {
@@ -397,5 +432,90 @@ export class SignalGeneratorService {
         ? `${smcFeatures.lastStructureBreak.type} ${smcFeatures.lastStructureBreak.direction}`
         : null,
     };
+  }
+
+  /**
+   * Fetch 4H candles and return only marketStructure. Used as tiebreaker
+   * when 1H EMA cross contradicts 1H structure (HTF_4H_TIEBREAKER_ENABLED).
+   * Returns null if not enough candles or fetch fails — caller handles gracefully.
+   */
+  private async computeHtf4hStructure(symbol: string): Promise<string | null> {
+    try {
+      const candles = await this.exchange.getKlines(symbol, '4h', 100);
+      if (candles.length < 30) return null;
+      const smcFeatures = this.smc.analyze(candles);
+      return smcFeatures.marketStructure;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Telemetría diaria persistida en DB + log en memoria.
+   * Cada cycle persiste en tabla daily_telemetry con heartbeat actualizado.
+   * Al cambiar día UTC, log resumen del día previo (rolling counters in-memory).
+   */
+  private recordCycleMetrics(action: string, reasoning: string): void {
+    const today = new Date().toISOString().slice(0, 10);
+
+    if (this.dailyMetrics.date !== today) {
+      if (this.dailyMetrics.date) {
+        const blockedSummary = [...this.dailyMetrics.blocked.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .map(([k, v]) => `${k}=${v}`)
+          .join(', ');
+        this.logger.log(
+          `📊 Daily summary ${this.dailyMetrics.date}: cycles=${this.dailyMetrics.cycles} ` +
+            `setups=${this.dailyMetrics.setupsCreated} entries=${this.dailyMetrics.entriesAttempted} ` +
+            `| blocked: ${blockedSummary || 'none'}`,
+        );
+      }
+      this.dailyMetrics = {
+        date: today,
+        cycles: 0,
+        setupsCreated: 0,
+        entriesAttempted: 0,
+        blocked: new Map(),
+      };
+    }
+
+    this.dailyMetrics.cycles++;
+
+    if (action === 'LONG' || action === 'SHORT') {
+      this.dailyMetrics.entriesAttempted++;
+      this.telemetry
+        .recordCycle({ kind: 'entry', action: action as 'LONG' | 'SHORT' })
+        .catch(() => {});
+      return;
+    }
+
+    let category: string;
+    let isSetup = false;
+    if (reasoning.includes('Setup') && reasoning.includes('detectado')) {
+      this.dailyMetrics.setupsCreated++;
+      isSetup = true;
+      category = 'setup_created';
+    } else if (reasoning.includes('Volatilidad muy baja')) category = 'low_volatility';
+    else if (reasoning.includes('Sin bias HTF')) category = 'htf_unclear';
+    else if (reasoning.includes('contradice HTF')) category = 'structure_contradicts';
+    else if (reasoning.includes('sin zonas')) category = 'no_zones';
+    else if (reasoning.includes('Filtro P/D')) category = 'filter_pd';
+    else if (reasoning.includes('slope') && reasoning.includes('contra')) category = 'slope_against';
+    else if (reasoning.includes('Esperando pullback')) category = 'waiting_pullback';
+    else if (reasoning.includes('expirado')) category = 'setup_expired';
+    else if (reasoning.includes('Setup cancelado')) category = 'setup_invalidated';
+    else if (reasoning.includes('sin setup')) category = 'idle';
+    else category = 'other';
+
+    if (!isSetup) {
+      this.dailyMetrics.blocked.set(category, (this.dailyMetrics.blocked.get(category) ?? 0) + 1);
+    }
+
+    // Persist to DB. Fire-and-forget — failures logged, don't block cycle.
+    if (isSetup) {
+      this.telemetry.recordCycle({ kind: 'setup_created' }).catch(() => {});
+    } else {
+      this.telemetry.recordCycle({ kind: 'blocked', category }).catch(() => {});
+    }
   }
 }

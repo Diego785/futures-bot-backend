@@ -8,12 +8,14 @@ import { DailyPnl } from './entities/daily-pnl.entity';
 import { RiskManagerService } from './risk-manager.service';
 import { ExecutionService } from './execution.service';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { TelemetryModule } from '../telemetry/telemetry.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Signal, Order, Trade, DailyPnl]),
     ExchangeModule,
     NotificationsModule,
+    TelemetryModule,
   ],
   providers: [RiskManagerService, ExecutionService],
   exports: [

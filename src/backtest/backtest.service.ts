@@ -11,7 +11,16 @@ import {
 } from '../common/interfaces/binance.interfaces';
 import { TradeSimulator } from './trade-simulator';
 import { generateReport, printReport } from './report-generator';
-import type { BacktestConfig, BacktestTrade, BacktestReport } from './interfaces';
+import type {
+  BacktestConfig,
+  BacktestTrade,
+  BacktestReport,
+  TradeContextAtEntry,
+  SessionLabel,
+  Delta24hBucket,
+} from './interfaces';
+import { BreakoutDetector } from './system-b/breakout.strategy';
+import { MeanReversionDetector } from './system-b/mean-reversion.strategy';
 
 function hasCandleConfirm(
   recentCandles: Array<{ o: number; h: number; l: number; c: number; v: number }>,
@@ -73,6 +82,19 @@ export class BacktestService {
     );
     this.logger.log(`Downloaded ${htfCandles.length} HTF (1H) candles`);
 
+    // 2a. Download 4H candles for HTF 4H tiebreaker (only if enabled — saves bandwidth)
+    let htf4hCandles: Candle[] = [];
+    if (config.pullbackHtf4hTiebreaker) {
+      htf4hCandles = await this.downloadKlines(
+        config.symbol,
+        '4h',
+        config.days,
+        config.startDate,
+        config.endDate,
+      );
+      this.logger.log(`Downloaded ${htf4hCandles.length} HTF (4H) candles for tiebreaker`);
+    }
+
     // 2b. Download 1m candles for intrabar trailing resolution (if not pessimistic-only mode)
     let intrabarCandles: Candle[] = [];
     if (!config.pessimisticTrail) {
@@ -100,6 +122,8 @@ export class BacktestService {
       config.trailActivation ?? config.trailFixed ?? 100,
       config.trailBreakevenAt ?? 0,
       config.pessimisticTrail ?? false,
+      config.economicBe ?? false,
+      config.economicBeSafetyPct ?? 0.02,
     );
 
     const warmup = 100;
@@ -112,6 +136,29 @@ export class BacktestService {
     let pbTargetZones: Array<{ type: 'OB' | 'FVG'; high: number; low: number }> = [];
     let pbWaitStart = 0;
     let pbCreatedAtBreakTime: number | null = null;
+
+    // System B — Session Breakout detector (stateful across candles)
+    const breakoutDetector = config.mode === 'session-breakout'
+      ? new BreakoutDetector({
+          rangeBars: config.sbRangeBars,
+          rrRatio: config.sbRrRatio,
+          minRangeAtrMult: config.sbMinRangeAtrMult,
+          sessions: (config.sbSessions.filter((s) => s !== 'ASIA') as ('EU' | 'OVERLAP' | 'US')[]),
+        })
+      : null;
+
+    // System B v2 — Mean Reversion detector
+    const meanReversionDetector = config.mode === 'mean-reversion'
+      ? new MeanReversionDetector({
+          rsiLongThreshold: config.mrRsiLong,
+          rsiShortThreshold: config.mrRsiShort,
+          rsiResetLevel: config.mrRsiReset,
+          slAtrMult: config.mrSlAtrMult,
+          tpAtrMult: config.mrTpAtrMult,
+          cooldownBars: config.mrCooldownBars,
+          sessions: config.mrSessions,
+        })
+      : null;
 
     for (let i = warmup; i < candles.length; i++) {
       const candle = candles[i];
@@ -417,6 +464,20 @@ export class BacktestService {
               }
             }
 
+            // HTF 4H tiebreaker: when 1H EMA and structure CONTRADICT (still null),
+            // use 4H structure as higher-authority arbiter. Only activates when explicitly enabled.
+            if (htfBias === null && config.pullbackHtf4hTiebreaker && htf4hCandles.length > 0) {
+              const htf4hSlice = this.getHtfSlice(htf4hCandles, candle.closeTime);
+              if (htf4hSlice.length >= 21) {
+                const htf4hSmc = this.smc.analyze(htf4hSlice);
+                if (htfFeatures.emaCrossover === 'BULLISH' && htfSmc.marketStructure === 'BEARISH' && htf4hSmc.marketStructure === 'BULLISH') {
+                  htfBias = 'LONG';
+                } else if (htfFeatures.emaCrossover === 'BEARISH' && htfSmc.marketStructure === 'BULLISH' && htf4hSmc.marketStructure === 'BEARISH') {
+                  htfBias = 'SHORT';
+                }
+              }
+            }
+
             // Filter P/D: skip if LONG in PREMIUM or SHORT in DISCOUNT
             if (htfBias && config.filterPremiumDiscount) {
               if (htfBias === 'LONG' && smcFeatures.premiumDiscount === 'PREMIUM') htfBias = null;
@@ -590,7 +651,18 @@ export class BacktestService {
                 if (config.filterZoneConfluence && !(zone as any).confluence) continue;
 
                 const tp = entryPrice + slDist * config.rrRatio;
-                simulator.openPosition('LONG', entryPrice, sl, tp, candle.closeTime, 0, (zone as any).confluence ? 0.80 : 0.65);
+                const longCtx = this.buildTradeContext(candles, htfCandles, i, features, config);
+                if (this.shouldBlockEntry(longCtx, config)) continue;
+                simulator.openPosition(
+                  'LONG',
+                  entryPrice,
+                  sl,
+                  tp,
+                  candle.closeTime,
+                  0,
+                  (zone as any).confluence ? 0.80 : 0.65,
+                  longCtx,
+                );
               } else {
                 if (candle.open > zone.high) continue;
                 if (candle.high < zone.low) continue;
@@ -611,7 +683,18 @@ export class BacktestService {
                 if (config.filterZoneConfluence && !(zone as any).confluence) continue;
 
                 const tp = entryPrice - slDist * config.rrRatio;
-                simulator.openPosition('SHORT', entryPrice, sl, tp, candle.closeTime, 0, (zone as any).confluence ? 0.80 : 0.65);
+                const shortCtx = this.buildTradeContext(candles, htfCandles, i, features, config);
+                if (this.shouldBlockEntry(shortCtx, config)) continue;
+                simulator.openPosition(
+                  'SHORT',
+                  entryPrice,
+                  sl,
+                  tp,
+                  candle.closeTime,
+                  0,
+                  (zone as any).confluence ? 0.80 : 0.65,
+                  shortCtx,
+                );
               }
 
               // Simulate fill probability — deterministic hash from candle time for reproducibility
@@ -649,6 +732,8 @@ export class BacktestService {
             ? entryPrice + slDistance * config.rrRatio
             : entryPrice - slDistance * config.rrRatio;
 
+        const gateOnlyCtx = this.buildTradeContext(candles, htfCandles, i, features, config);
+        if (this.shouldBlockEntry(gateOnlyCtx, config)) continue;
         simulator.openPosition(
           direction,
           entryPrice,
@@ -657,7 +742,66 @@ export class BacktestService {
           candle.closeTime,
           gateResult.score,
           confidence,
+          gateOnlyCtx,
         );
+      }
+
+      // ───── System B — Session Breakout ─────
+      if (config.mode === 'session-breakout' && breakoutDetector) {
+        const signal = breakoutDetector.processCandle(candles, i, features.atr14);
+        if (signal && !simulator.hasPosition && i >= cooldownUntil) {
+          const slHitNow =
+            signal.direction === 'LONG'
+              ? candle.low <= signal.stopLoss
+              : candle.high >= signal.stopLoss;
+          if (!slHitNow) {
+            const sbCtx = this.buildTradeContext(candles, htfCandles, i, features, config);
+            if (!this.shouldBlockEntry(sbCtx, config)) {
+              simulator.openPosition(
+                signal.direction,
+                signal.entryPrice,
+                signal.stopLoss,
+                signal.takeProfit,
+                candle.closeTime,
+                0,
+                0.7,
+                sbCtx,
+              );
+            }
+          }
+        }
+      }
+
+      // ───── System B v2 — Mean Reversion ─────
+      if (config.mode === 'mean-reversion' && meanReversionDetector) {
+        const signal = meanReversionDetector.processCandle(
+          candles,
+          i,
+          features.rsi14,
+          features.atr14,
+        );
+        if (signal && !simulator.hasPosition && i >= cooldownUntil) {
+          const slHitNow =
+            signal.direction === 'LONG'
+              ? candle.low <= signal.stopLoss
+              : candle.high >= signal.stopLoss;
+          if (!slHitNow) {
+            const mrCtx = this.buildTradeContext(candles, htfCandles, i, features, config);
+            if (!this.shouldBlockEntry(mrCtx, config)) {
+              simulator.openPosition(
+                signal.direction,
+                signal.entryPrice,
+                signal.stopLoss,
+                signal.takeProfit,
+                candle.closeTime,
+                0,
+                0.7,
+                mrCtx,
+              );
+              cooldownUntil = i + config.mrCooldownBars;
+            }
+          }
+        }
       }
     }
 
@@ -686,6 +830,78 @@ export class BacktestService {
   private getHtfSlice(htfCandles: Candle[], beforeTime: number): Candle[] {
     const filtered = htfCandles.filter((c) => c.closeTime <= beforeTime);
     return filtered.slice(-100);
+  }
+
+  /**
+   * Build context-at-entry for Phase 1 instrumentation.
+   * Captures Δ24h, ATR%, HTF distance, hour-of-day. Used to bucket trades.
+   * Computed at entry time (i = candle index) — must be called BEFORE openPosition.
+   */
+  private buildTradeContext(
+    candles: Candle[],
+    htfCandles: Candle[],
+    i: number,
+    features: { atr14: number },
+    config: BacktestConfig,
+  ): TradeContextAtEntry {
+    // Δ24h lookback: 24h en bars del timeframe actual.
+    const tfMinutes: Record<string, number> = { '1m': 1, '5m': 5, '15m': 15, '1h': 60 };
+    const minutes = tfMinutes[config.timeframe] || 15;
+    const lookbackBars = Math.floor((24 * 60) / minutes);
+    const lookbackIdx = i - lookbackBars;
+    let delta24hAtEntry: number | null = null;
+    if (lookbackIdx >= 0) {
+      const priceThen = candles[lookbackIdx].close;
+      const priceNow = candles[i].close;
+      if (priceThen > 0) {
+        delta24hAtEntry = ((priceNow - priceThen) / priceThen) * 100;
+      }
+    }
+
+    const entryPrice = candles[i].close;
+    const atrPctAtEntry = entryPrice > 0 ? (features.atr14 / entryPrice) * 100 : 0;
+
+    // HTF distance vs EMA21 del 1H. proxy de "extensión sobre HTF trend".
+    let htfDistancePct: number | null = null;
+    const htfSlice = this.getHtfSlice(htfCandles, candles[i].closeTime);
+    if (htfSlice.length >= 21) {
+      const htfFeat = this.indicators.computeFeatures(htfSlice);
+      if (htfFeat.ema21 > 0) {
+        htfDistancePct = ((entryPrice - htfFeat.ema21) / htfFeat.ema21) * 100;
+      }
+    }
+
+    const entryHourUtc = new Date(candles[i].closeTime).getUTCHours();
+
+    return {
+      delta24hAtEntry,
+      atrPctAtEntry,
+      htfDistancePct,
+      entryHourUtc,
+    };
+  }
+
+  /**
+   * Phase 2 — context filters. Blocks entry if context matches a configured filter.
+   * Applied BEFORE openPosition so cooldown/sequencing is honest (different from post-hoc analysis).
+   * Returns true if entry should be SKIPPED.
+   */
+  private shouldBlockEntry(context: TradeContextAtEntry, config: BacktestConfig): boolean {
+    if (config.blockSessions.length > 0) {
+      const session: SessionLabel =
+        context.entryHourUtc < 7  ? 'ASIA' :
+        context.entryHourUtc < 12 ? 'EU' :
+        context.entryHourUtc < 16 ? 'OVERLAP' : 'US';
+      if (config.blockSessions.includes(session)) return true;
+    }
+    if (config.blockDelta24hBuckets.length > 0 && context.delta24hAtEntry !== null) {
+      const abs = Math.abs(context.delta24hAtEntry);
+      const bucket: Delta24hBucket =
+        abs < 1.0 ? 'CONSOLIDATION' :
+        abs < 3.0 ? 'NORMAL' : 'MOMENTUM_EXTREME';
+      if (config.blockDelta24hBuckets.includes(bucket)) return true;
+    }
+    return false;
   }
 
   private getIntrabarSlice(intrabarCandles: Candle[], afterTime: number, beforeOrEqualTime: number): Candle[] {

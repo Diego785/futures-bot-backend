@@ -20,6 +20,7 @@ import {
 } from '../exchange/interfaces/exchange.interfaces';
 import { StrategyModule } from '../strategy/strategy.module';
 import { TradingModule } from '../trading/trading.module';
+import { TelemetryModule } from '../telemetry/telemetry.module';
 import { Signal } from '../trading/entities/signal.entity';
 import { BotStateService } from './bot-state.service';
 import { StrategyCycleProcessor } from './strategy-cycle.processor';
@@ -37,6 +38,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
     ExchangeModule,
     StrategyModule,
     TradingModule,
+    TelemetryModule,
     forwardRef(() => DashboardModule),
     NotificationsModule,
   ],

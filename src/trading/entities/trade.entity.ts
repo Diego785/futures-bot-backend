@@ -36,7 +36,7 @@ export class Trade {
   commission: number;
 
   @Column({ type: 'varchar', length: 25, default: 'OPEN' })
-  status: string; // OPEN | CLOSED_TP | CLOSED_SL | CLOSED_MANUAL | CLOSED_KILL_SWITCH
+  status: string; // OPEN | CLOSED_TP | CLOSED_SL | CLOSED_MANUAL | CLOSED_KILL_SWITCH | CLOSED_ORPHAN
 
   @Column({ type: 'decimal', precision: 18, scale: 8, nullable: true })
   stopLoss: number;

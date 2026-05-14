@@ -6,6 +6,7 @@ import type { SmcFeatures } from './smc.service';
 export interface HtfBiasContext {
   emaCrossover: string;
   marketStructure: string;
+  marketStructure4h?: string | null; // 4H structure for tiebreaker when 1H EMA/struct conflict
 }
 
 interface PullbackSetup {
@@ -30,7 +31,7 @@ export class PullbackObSignalService {
   private readonly logger = new Logger(PullbackObSignalService.name);
   private readonly setups = new Map<string, PullbackSetup>();
 
-  private readonly MAX_WAIT_CYCLES = 12;
+  private readonly MAX_WAIT_CYCLES: number;
   private readonly SL_BUFFER_ATR = 0.3;
   private readonly RR_RATIO = 1.5;
   private readonly MAX_DISTANCE_PCT = 1.5;
@@ -45,6 +46,8 @@ export class PullbackObSignalService {
   private readonly rsiLongMax: number;
   private readonly rsiShortMin: number;
   private readonly volumeMultiplier: number;
+  private readonly htf4hTiebreakerEnabled: boolean;
+  private readonly minAtrPct: number;
 
   constructor(private readonly config: ConfigService) {
     this.filterPD = this.config.get<string>('PULLBACK_FILTER_PD', 'false') === 'true';
@@ -55,6 +58,10 @@ export class PullbackObSignalService {
     this.rsiLongMax = this.config.get<number>('PULLBACK_RSI_LONG_MAX', 40);
     this.rsiShortMin = this.config.get<number>('PULLBACK_RSI_SHORT_MIN', 60);
     this.volumeMultiplier = this.config.get<number>('PULLBACK_VOL_MULT', 1.2);
+    this.htf4hTiebreakerEnabled =
+      this.config.get<string>('HTF_4H_TIEBREAKER_ENABLED', 'false') === 'true';
+    this.MAX_WAIT_CYCLES = Number(this.config.get<number>('PULLBACK_MAX_WAIT_CYCLES', 12));
+    this.minAtrPct = Number(this.config.get<number>('PULLBACK_MIN_ATR_PCT', 0.15));
   }
 
   generateSignal(
@@ -83,8 +90,8 @@ export class PullbackObSignalService {
 
       // Skip ranging/low-volatility markets
       const atrPct = (features.atr14 / features.currentPrice) * 100;
-      if (atrPct < 0.15) {
-        return { ...hold, reasoning: `Volatilidad muy baja (ATR%=${atrPct.toFixed(2)}%). Esperando movimiento.` };
+      if (atrPct < this.minAtrPct) {
+        return { ...hold, reasoning: `Volatilidad muy baja (ATR%=${atrPct.toFixed(2)}% < ${this.minAtrPct}%). Esperando movimiento.` };
       }
 
       const htfBias = this.determineHtfBias(htfContext);
@@ -283,6 +290,7 @@ export class PullbackObSignalService {
   ): 'LONG' | 'SHORT' | null {
     const ema = htf.emaCrossover;
     const struct = htf.marketStructure;
+    const struct4h = htf.marketStructure4h ?? null;
 
     // Strong bias: EMA cross and market structure agree.
     if (ema === 'BULLISH' && struct === 'BULLISH') return 'LONG';
@@ -295,7 +303,17 @@ export class PullbackObSignalService {
     if (ema === 'BULLISH' && struct === 'RANGING') return 'LONG';
     if (ema === 'BEARISH' && struct === 'RANGING') return 'SHORT';
 
-    // True contradiction (BULLISH vs BEARISH) → block to avoid counter-trend entries.
+    // 4H tiebreaker (HTF_4H_TIEBREAKER_ENABLED=true): when 1H EMA cross and 1H
+    // structure contradict, consult 4H structure as higher-authority arbiter.
+    // 1H EMA reacts in hours; 1H structure can lag a week of consolidation.
+    // If 4H trend agrees with 1H EMA direction, allow soft bias.
+    // Default OFF — needs backtest validation before activation in production.
+    if (this.htf4hTiebreakerEnabled && struct4h) {
+      if (ema === 'BULLISH' && struct === 'BEARISH' && struct4h === 'BULLISH') return 'LONG';
+      if (ema === 'BEARISH' && struct === 'BULLISH' && struct4h === 'BEARISH') return 'SHORT';
+    }
+
+    // True contradiction with no 4H support → block to avoid counter-trend entries.
     return null;
   }
 

@@ -152,4 +152,12 @@ export class FcmService implements OnModuleInit {
       { type: 'signal_rejected', direction },
     );
   }
+
+  async notifyBotError(title: string, body: string): Promise<void> {
+    await this.sendNotification(
+      `DHV Trading: ${title}`,
+      body,
+      { type: 'bot_error' },
+    );
+  }
 }

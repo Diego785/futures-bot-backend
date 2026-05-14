@@ -8,6 +8,7 @@ import {
 } from '../exchange/interfaces/exchange.interfaces';
 import { DailyPnl } from './entities/daily-pnl.entity';
 import { Trade } from './entities/trade.entity';
+import { TelemetryService } from './telemetry.service';
 import type { ValidatedSignal } from '../strategy/schemas/signal.schema';
 
 export interface RiskDecision {
@@ -31,6 +32,7 @@ export class RiskManagerService {
     private readonly dailyPnlRepo: Repository<DailyPnl>,
     @InjectRepository(Trade)
     private readonly tradeRepo: Repository<Trade>,
+    private readonly telemetry: TelemetryService,
   ) {}
 
   async evaluateSignal(signal: ValidatedSignal): Promise<RiskDecision> {
@@ -46,6 +48,9 @@ export class RiskManagerService {
     const rejection = checks.find((c) => !c.approved);
     if (rejection) {
       this.logger.warn(`Risk check failed: ${rejection.reason}`);
+      this.telemetry
+        .recordSignalLifecycle('rejected', rejection.reason)
+        .catch(() => {});
       return rejection;
     }
 
@@ -112,25 +117,18 @@ export class RiskManagerService {
   private async checkExistingPosition(
     symbol: string,
   ): Promise<RiskDecision> {
-    // Check DB for open trades first (faster than API)
-    const openTrade = await this.tradeRepo.findOne({
-      where: { symbol, status: 'OPEN' },
-    });
-
-    if (openTrade) {
-      return {
-        approved: false,
-        reason: `Existing open trade for ${symbol} (id: ${openTrade.id})`,
-      };
-    }
-
-    // Also verify with the exchange
+    // Exchange is authoritative — check it FIRST. If exchange has no position
+    // but DB has trade OPEN, that's a zombie (reconcile failed). Force-close
+    // the zombie to unblock new signals (resolves abr-may 2026 gap class).
+    let exchangeHasPosition = false;
+    let exchangeQueryFailed = false;
     try {
       const positions = await this.exchange.getPositions(symbol);
       const activePos = positions.find(
         (p) => parseFloat(p.positionAmt) !== 0,
       );
       if (activePos) {
+        exchangeHasPosition = true;
         return {
           approved: false,
           reason: `Existing position on ${this.exchange.provider}: ${activePos.positionAmt} ${symbol}`,
@@ -138,9 +136,45 @@ export class RiskManagerService {
       }
     } catch (err) {
       this.logger.warn(
-        'Failed to check exchange positions, proceeding with DB check only',
+        'Failed to check exchange positions, falling back to DB check only',
         err,
       );
+      exchangeQueryFailed = true;
+    }
+
+    // No active position on exchange. Now look at DB.
+    const openTrade = await this.tradeRepo.findOne({
+      where: { symbol, status: 'OPEN' },
+    });
+
+    if (!openTrade) return { approved: true };
+
+    // DB has OPEN but exchange has no position.
+    if (exchangeQueryFailed) {
+      // Be conservative: if we couldn't verify with exchange, trust DB.
+      return {
+        approved: false,
+        reason: `Existing open trade for ${symbol} (id: ${openTrade.id}) — exchange unreachable, conservative reject`,
+      };
+    }
+
+    // Confirmed zombie. Mark CLOSED_ORPHAN to prevent blocking future signals.
+    this.logger.warn(
+      `Zombie trade detected: ${openTrade.id} marked OPEN but no position on ${this.exchange.provider}. ` +
+        `Closing as CLOSED_ORPHAN to unblock new signals.`,
+    );
+    try {
+      openTrade.status = 'CLOSED_ORPHAN';
+      openTrade.closedAt = new Date();
+      await this.tradeRepo.save(openTrade);
+    } catch (saveErr) {
+      this.logger.error(
+        `Failed to close zombie trade ${openTrade.id}: ${saveErr}. Rejecting signal to be safe.`,
+      );
+      return {
+        approved: false,
+        reason: `Zombie trade detected but cleanup failed (id: ${openTrade.id})`,
+      };
     }
 
     return { approved: true };
