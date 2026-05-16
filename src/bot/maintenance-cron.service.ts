@@ -1,4 +1,5 @@
 import { Injectable, Logger, Inject } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
 import { BotStateService } from './bot-state.service';
 import { IUserDataPort } from '../exchange/interfaces/exchange.interfaces';
@@ -9,8 +10,6 @@ import { FcmService } from '../notifications/fcm.service';
 @Injectable()
 export class MaintenanceCronService {
   private readonly logger = new Logger(MaintenanceCronService.name);
-  // 18 min ~= 1 full 15m candle missed. Above this, WS is likely stalled.
-  private readonly HEARTBEAT_STALE_MS = 18 * 60 * 1000;
   private lastHeartbeatAlertAt = 0;
 
   constructor(
@@ -20,7 +19,29 @@ export class MaintenanceCronService {
     private readonly execution: ExecutionService,
     private readonly telemetry: TelemetryService,
     private readonly fcm: FcmService,
+    private readonly config: ConfigService,
   ) {}
+
+  /**
+   * Heartbeat threshold proportional to active timeframe.
+   * Stale = 1.5x normal cycle interval. Fixed bug where 18min threshold
+   * (sized for 15m timeframe) generated false positives in 1h timeframe
+   * every hour normally. Reconciled 2026-05-16 after live deploy of 1h.
+   */
+  private getHeartbeatStaleMs(): number {
+    const timeframe = this.config.get<string>('DEFAULT_TIMEFRAME', '15m');
+    const minutesMap: Record<string, number> = {
+      '1m': 1,
+      '5m': 5,
+      '15m': 15,
+      '30m': 30,
+      '1h': 60,
+      '4h': 240,
+    };
+    const tfMinutes = minutesMap[timeframe] ?? 15;
+    // 1.5x candle interval — alerts when ~1.5 candles missed
+    return Math.floor(tfMinutes * 1.5 * 60 * 1000);
+  }
 
   // ListenKey keepalive every 30 minutes (Binance only — Bybit no-op)
   @Cron('0 */30 * * * *')
@@ -36,7 +57,8 @@ export class MaintenanceCronService {
     await this.execution.reconcilePositions();
   }
 
-  // Heartbeat check every 5 min. Alerts when bot processed 0 cycles in last 18 min.
+  // Heartbeat check every 5 min. Alerts when bot processed 0 cycles in
+  // 1.5x normal candle interval (proportional to DEFAULT_TIMEFRAME).
   // Detects WS staleness / bot offline scenarios that produced the abr-may 2026 gap.
   @Cron('0 */5 * * * *')
   async heartbeatCheck(): Promise<void> {
@@ -44,21 +66,24 @@ export class MaintenanceCronService {
     try {
       const latest = await this.telemetry.getLatestCycleAt();
       if (!latest) return;
+      const staleMs = this.getHeartbeatStaleMs();
       const ageMs = Date.now() - latest.getTime();
-      if (ageMs > this.HEARTBEAT_STALE_MS) {
+      if (ageMs > staleMs) {
         const ageMin = Math.floor(ageMs / 60000);
+        const staleMin = Math.floor(staleMs / 60000);
         const sinceLastAlertMin =
           (Date.now() - this.lastHeartbeatAlertAt) / 60000;
         // De-dupe: don't spam more than once every 30 min
         if (sinceLastAlertMin < 30) return;
         this.lastHeartbeatAlertAt = Date.now();
+        const timeframe = this.config.get<string>('DEFAULT_TIMEFRAME', '15m');
         this.logger.error(
-          `🚨 Heartbeat STALE: ${ageMin}min since last cycle. WS likely stalled or bot offline.`,
+          `🚨 Heartbeat STALE: ${ageMin}min since last cycle (threshold ${staleMin}min for ${timeframe}). WS likely stalled or bot offline.`,
         );
         this.fcm
           .notifyBotError(
             `Heartbeat stale: ${ageMin}min sin cycles`,
-            'Probable WS staleness o bot offline. Revisar docker logs.',
+            `Threshold ${staleMin}min para ${timeframe}. Probable WS staleness o bot offline.`,
           )
           .catch(() => {});
       }
