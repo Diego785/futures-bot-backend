@@ -14,6 +14,7 @@ import { Repository } from 'typeorm';
 import { Signal } from '../trading/entities/signal.entity';
 import { Trade } from '../trading/entities/trade.entity';
 import { DailyPnl } from '../trading/entities/daily-pnl.entity';
+import { DailyTelemetry } from '../trading/entities/daily-telemetry.entity';
 import {
   IExchangeRest,
   IExchangeInfoService,
@@ -53,6 +54,8 @@ export class DashboardController {
     private readonly tradeRepo: Repository<Trade>,
     @InjectRepository(DailyPnl)
     private readonly dailyPnlRepo: Repository<DailyPnl>,
+    @InjectRepository(DailyTelemetry)
+    private readonly telemetryRepo: Repository<DailyTelemetry>,
   ) {}
 
   @Get('status')
@@ -422,6 +425,23 @@ export class DashboardController {
       take: days,
     });
     return records;
+  }
+
+  // Telemetry endpoint — returns per-day cycle/signal lifecycle stats
+  // Used by dashboard to monitor bot health and identify dominant block reasons
+  // without SSH to VPS. Added 2026-05-14.
+  @Get('telemetry')
+  async getTelemetry(@Query('days') days = 14) {
+    try {
+      const records = await this.telemetryRepo.find({
+        order: { date: 'DESC' },
+        take: Number(days),
+      });
+      return records;
+    } catch (err) {
+      this.logger.warn(`Telemetry query failed (table may not exist): ${err}`);
+      return [];
+    }
   }
 }
 

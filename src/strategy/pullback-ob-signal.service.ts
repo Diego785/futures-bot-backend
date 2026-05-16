@@ -47,6 +47,9 @@ export class PullbackObSignalService {
   private readonly rsiShortMin: number;
   private readonly volumeMultiplier: number;
   private readonly htf4hTiebreakerEnabled: boolean;
+  private readonly htf4hTiebreakerSoft: boolean;
+  private readonly htfFlipTolerant: boolean;
+  private readonly slopeSoft: boolean;
   private readonly minAtrPct: number;
 
   constructor(private readonly config: ConfigService) {
@@ -60,6 +63,12 @@ export class PullbackObSignalService {
     this.volumeMultiplier = this.config.get<number>('PULLBACK_VOL_MULT', 1.2);
     this.htf4hTiebreakerEnabled =
       this.config.get<string>('HTF_4H_TIEBREAKER_ENABLED', 'false') === 'true';
+    this.htf4hTiebreakerSoft =
+      this.config.get<string>('HTF_4H_TIEBREAKER_SOFT_ENABLED', 'false') === 'true';
+    this.htfFlipTolerant =
+      this.config.get<string>('PULLBACK_HTF_FLIP_TOLERANT', 'false') === 'true';
+    this.slopeSoft =
+      this.config.get<string>('PULLBACK_SLOPE_SOFT', 'false') === 'true';
     this.MAX_WAIT_CYCLES = Number(this.config.get<number>('PULLBACK_MAX_WAIT_CYCLES', 12));
     this.minAtrPct = Number(this.config.get<number>('PULLBACK_MIN_ATR_PCT', 0.15));
   }
@@ -167,15 +176,31 @@ export class PullbackObSignalService {
             smc.lastStructureBreak.direction === 'BULLISH'))
       ) {
         this.resetSetup(symbol);
-        return { ...hold, reasoning: `Setup cancelado: CHoCH ${smc.lastStructureBreak.direction} en contra.` };
+        return { ...hold, reasoning: `Setup cancelado por CHoCH ${smc.lastStructureBreak.direction} en contra.` };
       }
 
       // Invalidation 3: HTF bias flipped
+      // Default: invalidate on any flip to opposite bias.
+      // PULLBACK_HTF_FLIP_TOLERANT=true: only invalidate if BOTH EMA and structure
+      // flipped to opposite (not just EMA whipsaw in choppy regimes).
       if (htfContext) {
         const currentBias = this.determineHtfBias(htfContext);
         if (currentBias !== setup.bias && currentBias !== null) {
-          this.resetSetup(symbol);
-          return { ...hold, reasoning: `Setup cancelado: HTF cambió a ${currentBias}.` };
+          let shouldInvalidate = true;
+          if (this.htfFlipTolerant) {
+            // Allow setup to survive if structure still agrees with original bias.
+            // Only the EMA flipped — common in whippy regimes where 1H EMA oscillates.
+            const structureStillAligned =
+              (setup.bias === 'LONG' && htfContext.marketStructure !== 'BEARISH') ||
+              (setup.bias === 'SHORT' && htfContext.marketStructure !== 'BULLISH');
+            if (structureStillAligned) {
+              shouldInvalidate = false;
+            }
+          }
+          if (shouldInvalidate) {
+            this.resetSetup(symbol);
+            return { ...hold, reasoning: `Setup cancelado por HTF flip a ${currentBias}.` };
+          }
         }
       }
 
@@ -186,19 +211,26 @@ export class PullbackObSignalService {
       });
       if (setup.targetZones.length === 0) {
         this.resetSetup(symbol);
-        return { ...hold, reasoning: 'Setup cancelado: todas las zonas mitigadas.' };
+        return { ...hold, reasoning: 'Setup cancelado por zonas mitigadas.' };
       }
 
-      // Entry filter: EMA slope must not be against
-      const slopeOk =
-        (setup.bias === 'LONG' && features.emaSlope !== 'FALLING') ||
-        (setup.bias === 'SHORT' && features.emaSlope !== 'RISING');
+      // Entry filter: EMA slope must not be against.
+      // Default (strict): slope must not be opposite to bias. emaSlope=FALLING blocks LONG,
+      // emaSlope=RISING blocks SHORT. FLAT is allowed.
+      // PULLBACK_SLOPE_SOFT=true: skip slope filter entirely — accept entry trigger regardless
+      // of slope direction. For whippy regimes where slope filter destroys captures.
+      // Risk: more counter-trend entries against EMA momentum. Backtest validates.
+      if (!this.slopeSoft) {
+        const slopeOk =
+          (setup.bias === 'LONG' && features.emaSlope !== 'FALLING') ||
+          (setup.bias === 'SHORT' && features.emaSlope !== 'RISING');
 
-      if (!slopeOk) {
-        return {
-          ...hold,
-          reasoning: `Esperando pullback (${setup.waitCycles}/${this.MAX_WAIT_CYCLES}) pero slope ${features.emaSlope} en contra.`,
-        };
+        if (!slopeOk) {
+          return {
+            ...hold,
+            reasoning: `Esperando pullback (${setup.waitCycles}/${this.MAX_WAIT_CYCLES}) pero slope ${features.emaSlope} en contra.`,
+          };
+        }
       }
 
       // Check entry trigger: did the last candle touch any target zone?
@@ -306,11 +338,20 @@ export class PullbackObSignalService {
     // 4H tiebreaker (HTF_4H_TIEBREAKER_ENABLED=true): when 1H EMA cross and 1H
     // structure contradict, consult 4H structure as higher-authority arbiter.
     // 1H EMA reacts in hours; 1H structure can lag a week of consolidation.
-    // If 4H trend agrees with 1H EMA direction, allow soft bias.
-    // Default OFF — needs backtest validation before activation in production.
     if (this.htf4hTiebreakerEnabled && struct4h) {
+      // Strict mode: 4H actively confirms EMA direction.
       if (ema === 'BULLISH' && struct === 'BEARISH' && struct4h === 'BULLISH') return 'LONG';
       if (ema === 'BEARISH' && struct === 'BULLISH' && struct4h === 'BEARISH') return 'SHORT';
+
+      // SOFT mode (HTF_4H_TIEBREAKER_SOFT_ENABLED=true): if 4H is RANGING
+      // (doesn't actively contradict EMA direction), allow soft bias.
+      // Designed for whippy regimes where 4H is consolidating and 1H is mixed.
+      // Backtest-validated 2026-05-14 — needs measurable PF/captures improvement
+      // to remain active in production.
+      if (this.htf4hTiebreakerSoft) {
+        if (ema === 'BULLISH' && struct === 'BEARISH' && struct4h === 'RANGING') return 'LONG';
+        if (ema === 'BEARISH' && struct === 'BULLISH' && struct4h === 'RANGING') return 'SHORT';
+      }
     }
 
     // True contradiction with no 4H support → block to avoid counter-trend entries.

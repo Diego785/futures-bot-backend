@@ -35,6 +35,9 @@ IOC_FALLBACK_MAX_SLIP_USD=50       # max USD slippage tolerated when filling IOC
 # Added 2026-05-13: proactive fixes for 68% live-vs-backtest gap (17 days no-operation).
 # All flag-OFF until backtest validates each. Activate ONE at a time.
 HTF_4H_TIEBREAKER_ENABLED=false    # use 4H structure when 1H EMA+structure contradict
+HTF_4H_TIEBREAKER_SOFT_ENABLED=false  # (added 2026-05-14) also accept 4H RANGING as soft confirmation
+PULLBACK_HTF_FLIP_TOLERANT=false   # (added 2026-05-15) don't invalidate setup if structure still aligns
+PULLBACK_SLOPE_SOFT=false          # (added 2026-05-15) skip slope-against filter at entry trigger
 PULLBACK_MAX_WAIT_CYCLES=12        # candles to wait for pullback (bump to 20 = 5h)
 PULLBACK_MIN_ATR_PCT=0.15          # min ATR% to create setup (was hardcoded)
 ```

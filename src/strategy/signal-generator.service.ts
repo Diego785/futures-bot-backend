@@ -503,6 +503,10 @@ export class SignalGeneratorService {
     else if (reasoning.includes('slope') && reasoning.includes('contra')) category = 'slope_against';
     else if (reasoning.includes('Esperando pullback')) category = 'waiting_pullback';
     else if (reasoning.includes('expirado')) category = 'setup_expired';
+    // Granular setup invalidation reasons (added 2026-05-14 for diagnosis)
+    else if (reasoning.includes('cancelado por CHoCH')) category = 'setup_invalidated_choch';
+    else if (reasoning.includes('cancelado por HTF flip')) category = 'setup_invalidated_htf_flip';
+    else if (reasoning.includes('cancelado por zonas')) category = 'setup_invalidated_zones_blown';
     else if (reasoning.includes('Setup cancelado')) category = 'setup_invalidated';
     else if (reasoning.includes('sin setup')) category = 'idle';
     else category = 'other';

@@ -444,39 +444,27 @@ export class BacktestService {
         }
 
         if (pbState === 'NO_SETUP') {
-          // Step 1: Detect HTF bias
+          // Step 1: Detect HTF bias — uses determineHtfBiasBT to match live exactly.
+          // Consolidated 2026-05-15 (was inline duplication of live logic, now single source).
           if (htfSlice.length >= 21) {
             const htfFeatures = this.indicators.computeFeatures(htfSlice);
             const htfSmc = this.smc.analyze(htfSlice);
 
-            let htfBias: 'LONG' | 'SHORT' | null = null;
-            if (htfSmc.marketStructure === 'BULLISH' && htfFeatures.emaCrossover === 'BULLISH') {
-              htfBias = 'LONG';
-            } else if (htfSmc.marketStructure === 'BEARISH' && htfFeatures.emaCrossover === 'BEARISH') {
-              htfBias = 'SHORT';
-            } else if (config.pullbackLooseHtf) {
-              // Loose mode: EMA directional while structure is RANGING → soft bias.
-              // EMAs react faster than swing highs/lows, so use EMA direction when structure lags.
-              if (htfFeatures.emaCrossover === 'BULLISH' && htfSmc.marketStructure === 'RANGING') {
-                htfBias = 'LONG';
-              } else if (htfFeatures.emaCrossover === 'BEARISH' && htfSmc.marketStructure === 'RANGING') {
-                htfBias = 'SHORT';
+            // 4H structure if tiebreaker enabled
+            let struct4h: string | null = null;
+            if (config.pullbackHtf4hTiebreaker && htf4hCandles.length > 0) {
+              const htf4hSliceCreate = this.getHtfSlice(htf4hCandles, candle.closeTime);
+              if (htf4hSliceCreate.length >= 21) {
+                struct4h = this.smc.analyze(htf4hSliceCreate).marketStructure;
               }
             }
 
-            // HTF 4H tiebreaker: when 1H EMA and structure CONTRADICT (still null),
-            // use 4H structure as higher-authority arbiter. Only activates when explicitly enabled.
-            if (htfBias === null && config.pullbackHtf4hTiebreaker && htf4hCandles.length > 0) {
-              const htf4hSlice = this.getHtfSlice(htf4hCandles, candle.closeTime);
-              if (htf4hSlice.length >= 21) {
-                const htf4hSmc = this.smc.analyze(htf4hSlice);
-                if (htfFeatures.emaCrossover === 'BULLISH' && htfSmc.marketStructure === 'BEARISH' && htf4hSmc.marketStructure === 'BULLISH') {
-                  htfBias = 'LONG';
-                } else if (htfFeatures.emaCrossover === 'BEARISH' && htfSmc.marketStructure === 'BULLISH' && htf4hSmc.marketStructure === 'BEARISH') {
-                  htfBias = 'SHORT';
-                }
-              }
-            }
+            let htfBias = this.determineHtfBiasBT(
+              htfFeatures.emaCrossover,
+              htfSmc.marketStructure,
+              struct4h,
+              config,
+            );
 
             // Filter P/D: skip if LONG in PREMIUM or SHORT in DISCOUNT
             if (htfBias && config.filterPremiumDiscount) {
@@ -573,36 +561,53 @@ export class BacktestService {
           if (i - pbWaitStart > config.pullbackMaxWaitCandles) {
             pbState = 'NO_SETUP';
           }
-          // 2. CHoCH against bias on 15m
-          // With --fresh-choch flag: only cancel if the CHoCH is NEWER than the one
-          // that existed at setup creation (avoids whipsaw on sticky lastStructureBreak).
+          // 2. CHoCH against bias on 15m — FRESH check ALWAYS ON (matches live behavior).
+          // Live (PullbackObSignalService) always checks `time !== createdAtBreakTime`.
+          // Without this, backtest invalidates more aggressively than live → understates capture.
+          // Reconciled 2026-05-15 (was gated by pullbackFreshChoch flag, now hardcoded).
           else if (
             smcFeatures.lastStructureBreak &&
             smcFeatures.lastStructureBreak.type === 'CHoCH' &&
+            smcFeatures.lastStructureBreak.time !== pbCreatedAtBreakTime &&
             ((pbBias === 'LONG' && smcFeatures.lastStructureBreak.direction === 'BEARISH') ||
-             (pbBias === 'SHORT' && smcFeatures.lastStructureBreak.direction === 'BULLISH')) &&
-            (!config.pullbackFreshChoch || smcFeatures.lastStructureBreak.time !== pbCreatedAtBreakTime)
+             (pbBias === 'SHORT' && smcFeatures.lastStructureBreak.direction === 'BULLISH'))
           ) {
             pbState = 'NO_SETUP';
           }
-          // 3. HTF bias flipped
+          // 3. HTF bias flipped — matches live PullbackObSignalService.generateSignal
+          // Live uses determineHtfBias() which includes 4H tiebreaker for both creation
+          // AND invalidation. Reconciled 2026-05-15 (was checking stillBullish/Bearish
+          // directly without 4H consideration, mismatched live).
           else {
             const htfF = htfSlice.length >= 21 ? this.indicators.computeFeatures(htfSlice) : null;
             const htfS = htfSlice.length >= 21 ? this.smc.analyze(htfSlice) : null;
             if (htfF && htfS) {
-              let stillBullish = htfS.marketStructure === 'BULLISH' && htfF.emaCrossover === 'BULLISH';
-              let stillBearish = htfS.marketStructure === 'BEARISH' && htfF.emaCrossover === 'BEARISH';
-              if (config.pullbackLooseHtf) {
-                // In loose mode, keep bias if EMA still agrees with bias and structure is RANGING
-                if (!stillBullish && htfF.emaCrossover === 'BULLISH' && htfS.marketStructure === 'RANGING') {
-                  stillBullish = true;
-                }
-                if (!stillBearish && htfF.emaCrossover === 'BEARISH' && htfS.marketStructure === 'RANGING') {
-                  stillBearish = true;
+              // Compute current 4H structure if tiebreaker enabled
+              let struct4h: string | null = null;
+              if (config.pullbackHtf4hTiebreaker && htf4hCandles.length > 0) {
+                const htf4hSliceInv = this.getHtfSlice(htf4hCandles, candle.closeTime);
+                if (htf4hSliceInv.length >= 21) {
+                  struct4h = this.smc.analyze(htf4hSliceInv).marketStructure;
                 }
               }
-              if ((pbBias === 'LONG' && !stillBullish) || (pbBias === 'SHORT' && !stillBearish)) {
-                pbState = 'NO_SETUP';
+              const currentBias = this.determineHtfBiasBT(
+                htfF.emaCrossover,
+                htfS.marketStructure,
+                struct4h,
+                config,
+              );
+              if (currentBias !== pbBias && currentBias !== null) {
+                let shouldInvalidate = true;
+                if (config.pullbackHtfFlipTolerant) {
+                  // Live logic: keep setup if structure doesn't actively contradict bias
+                  const structureStillAligned =
+                    (pbBias === 'LONG' && htfS.marketStructure !== 'BEARISH') ||
+                    (pbBias === 'SHORT' && htfS.marketStructure !== 'BULLISH');
+                  if (structureStillAligned) shouldInvalidate = false;
+                }
+                if (shouldInvalidate) {
+                  pbState = 'NO_SETUP';
+                }
               }
             }
           }
@@ -619,7 +624,8 @@ export class BacktestService {
           // Check entry trigger (with additional filters)
           if (pbState === 'WAITING_PULLBACK') {
             // Filter: EMA slope — don't enter against strong downward/upward momentum
-            const slopeOk =
+            // PULLBACK_SLOPE_SOFT=true: skip slope filter entirely (forced slopeOk=true)
+            const slopeOk = config.pullbackSlopeSoft ? true :
               (pbBias === 'LONG' && features.emaSlope !== 'FALLING') ||
               (pbBias === 'SHORT' && features.emaSlope !== 'RISING');
 
@@ -830,6 +836,43 @@ export class BacktestService {
   private getHtfSlice(htfCandles: Candle[], beforeTime: number): Candle[] {
     const filtered = htfCandles.filter((c) => c.closeTime <= beforeTime);
     return filtered.slice(-100);
+  }
+
+  /**
+   * Replica funcionalmente PullbackObSignalService.determineHtfBias del live.
+   * Crítico para reconciliar el "Diferencia #2: HTF flip via determineHtfBias"
+   * identificada en code review 2026-05-15. Usa misma lógica que producción
+   * para creation Y invalidation del setup.
+   */
+  private determineHtfBiasBT(
+    emaCross: string,
+    structure: string,
+    structure4h: string | null,
+    config: BacktestConfig,
+  ): 'LONG' | 'SHORT' | null {
+    // Strong bias
+    if (emaCross === 'BULLISH' && structure === 'BULLISH') return 'LONG';
+    if (emaCross === 'BEARISH' && structure === 'BEARISH') return 'SHORT';
+
+    // Loose mode: EMA directional + structure RANGING
+    if (config.pullbackLooseHtf) {
+      if (emaCross === 'BULLISH' && structure === 'RANGING') return 'LONG';
+      if (emaCross === 'BEARISH' && structure === 'RANGING') return 'SHORT';
+    }
+
+    // 4H tiebreaker
+    if (config.pullbackHtf4hTiebreaker && structure4h) {
+      // Strict: 4H confirms EMA direction
+      if (emaCross === 'BULLISH' && structure === 'BEARISH' && structure4h === 'BULLISH') return 'LONG';
+      if (emaCross === 'BEARISH' && structure === 'BULLISH' && structure4h === 'BEARISH') return 'SHORT';
+      // SOFT: 4H is RANGING
+      if (config.pullbackHtf4hTiebreakerSoft) {
+        if (emaCross === 'BULLISH' && structure === 'BEARISH' && structure4h === 'RANGING') return 'LONG';
+        if (emaCross === 'BEARISH' && structure === 'BULLISH' && structure4h === 'RANGING') return 'SHORT';
+      }
+    }
+
+    return null;
   }
 
   /**
