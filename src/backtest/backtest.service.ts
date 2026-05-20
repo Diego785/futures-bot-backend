@@ -1,9 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
+import { ConfigService } from '@nestjs/config';
 import { IndicatorsService } from '../strategy/indicators.service';
 import { SmcService } from '../strategy/smc.service';
 import { PreFilterGateService } from '../strategy/pre-filter-gate.service';
+import { PullbackObSignalService, type HtfBiasContext } from '../strategy/pullback-ob-signal.service';
 import {
   parseKline,
   type Candle,
@@ -56,6 +58,37 @@ export class BacktestService {
     private readonly smc: SmcService,
     private readonly gate: PreFilterGateService,
   ) {}
+
+  /**
+   * Refactor radical 2026-05-19: factory to create a fresh PullbackObSignalService
+   * instance per backtest run, with config from backtest options (not live ConfigService).
+   * Guarantees same signal generation as live, eliminates state machine duplication.
+   */
+  private createPullbackService(config: BacktestConfig): PullbackObSignalService {
+    // Build a mock ConfigService that returns backtest-specific values
+    const overrides: Record<string, unknown> = {
+      PULLBACK_FILTER_PD: String(config.filterPremiumDiscount),
+      PULLBACK_FILTER_RSI: String(config.filterRsiExtreme),
+      PULLBACK_FILTER_CANDLE: String(config.filterCandlePattern),
+      PULLBACK_FILTER_CONFLUENCE: String(config.filterZoneConfluence),
+      PULLBACK_FILTER_VOLUME: String(config.filterVolumeConfirm),
+      PULLBACK_RSI_LONG_MAX: config.rsiLongMax,
+      PULLBACK_RSI_SHORT_MIN: config.rsiShortMin,
+      PULLBACK_VOL_MULT: config.volumeMultiplier,
+      HTF_4H_TIEBREAKER_ENABLED: String(config.pullbackHtf4hTiebreaker),
+      HTF_4H_TIEBREAKER_SOFT_ENABLED: String(config.pullbackHtf4hTiebreakerSoft),
+      PULLBACK_HTF_FLIP_TOLERANT: String(config.pullbackHtfFlipTolerant),
+      PULLBACK_SLOPE_SOFT: String(config.pullbackSlopeSoft),
+      PULLBACK_MAX_WAIT_CYCLES: config.pullbackMaxWaitCandles,
+      PULLBACK_MIN_ATR_PCT: config.pullbackMinAtrPct,
+    };
+    const mockConfig = {
+      get<T>(key: string, defaultValue?: T): T {
+        return (overrides[key] ?? defaultValue) as T;
+      },
+    } as ConfigService;
+    return new PullbackObSignalService(mockConfig);
+  }
 
   async run(config: BacktestConfig): Promise<BacktestReport> {
     this.logger.log(
@@ -110,11 +143,21 @@ export class BacktestService {
       this.logger.log(`Downloaded ${intrabarCandles.length} intrabar (1m) candles`);
     }
 
+    // 2c. REFACTOR RADICAL (2026-05-19): create fresh PullbackObSignalService instance.
+    // Eliminates state machine duplication — uses EXACT live code for signal generation.
+    // Only fill simulation remains backtest-specific (LIMIT/IOC, slippage, etc).
+    const pullbackOb = this.createPullbackService(config);
+    this.logger.log('PullbackObSignalService instance created for backtest (live code path)');
+
     // 3. Run simulation
     const trades: BacktestTrade[] = [];
+    // FIX 2026-05-19 (sizing): match live MAX_POSITION_NOTIONAL_USDT=50 (with auto-bump
+    // to 0.001 BTC min step). Old behavior used $450 notional → qty=0.0058 → 5.8x more fees
+    // → all trades artificially perdedores. Real live qty is 0.001 with ~$77 actual notional.
+    const liveMatchedNotional = 50; // matches live MAX_POSITION_NOTIONAL_USDT env var
     const simulator = new TradeSimulator(
       config.commissionRate,
-      config.initialBalance * config.maxLeverage * 0.9,
+      liveMatchedNotional,
       config.enableTrailing,
       config.trailingBreakevenPct ?? 0.3,
       config.trailMode ?? 'entry-pct',
@@ -129,6 +172,13 @@ export class BacktestService {
     const warmup = 100;
     let gatePassCount = 0;
     let cooldownUntil = 0;
+
+    // FASE 1.2 — Métricas lifecycle separadas (added 2026-05-18 reconciliación live/backtest)
+    let ordersPlaced = 0;        // LIMIT orders attempted
+    let ordersFilled = 0;        // Fills successful (limit or IOC)
+    let ordersExpired = 0;       // Both LIMIT and IOC failed
+    let iocFills = 0;            // Filled via IOC fallback (vs LIMIT direct)
+    let ghostTradesPrevented = 0; // Trades that old buggy engine would have opened
 
     // Pullback-OB state machine
     let pbState: 'NO_SETUP' | 'WAITING_PULLBACK' = 'NO_SETUP';
@@ -427,23 +477,147 @@ export class BacktestService {
       }
 
       if (config.mode === 'pullback-ob') {
-        // PULLBACK TO OB/FVG STRATEGY — State Machine
-        const htfSlice = this.getHtfSlice(htfCandles, candle.closeTime);
+        // REFACTOR RADICAL (2026-05-19): use live PullbackObSignalService directly.
+        // Eliminates state machine duplication. State managed internally by the service.
 
-        // Optional low-volatility filter (disabled by default — set --min-atr-pct=0.15 to enable)
-        if (config.pullbackMinAtrPct > 0) {
-          const atrPct = (features.atr14 / features.currentPrice) * 100;
-          if (atrPct < config.pullbackMinAtrPct) {
-            // Skip this candle — too low volatility
-            if (simulator.hasPosition) {
-              const trade = simulator.processCandle(candle);
-              if (trade) trades.push(trade);
+        // Build HTF context (1h + 4h) — same way live signal-generator does it
+        const htfSlice = this.getHtfSlice(htfCandles, candle.closeTime);
+        let htfContext: HtfBiasContext | null = null;
+        if (htfSlice.length >= 21) {
+          const htfFeatures = this.indicators.computeFeatures(htfSlice);
+          const htfSmc = this.smc.analyze(htfSlice);
+          let struct4h: string | null = null;
+          if (config.pullbackHtf4hTiebreaker && htf4hCandles.length > 0) {
+            const htf4hSlice = this.getHtfSlice(htf4hCandles, candle.closeTime);
+            if (htf4hSlice.length >= 21) {
+              struct4h = this.smc.analyze(htf4hSlice).marketStructure;
             }
-            continue;
+          }
+          htfContext = {
+            emaCrossover: htfFeatures.emaCrossover,
+            marketStructure: htfSmc.marketStructure,
+            marketStructure4h: struct4h,
+          };
+        }
+
+        // Call LIVE service — same code path as production
+        const result = pullbackOb.generateSignal(
+          features,
+          smcFeatures,
+          config.symbol,
+          htfContext,
+        );
+
+        // No actionable signal — continue to next cycle
+        if (result.action !== 'LONG' && result.action !== 'SHORT') {
+          continue;
+        }
+
+        const isLong = result.action === 'LONG';
+        const signalEntry = result.suggestedEntryPrice!;
+        let sl = result.suggestedStopLoss!;
+        const tpInitial = result.suggestedTakeProfit!;
+
+        // Pre-order block filters (matches live risk-manager.evaluateSignal BEFORE order)
+        const tradeCtx = this.buildTradeContext(candles, htfCandles, i, features, config);
+        if (this.shouldBlockEntry(tradeCtx, config)) continue;
+
+        // Cooldown check (matches live RiskManager.checkCooldown)
+        if (i < cooldownUntil) continue;
+
+        // ─── REALISTIC FILL SIMULATION ───
+        const limitWaitMs = 180_000;
+        const iocEnabled = config.iocFallbackEnabled !== false;
+        const iocMaxSlipUsd = config.iocFallbackMaxSlipUsd ?? 50;
+
+        ordersPlaced++;
+        const fillWindowEnd = candle.closeTime + limitWaitMs;
+        const fillSubCandles = this.getIntrabarSlice(intrabarCandles, candle.closeTime, fillWindowEnd);
+
+        let actualEntryPrice: number | null = null;
+        let fillTime: number | null = null;
+        let filledViaIoc = false;
+
+        // Phase 1: LIMIT GTC — fills if price reaches limitPrice
+        for (const sub of fillSubCandles) {
+          if (isLong) {
+            if (sub.open <= signalEntry) {
+              actualEntryPrice = sub.open;
+              fillTime = sub.closeTime;
+              break;
+            } else if (sub.low <= signalEntry) {
+              actualEntryPrice = signalEntry;
+              fillTime = sub.closeTime;
+              break;
+            }
+          } else {
+            if (sub.open >= signalEntry) {
+              actualEntryPrice = sub.open;
+              fillTime = sub.closeTime;
+              break;
+            } else if (sub.high >= signalEntry) {
+              actualEntryPrice = signalEntry;
+              fillTime = sub.closeTime;
+              break;
+            }
           }
         }
 
-        if (pbState === 'NO_SETUP') {
+        // Phase 2: IOC fallback (if enabled)
+        if (actualEntryPrice === null && iocEnabled && fillSubCandles.length > 0) {
+          const lastSub = fillSubCandles[fillSubCandles.length - 1];
+          const marketPrice = lastSub.close;
+          const slipCapPrice = isLong ? signalEntry + iocMaxSlipUsd : signalEntry - iocMaxSlipUsd;
+          if (isLong && marketPrice <= slipCapPrice) {
+            actualEntryPrice = marketPrice;
+            fillTime = lastSub.closeTime;
+            filledViaIoc = true;
+          } else if (!isLong && marketPrice >= slipCapPrice) {
+            actualEntryPrice = marketPrice;
+            fillTime = lastSub.closeTime;
+            filledViaIoc = true;
+          }
+        }
+
+        if (actualEntryPrice === null) {
+          ordersExpired++;
+          ghostTradesPrevented++;
+          continue;
+        }
+
+        ordersFilled++;
+        if (filledViaIoc) iocFills++;
+
+        // Apply slippage
+        const entryPrice = isLong
+          ? actualEntryPrice + (config.entrySlippage || 0) + (config.adverseSlip || 0)
+          : actualEntryPrice - (config.entrySlippage || 0) - (config.adverseSlip || 0);
+
+        // Recalc SL/TP from actual fill if drift > $50 (matches live)
+        const slDist = Math.abs(signalEntry - sl);
+        if (Math.abs(entryPrice - signalEntry) > 50) {
+          sl = isLong ? entryPrice - slDist : entryPrice + slDist;
+        }
+        const tp = isLong ? entryPrice + slDist * config.rrRatio : entryPrice - slDist * config.rrRatio;
+
+        simulator.openPosition(
+          isLong ? 'LONG' : 'SHORT',
+          entryPrice,
+          sl,
+          tp,
+          fillTime ?? candle.closeTime,
+          0,
+          result.confidence,
+          tradeCtx,
+        );
+        cooldownUntil = i + config.cooldownCandles;
+        continue;
+      }
+
+      // OLD INLINE PULLBACK-OB STATE MACHINE — DELETED in refactor 2026-05-19
+      // (replaced by direct call to PullbackObSignalService above)
+      /* DELETED_REFACTOR_2026_05_19_START
+      if (false) {
           // Step 1: Detect HTF bias — uses determineHtfBiasBT to match live exactly.
           // Consolidated 2026-05-15 (was inline duplication of live logic, now single source).
           if (htfSlice.length >= 21) {
@@ -548,13 +722,17 @@ export class BacktestService {
                   pbTargetZones = zones;
                   pbWaitStart = i;
                   pbCreatedAtBreakTime = smcFeatures.lastStructureBreak?.time ?? null;
+                  // BUG #1 FIX (2026-05-19): Don't evaluate entry trigger in the same cycle
+                  // where setup was created. Live behavior: setup_created → action=HOLD → next cycle.
+                  // Use a flag to skip trigger evaluation below for this cycle only.
+                  setupJustCreated = true;
                 }
               }
             }
           }
         }
 
-        if (pbState === 'WAITING_PULLBACK') {
+        if (pbState === 'WAITING_PULLBACK' && !setupJustCreated) {
           // Check invalidation FIRST
 
           // 1. Timeout
@@ -631,87 +809,135 @@ export class BacktestService {
 
             if (slopeOk) {
             for (const zone of pbTargetZones) {
-              let entryPrice: number;
+              let signalEntry: number;
+              let slDist: number;
               let sl: number;
+              const isLong = pbBias === 'LONG';
 
-              if (pbBias === 'LONG') {
-                // Price must have been above zone at candle open (not gap-through)
+              if (isLong) {
                 if (candle.open < zone.low) continue;
-                // Price must have reached the zone
                 if (candle.low > zone.high) continue;
 
-                const signalEntry = zone.high;
+                signalEntry = zone.high;
                 const slRaw = zone.low - features.atr14 * config.pullbackSlBuffer;
-                const slDist = Math.max(signalEntry - slRaw, signalEntry * config.slMinPercent);
-                // Apply entry slippage (LONG pays MORE than signal when filled via MARKET)
-                entryPrice = signalEntry + (config.entrySlippage || 0) + (config.adverseSlip || 0);
-                sl = entryPrice - slDist;
+                slDist = Math.max(signalEntry - slRaw, signalEntry * config.slMinPercent);
+                sl = signalEntry - slDist;
 
-                // Don't enter if SL would be hit same candle
-                if (candle.low <= sl) continue;
-
-                // Confluence entry filters
                 if (config.filterRsiExtreme && features.rsi14 > config.rsiLongMax) continue;
                 if (config.filterCandlePattern && !hasCandleConfirm(features.recentCandles, 'LONG')) continue;
                 if (config.filterVolumeConfirm && features.volumeAvg20 > 0 && features.lastVolume < features.volumeAvg20 * config.volumeMultiplier) continue;
                 if (config.filterZoneConfluence && !(zone as any).confluence) continue;
-
-                const tp = entryPrice + slDist * config.rrRatio;
-                const longCtx = this.buildTradeContext(candles, htfCandles, i, features, config);
-                if (this.shouldBlockEntry(longCtx, config)) continue;
-                simulator.openPosition(
-                  'LONG',
-                  entryPrice,
-                  sl,
-                  tp,
-                  candle.closeTime,
-                  0,
-                  (zone as any).confluence ? 0.80 : 0.65,
-                  longCtx,
-                );
               } else {
                 if (candle.open > zone.high) continue;
                 if (candle.high < zone.low) continue;
 
-                const signalEntry = zone.low;
+                signalEntry = zone.low;
                 const slRaw = zone.high + features.atr14 * config.pullbackSlBuffer;
-                const slDist = Math.max(slRaw - signalEntry, signalEntry * config.slMinPercent);
-                // Apply entry slippage (SHORT receives LESS than signal when filled via MARKET)
-                entryPrice = signalEntry - (config.entrySlippage || 0) - (config.adverseSlip || 0);
-                sl = entryPrice + slDist;
+                slDist = Math.max(slRaw - signalEntry, signalEntry * config.slMinPercent);
+                sl = signalEntry + slDist;
 
-                if (candle.high >= sl) continue;
-
-                // Confluence entry filters
                 if (config.filterRsiExtreme && features.rsi14 < config.rsiShortMin) continue;
                 if (config.filterCandlePattern && !hasCandleConfirm(features.recentCandles, 'SHORT')) continue;
                 if (config.filterVolumeConfirm && features.volumeAvg20 > 0 && features.lastVolume < features.volumeAvg20 * config.volumeMultiplier) continue;
                 if (config.filterZoneConfluence && !(zone as any).confluence) continue;
-
-                const tp = entryPrice - slDist * config.rrRatio;
-                const shortCtx = this.buildTradeContext(candles, htfCandles, i, features, config);
-                if (this.shouldBlockEntry(shortCtx, config)) continue;
-                simulator.openPosition(
-                  'SHORT',
-                  entryPrice,
-                  sl,
-                  tp,
-                  candle.closeTime,
-                  0,
-                  (zone as any).confluence ? 0.80 : 0.65,
-                  shortCtx,
-                );
               }
 
-              // Simulate fill probability — deterministic hash from candle time for reproducibility
-              if (config.fillRate < 1.0) {
-                const hash = ((candle.closeTime * 2654435761) >>> 0) / 4294967296; // 0-1 deterministic
-                if (hash >= config.fillRate) {
-                  continue; // missed fill — LIMIT didn't execute, skip this zone
+              // ─── REALISTIC FILL SIMULATION v2 (2026-05-18, audit feedback) ───
+              // Signal detected at close of candle N. Lifecycle in correct order:
+              //   1. preOrderBlock filters (BEFORE placing order — matches live risk-manager)
+              //   2. LIMIT GTC 180s at signalEntry
+              //   3. IOC fallback ±$50 if LIMIT expires
+              //   4. If neither fills → no trade, ghost prevented
+
+              // FIX #1: pre-order filters BEFORE counting orderPlaced (matches live secuencia)
+              const tradeCtx = this.buildTradeContext(candles, htfCandles, i, features, config);
+              if (this.shouldBlockEntry(tradeCtx, config)) continue;
+
+              // FIX #2: Read LIMIT TTL & IOC cap from env (matches live behavior dynamically)
+              const limitWaitMs = 180_000; // matches LIMIT_WAIT_MS hardcoded in execution.service.ts:167
+              const iocEnabled = config.iocFallbackEnabled !== false;
+              const iocMaxSlipUsd = config.iocFallbackMaxSlipUsd ?? 50;
+
+              ordersPlaced++;
+              const fillWindowEnd = candle.closeTime + limitWaitMs;
+              const fillSubCandles = this.getIntrabarSlice(intrabarCandles, candle.closeTime, fillWindowEnd);
+
+              let actualEntryPrice: number | null = null;
+              let fillTime: number | null = null;
+              let filledViaIoc = false;
+
+              // Phase 1: LIMIT GTC — fills only if price reaches limitPrice
+              for (const sub of fillSubCandles) {
+                if (isLong) {
+                  if (sub.open <= signalEntry) {
+                    actualEntryPrice = sub.open;
+                    fillTime = sub.closeTime;
+                    break;
+                  } else if (sub.low <= signalEntry) {
+                    actualEntryPrice = signalEntry;
+                    fillTime = sub.closeTime;
+                    break;
+                  }
+                } else {
+                  if (sub.open >= signalEntry) {
+                    actualEntryPrice = sub.open;
+                    fillTime = sub.closeTime;
+                    break;
+                  } else if (sub.high >= signalEntry) {
+                    actualEntryPrice = signalEntry;
+                    fillTime = sub.closeTime;
+                    break;
+                  }
                 }
               }
 
-              // Position opened — reset state
+              // Phase 2: IOC fallback (only if enabled, matches live)
+              if (actualEntryPrice === null && iocEnabled && fillSubCandles.length > 0) {
+                const lastSub = fillSubCandles[fillSubCandles.length - 1];
+                const marketPrice = lastSub.close;
+                const slipCapPrice = isLong ? signalEntry + iocMaxSlipUsd : signalEntry - iocMaxSlipUsd;
+
+                if (isLong && marketPrice <= slipCapPrice) {
+                  actualEntryPrice = marketPrice;
+                  fillTime = lastSub.closeTime;
+                  filledViaIoc = true;
+                } else if (!isLong && marketPrice >= slipCapPrice) {
+                  actualEntryPrice = marketPrice;
+                  fillTime = lastSub.closeTime;
+                  filledViaIoc = true;
+                }
+              }
+
+              if (actualEntryPrice === null) {
+                ordersExpired++;
+                ghostTradesPrevented++;
+                continue;
+              }
+
+              ordersFilled++;
+              if (filledViaIoc) iocFills++;
+
+              const entryPrice = isLong
+                ? actualEntryPrice + (config.entrySlippage || 0) + (config.adverseSlip || 0)
+                : actualEntryPrice - (config.entrySlippage || 0) - (config.adverseSlip || 0);
+
+              // Recalc SL/TP from actual fill if drift > $50 (matches live execution.service.ts:325+)
+              if (Math.abs(entryPrice - signalEntry) > 50) {
+                sl = isLong ? entryPrice - slDist : entryPrice + slDist;
+              }
+              const tp = isLong ? entryPrice + slDist * config.rrRatio : entryPrice - slDist * config.rrRatio;
+
+              simulator.openPosition(
+                isLong ? 'LONG' : 'SHORT',
+                entryPrice,
+                sl,
+                tp,
+                fillTime ?? candle.closeTime,
+                0,
+                (zone as any).confluence ? 0.80 : 0.65,
+                tradeCtx,
+              );
+
               pbState = 'NO_SETUP';
               pbTargetZones = [];
               break;
@@ -720,6 +946,7 @@ export class BacktestService {
           }
         }
       }
+      DELETED_REFACTOR_2026_05_19_END */
 
       if (shouldEnter) {
         const entryPrice = candle.close;
@@ -829,6 +1056,19 @@ export class BacktestService {
       gatePassCount,
     );
     printReport(report);
+
+    // FASE 1.2 — Log lifecycle metrics for backtest/live parity diagnosis
+    const fillRate = ordersPlaced > 0 ? (ordersFilled / ordersPlaced) * 100 : 0;
+    this.logger.log(
+      `📊 LIFECYCLE METRICS:\n` +
+        `  Orders Placed:           ${ordersPlaced}\n` +
+        `  Orders Filled (success): ${ordersFilled}\n` +
+        `  Orders Expired (abort):  ${ordersExpired}\n` +
+        `  Fill Rate:               ${fillRate.toFixed(1)}%\n` +
+        `  IOC fallback fills:      ${iocFills}\n` +
+        `  Ghost trades prevented:  ${ghostTradesPrevented}\n` +
+        `  Real trades (closed):    ${trades.length}`,
+    );
 
     return report;
   }

@@ -443,6 +443,47 @@ export class DashboardController {
       return [];
     }
   }
+
+  // PnL reconciliation endpoint (2026-05-20) — returns trades with Bybit-sourced
+  // PnL vs bot's calculated PnL. Use bybitNetPnl as source of truth.
+  // Trades with |pnlDiffFromDb| > 0.05 indicate the known DB PnL bug.
+  @Get('pnl-reconciliation')
+  async getPnlReconciliation(@Query('days') days = 7) {
+    try {
+      const since = new Date();
+      since.setDate(since.getDate() - Number(days));
+      const trades = await this.tradeRepo
+        .createQueryBuilder('t')
+        .where('t."closedAt" >= :since', { since })
+        .orderBy('t."closedAt"', 'DESC')
+        .limit(100)
+        .getMany();
+      return trades.map((t) => ({
+        id: t.id,
+        direction: t.direction,
+        status: t.status,
+        entryPrice: t.entryPrice,
+        exitPrice: t.exitPrice,
+        // DB's old calculation (suspect)
+        db_realizedPnl: t.realizedPnl,
+        db_commission: t.commission,
+        // Bybit truth
+        bybit_realizedPnl: t.bybitRealizedPnl,
+        bybit_fees: t.bybitFees,
+        bybit_funding: t.bybitFunding,
+        bybit_netPnl: t.bybitNetPnl,
+        // Diagnostic
+        pnlDiff: t.pnlDiffFromDb,
+        pnlSource: t.pnlSource,
+        reconciledAt: t.pnlReconciledAt,
+        openedAt: t.openedAt,
+        closedAt: t.closedAt,
+      }));
+    } catch (err) {
+      this.logger.warn(`PnL reconciliation query failed: ${err}`);
+      return [];
+    }
+  }
 }
 
 function extractErrMsg(err: any): string {

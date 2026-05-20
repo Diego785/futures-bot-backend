@@ -112,7 +112,13 @@ export class TradeSimulator {
     context?: TradeContextAtEntry,
   ): void {
     this.tradeCounter++;
-    this.quantity = Math.floor((this.notional / entryPrice) * 1000) / 1000;
+    // FIX 2026-05-19 (sizing): match live behavior — Bybit min step is 0.001 BTC,
+    // and bot bumps up if calculated qty < min_step. So qty floor is 0.001.
+    // This makes backtest sizing match production: notional ~= $77 with BTC @ 77k.
+    this.quantity = Math.max(
+      0.001,
+      Math.floor((this.notional / entryPrice) * 1000) / 1000,
+    );
     const initialRiskUsd = this.quantity * Math.abs(entryPrice - stopLoss);
 
     this.position = {

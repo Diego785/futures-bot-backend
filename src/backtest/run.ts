@@ -81,6 +81,9 @@ async function main() {
     pullbackHtf4hTiebreakerSoft: hasFlag('htf-4h-tiebreaker-soft'),
     pullbackHtfFlipTolerant: hasFlag('htf-flip-tolerant'),
     pullbackSlopeSoft: hasFlag('slope-soft'),
+    // FASE 1 — realistic LIMIT order simulation flags (default match live execution)
+    iocFallbackEnabled: getArg('ioc-fallback-enabled', 'true') !== 'false',
+    iocFallbackMaxSlipUsd: parseFloat(getArg('ioc-fallback-max-slip', '50')),
     entrySlippage: parseFloat(getArg('entry-slippage', '0')),
     trailBreakevenAt: parseFloat(getArg('trail-breakeven-at', '0')),
     fillRate: parseFloat(getArg('fill-rate', '1.0')),

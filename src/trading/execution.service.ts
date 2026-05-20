@@ -1173,15 +1173,29 @@ export class ExecutionService {
             let exitPrice: number | null = null;
             let realizedPnl = 0;
             let commission = 0;
+            // Bybit source-of-truth tracking (2026-05-20) — NO modificar trade.realizedPnl
+            // por compat, solo poblar columnas nuevas con valores Bybit reales.
+            let bybitGrossEntry = 0; // gross PnL from entry fills (typically 0 for entries)
+            let bybitGrossExit = 0;  // gross PnL from exit fills (the real one)
+            let bybitFeesAcc = 0;    // sum of all fees (entry + exit), as positive
 
             try {
               const fills = await this.exchange.getUserTrades(trade.symbol);
               const closeSide: OrderSide =
                 trade.direction === 'LONG' ? OrderSide.SELL : OrderSide.BUY;
+              const entrySide: OrderSide =
+                trade.direction === 'LONG' ? OrderSide.BUY : OrderSide.SELL;
               const tradeOpenTime = new Date(trade.openedAt).getTime();
 
               const exitFills = fills.filter(
                 (f) => f.side === closeSide && f.time > tradeOpenTime,
+              );
+
+              // Also capture ENTRY fills for Bybit-sourced fees tracking
+              const entryFills = fills.filter(
+                (f) => f.side === entrySide &&
+                  f.time >= tradeOpenTime - 60_000 && // entry fills happen within 1min of openedAt
+                  f.time <= tradeOpenTime + 60_000,
               );
 
               if (exitFills.length > 0) {
@@ -1194,12 +1208,21 @@ export class ExecutionService {
                   totalNotional += fQty * fPrice;
                   realizedPnl += parseFloat(f.realizedPnl);
                   commission += parseFloat(f.commission);
+                  // Bybit truth: accumulate gross and fees separately
+                  bybitGrossExit += parseFloat(f.realizedPnl);
+                  bybitFeesAcc += Math.abs(parseFloat(f.commission));
                 }
                 exitPrice = totalQty > 0 ? totalNotional / totalQty : null;
                 this.logger.log(
                   `Found ${exitFills.length} exit fills for trade ${trade.id}: ` +
                     `exitPrice=${exitPrice?.toFixed(2)}, pnl=${realizedPnl.toFixed(4)}`,
                 );
+              }
+
+              // Add entry fees to Bybit source-of-truth fees (entry has no realizedPnl)
+              for (const f of entryFills) {
+                bybitGrossEntry += parseFloat(f.realizedPnl || '0');
+                bybitFeesAcc += Math.abs(parseFloat(f.commission));
               }
             } catch (err) {
               this.logger.warn(
@@ -1271,6 +1294,37 @@ export class ExecutionService {
             if (commission !== 0) trade.commission = commission;
             trade.status = closedStatus;
             trade.closedAt = new Date();
+
+            // Bybit source-of-truth PnL (2026-05-20) — populate new columns.
+            // bybitNetPnl = gross - fees + funding. Funding usually 0 for short trades.
+            // pnlDiffFromDb signals when bot's realizedPnl differs from Bybit truth.
+            const bybitGross = bybitGrossEntry + bybitGrossExit;
+            if (bybitFeesAcc > 0 || bybitGross !== 0) {
+              const bybitFunding = 0; // TODO: extract from income API if needed
+              const bybitNet = bybitGross - bybitFeesAcc + bybitFunding;
+              trade.bybitRealizedPnl = bybitGross;
+              trade.bybitFees = bybitFeesAcc;
+              trade.bybitFunding = bybitFunding;
+              trade.bybitNetPnl = bybitNet;
+              trade.pnlSource = 'BYBIT_FILLS';
+              trade.pnlDiffFromDb = bybitNet - (realizedPnl !== 0 ? realizedPnl : 0);
+              trade.pnlReconciledAt = new Date();
+              if (Math.abs(trade.pnlDiffFromDb) > 0.05) {
+                this.logger.warn(
+                  `🚨 PnL mismatch for trade ${trade.id}: ` +
+                    `DB says ${realizedPnl.toFixed(4)}, ` +
+                    `Bybit-truth net says ${bybitNet.toFixed(4)} ` +
+                    `(diff ${trade.pnlDiffFromDb.toFixed(4)}). ` +
+                    `Use bybitNetPnl as source of truth.`,
+                );
+              } else {
+                this.logger.log(
+                  `Bybit PnL reconciled for trade ${trade.id}: ` +
+                    `gross=${bybitGross.toFixed(4)} fees=${bybitFeesAcc.toFixed(4)} ` +
+                    `net=${bybitNet.toFixed(4)} (DB says ${realizedPnl.toFixed(4)})`,
+                );
+              }
+            }
 
             for (const order of trade.orders || []) {
               if (

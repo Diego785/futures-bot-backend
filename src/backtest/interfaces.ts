@@ -41,6 +41,9 @@ export interface BacktestConfig {
   pullbackHtf4hTiebreakerSoft: boolean;  // if true (and tiebreaker enabled), also allow soft bias when 4H is RANGING (default false)
   pullbackHtfFlipTolerant: boolean;  // if true, don't invalidate setup on HTF flip if structure still aligns with bias (default false)
   pullbackSlopeSoft: boolean;  // if true, skip slope-against filter at entry trigger (default false)
+  // FASE 1 — realistic LIMIT order simulation (added 2026-05-18). Matches live execution.service.ts behavior.
+  iocFallbackEnabled?: boolean;  // default true (matches live default)
+  iocFallbackMaxSlipUsd?: number;  // default 50 (matches live default)
   entrySlippage: number;  // dollars added to entry price (LONG) or subtracted (SHORT) to simulate MARKET fill slippage (default 0)
   trailBreakevenAt: number;  // profit $ threshold to lock SL at breakeven; 0 = disabled (default 0)
   fillRate: number;  // probability [0-1] that a signal results in a fill. 1.0 = all fill (default). 0.7 = 30% missed.
