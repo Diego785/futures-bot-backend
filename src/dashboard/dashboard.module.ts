@@ -6,6 +6,7 @@ import { Signal } from '../trading/entities/signal.entity';
 import { Trade } from '../trading/entities/trade.entity';
 import { DailyPnl } from '../trading/entities/daily-pnl.entity';
 import { DailyTelemetry } from '../trading/entities/daily-telemetry.entity';
+import { StrategyStateSnapshot } from '../trading/entities/strategy-state-snapshot.entity';
 import { DashboardController } from './dashboard.controller';
 import { DashboardGateway } from './dashboard.gateway';
 import { BotModule } from '../bot/bot.module';
@@ -13,7 +14,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Signal, Trade, DailyPnl, DailyTelemetry]),
+    TypeOrmModule.forFeature([Signal, Trade, DailyPnl, DailyTelemetry, StrategyStateSnapshot]),
     ExchangeModule,
     StrategyModule,
     forwardRef(() => BotModule),

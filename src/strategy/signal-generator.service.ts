@@ -2,6 +2,7 @@ import { Injectable, Logger, Inject } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { IExchangeRest } from '../exchange/interfaces/exchange.interfaces';
 import { TelemetryService } from '../trading/telemetry.service';
+import { StateSnapshotService } from '../telemetry/state-snapshot.service';
 import { IndicatorsService, type IndicatorFeatures } from './indicators.service';
 import { SmcService, type SmcFeatures } from './smc.service';
 import { DeepSeekService, type DeltaChanges, type HtfContext } from './deepseek.service';
@@ -104,6 +105,7 @@ export class SignalGeneratorService {
     private readonly signalCache: SignalCacheService,
     private readonly config: ConfigService,
     private readonly telemetry: TelemetryService,
+    private readonly stateSnapshot: StateSnapshotService,
   ) {
     this.gateEnabled = this.config.get<boolean>('GATE_ENABLED', true);
   }
@@ -295,6 +297,56 @@ export class SignalGeneratorService {
     // Telemetría diaria (solo pullback mode — diagnóstico gap live vs backtest)
     if (isPullbackMode) {
       this.recordCycleMetrics(hybridResult.action, hybridResult.reasoning);
+
+      // State snapshot (2026-05-21) — persist internal state for replay validation.
+      // Captures the strategy state AFTER processing this cycle. Fire-and-forget.
+      const setupSnapshot = this.pullbackOb.getSetupSnapshot(symbol);
+      this.stateSnapshot
+        .persist({
+          cycleAt: new Date(),
+          candleCloseTime: Date.now(),
+          symbol,
+          timeframe: interval,
+          state: setupSnapshot.state,
+          bias: setupSnapshot.state === 'WAITING_PULLBACK' ? setupSnapshot.bias : null,
+          activeZones: setupSnapshot.activeZones,
+          waitCycles: setupSnapshot.waitCycles,
+          createdAtBreakTime: setupSnapshot.createdAtBreakTime,
+          htfContext: htfContext
+            ? {
+                emaCrossover: htfContext.emaCrossover,
+                marketStructure: htfContext.marketStructure,
+                marketStructure4h: htf4hStructure,
+                rsi14: htfContext.rsi14,
+                atrPercent: htfContext.atrPercent,
+                premiumDiscount: htfContext.premiumDiscount,
+              }
+            : null,
+          smcContext: {
+            marketStructure: smcFeatures.marketStructure,
+            premiumDiscount: smcFeatures.premiumDiscount,
+            activeOrderBlocks: smcFeatures.activeOrderBlocks.length,
+            activeFairValueGaps: smcFeatures.activeFairValueGaps.length,
+            priceInOrderBlock: smcFeatures.priceInOrderBlock,
+            priceInFVG: smcFeatures.priceInFVG,
+            lastStructureBreak: smcFeatures.lastStructureBreak
+              ? `${smcFeatures.lastStructureBreak.type} ${smcFeatures.lastStructureBreak.direction}`
+              : null,
+          },
+          indicators: {
+            currentPrice: features.currentPrice,
+            ema9: features.ema9,
+            ema21: features.ema21,
+            rsi14: features.rsi14,
+            atr14: features.atr14,
+            atrPercent: features.atrPercent,
+            emaCrossover: features.emaCrossover,
+            emaSlope: features.emaSlope,
+          },
+          lastSignalAction: hybridResult.action,
+          lastSignalReason: hybridResult.reasoning.slice(0, 255),
+        })
+        .catch(() => {});
     }
 
     // Skip HOLD signals

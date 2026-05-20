@@ -432,6 +432,42 @@ export class PullbackObSignalService {
     });
   }
 
+  /**
+   * Returns a snapshot of the internal setup state for a symbol.
+   * Used by StateSnapshotService to persist state per cycle for replay validation.
+   * Added 2026-05-21 as part of canary validation plan.
+   */
+  getSetupSnapshot(symbol: string): {
+    state: 'IDLE' | 'WAITING_PULLBACK';
+    bias: 'LONG' | 'SHORT';
+    activeZones: Array<{ type: 'OB' | 'FVG'; high: number; low: number; confluence?: boolean }>;
+    waitCycles: number;
+    createdAtBreakTime: number | null;
+  } {
+    const setup = this.setups.get(symbol);
+    if (!setup) {
+      return {
+        state: 'IDLE',
+        bias: 'LONG',
+        activeZones: [],
+        waitCycles: 0,
+        createdAtBreakTime: null,
+      };
+    }
+    return {
+      state: setup.state,
+      bias: setup.bias,
+      activeZones: setup.targetZones.map((z) => ({
+        type: z.type,
+        high: z.high,
+        low: z.low,
+        confluence: z.confluence,
+      })),
+      waitCycles: setup.waitCycles,
+      createdAtBreakTime: setup.createdAtBreakTime,
+    };
+  }
+
   private hasCandleConfirmation(
     recentCandles: Array<{ o: number; h: number; l: number; c: number; v: number }>,
     bias: 'LONG' | 'SHORT',

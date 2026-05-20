@@ -15,6 +15,7 @@ import { Signal } from '../trading/entities/signal.entity';
 import { Trade } from '../trading/entities/trade.entity';
 import { DailyPnl } from '../trading/entities/daily-pnl.entity';
 import { DailyTelemetry } from '../trading/entities/daily-telemetry.entity';
+import { StrategyStateSnapshot } from '../trading/entities/strategy-state-snapshot.entity';
 import {
   IExchangeRest,
   IExchangeInfoService,
@@ -56,6 +57,8 @@ export class DashboardController {
     private readonly dailyPnlRepo: Repository<DailyPnl>,
     @InjectRepository(DailyTelemetry)
     private readonly telemetryRepo: Repository<DailyTelemetry>,
+    @InjectRepository(StrategyStateSnapshot)
+    private readonly snapshotRepo: Repository<StrategyStateSnapshot>,
   ) {}
 
   @Get('status')
@@ -440,6 +443,25 @@ export class DashboardController {
       return records;
     } catch (err) {
       this.logger.warn(`Telemetry query failed (table may not exist): ${err}`);
+      return [];
+    }
+  }
+
+  // State snapshots endpoint (2026-05-21) — returns recent strategy state for
+  // diagnosis. Use cycleAt to align with trades/signals timeline.
+  @Get('state-snapshots')
+  async getStateSnapshots(
+    @Query('symbol') symbol = 'BTCUSDT',
+    @Query('limit') limit = 50,
+  ) {
+    try {
+      return await this.snapshotRepo.find({
+        where: { symbol },
+        order: { cycleAt: 'DESC' },
+        take: Number(limit),
+      });
+    } catch (err) {
+      this.logger.warn(`Snapshots query failed: ${err}`);
       return [];
     }
   }
