@@ -466,6 +466,160 @@ export class DashboardController {
     }
   }
 
+  // Daily report endpoint (2026-05-21) — Bybit-sourced operational report.
+  // Combines trades (with bybitNetPnl truth) + daily_telemetry + signals into one
+  // report per day. Use this for daily live monitoring, NOT the legacy dashboard
+  // that uses DB's broken realizedPnl.
+  @Get('daily-report')
+  async getDailyReport(@Query('days') days = 7) {
+    try {
+      const sinceDate = new Date();
+      sinceDate.setUTCDate(sinceDate.getUTCDate() - Number(days));
+      sinceDate.setUTCHours(0, 0, 0, 0);
+
+      const [trades, telemetry, signals] = await Promise.all([
+        this.tradeRepo
+          .createQueryBuilder('t')
+          .where('t."openedAt" >= :since', { since: sinceDate })
+          .orderBy('t."openedAt"', 'ASC')
+          .getMany(),
+        this.telemetryRepo
+          .createQueryBuilder('d')
+          .where('d.date >= :since', {
+            since: sinceDate.toISOString().slice(0, 10),
+          })
+          .orderBy('d.date', 'ASC')
+          .getMany(),
+        this.signalRepo
+          .createQueryBuilder('s')
+          .where('s."createdAt" >= :since', { since: sinceDate })
+          .orderBy('s."createdAt"', 'ASC')
+          .getMany(),
+      ]);
+
+      const byDay = new Map<string, any>();
+
+      const ensureDay = (date: string) => {
+        if (!byDay.has(date)) {
+          byDay.set(date, {
+            date,
+            trades: [] as any[],
+            summary: {
+              totalTrades: 0,
+              wins: 0,
+              losses: 0,
+              winRate: 0,
+              bybitTotalNetPnl: 0,
+              bybitTotalFees: 0,
+              bybitTotalGross: 0,
+              dbTotalRealizedPnl: 0,
+              dbVsBybitDiff: 0,
+              reconciledTrades: 0,
+            },
+            signals: { generated: 0, executed: 0, rejected: 0 },
+            telemetry: null,
+          });
+        }
+        return byDay.get(date);
+      };
+
+      for (const t of trades) {
+        const date = t.openedAt.toISOString().slice(0, 10);
+        const day = ensureDay(date);
+        const bybitNet =
+          t.bybitNetPnl !== null && t.bybitNetPnl !== undefined
+            ? Number(t.bybitNetPnl)
+            : null;
+        const dbPnl =
+          t.realizedPnl !== null && t.realizedPnl !== undefined
+            ? Number(t.realizedPnl)
+            : 0;
+        const effectivePnl = bybitNet !== null ? bybitNet : dbPnl;
+
+        day.trades.push({
+          id: t.id,
+          direction: t.direction,
+          status: t.status,
+          entryPrice: t.entryPrice,
+          exitPrice: t.exitPrice,
+          openedAt: t.openedAt,
+          closedAt: t.closedAt,
+          bybitGross: t.bybitRealizedPnl,
+          bybitFees: t.bybitFees,
+          bybitNet,
+          dbRealizedPnl: dbPnl,
+          pnlSource: t.pnlSource,
+          effectivePnl,
+          duration_min: t.closedAt
+            ? Math.round(
+                (new Date(t.closedAt).getTime() -
+                  new Date(t.openedAt).getTime()) /
+                  60000,
+              )
+            : null,
+        });
+
+        day.summary.totalTrades++;
+        if (effectivePnl > 0) day.summary.wins++;
+        else if (effectivePnl < 0) day.summary.losses++;
+
+        day.summary.dbTotalRealizedPnl += dbPnl;
+        if (bybitNet !== null) {
+          day.summary.bybitTotalNetPnl += bybitNet;
+          day.summary.bybitTotalFees += Number(t.bybitFees ?? 0);
+          day.summary.bybitTotalGross += Number(t.bybitRealizedPnl ?? 0);
+          day.summary.reconciledTrades++;
+        }
+      }
+
+      for (const day of byDay.values()) {
+        const total = day.summary.totalTrades;
+        day.summary.winRate = total > 0 ? (day.summary.wins / total) * 100 : 0;
+        day.summary.dbVsBybitDiff =
+          day.summary.bybitTotalNetPnl - day.summary.dbTotalRealizedPnl;
+      }
+
+      for (const s of signals) {
+        const date = s.createdAt.toISOString().slice(0, 10);
+        const day = ensureDay(date);
+        day.signals.generated++;
+        if (s.status === 'EXECUTED') day.signals.executed++;
+        else if (s.status === 'REJECTED') day.signals.rejected++;
+      }
+
+      for (const t of telemetry) {
+        const day = ensureDay(t.date);
+        day.telemetry = {
+          totalCycles: t.totalCycles,
+          setupsCreated: t.setupsCreated,
+          entriesAttempted: t.entriesAttempted,
+          signalsGenerated: t.signalsGenerated,
+          signalsExecuted: t.signalsExecuted,
+          signalsRejected: t.signalsRejected,
+          blockedReasons: t.blockedReasons,
+          rejectionReasons: t.rejectionReasons,
+        };
+      }
+
+      const days_array = Array.from(byDay.values()).sort((a, b) =>
+        b.date.localeCompare(a.date),
+      );
+      return {
+        sinceDate: sinceDate.toISOString(),
+        daysCount: days_array.length,
+        warning: days_array.some(
+          (d) => Math.abs(d.summary.dbVsBybitDiff) > 0.05,
+        )
+          ? 'DB-vs-Bybit diff detected. Use bybitTotalNetPnl as truth.'
+          : null,
+        days: days_array,
+      };
+    } catch (err) {
+      this.logger.warn(`Daily report query failed: ${err}`);
+      return { error: String(err) };
+    }
+  }
+
   // PnL reconciliation endpoint (2026-05-20) — returns trades with Bybit-sourced
   // PnL vs bot's calculated PnL. Use bybitNetPnl as source of truth.
   // Trades with |pnlDiffFromDb| > 0.05 indicate the known DB PnL bug.

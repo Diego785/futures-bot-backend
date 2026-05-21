@@ -21,6 +21,8 @@ export class RiskManagerService {
   private readonly logger = new Logger(RiskManagerService.name);
   private lastTradeTime = 0;
   private readonly COOLDOWN_MS = 30 * 60_000; // 30 minutes between trades (prevents whipsaw)
+  // #8 SAFETY BRAKE (2026-05-21) — pause entries after N consecutive losses (Bybit truth)
+  private pausedUntil = 0; // ms timestamp; 0 = not paused
 
   constructor(
     private readonly config: ConfigService,
@@ -43,6 +45,7 @@ export class RiskManagerService {
       this.checkCooldown(),
       this.checkExistingPosition(signal.symbol),
       this.checkMinNotional(signal),
+      this.checkConsecutiveLossesBybit(), // #8 safety brake (2026-05-21)
     ]);
 
     const rejection = checks.find((c) => !c.approved);
@@ -178,6 +181,81 @@ export class RiskManagerService {
     }
 
     return { approved: true };
+  }
+
+  /**
+   * #8 SAFETY BRAKE (2026-05-21) — pause entries after N consecutive losses
+   * according to Bybit-truth PnL (bybitNetPnl), NOT bot's broken realizedPnl.
+   *
+   * Env vars:
+   *   MAX_CONSECUTIVE_LOSSES (default 3): how many losses in a row to trigger pause
+   *   CONSECUTIVE_LOSS_PAUSE_HOURS (default 24): how long to stay paused
+   *
+   * Only counts trades that have been reconciled with Bybit (pnlSource set).
+   * Trades without Bybit reconciliation are ignored — better to allow trading
+   * than freeze on stale legacy data.
+   */
+  private async checkConsecutiveLossesBybit(): Promise<RiskDecision> {
+    // Currently paused?
+    if (this.pausedUntil > Date.now()) {
+      const remainMin = Math.ceil((this.pausedUntil - Date.now()) / 60000);
+      return {
+        approved: false,
+        reason: `Safety brake active: paused for ${remainMin}min more (consecutive Bybit losses)`,
+      };
+    }
+
+    const maxConsecutive = Number(
+      this.config.get<number>('MAX_CONSECUTIVE_LOSSES', 3),
+    );
+    const pauseHours = Number(
+      this.config.get<number>('CONSECUTIVE_LOSS_PAUSE_HOURS', 24),
+    );
+
+    if (maxConsecutive <= 0) return { approved: true }; // disabled
+
+    // Fetch last N closed trades with Bybit reconciliation
+    const recentTrades = await this.tradeRepo
+      .createQueryBuilder('t')
+      .where("t.status LIKE 'CLOSED%'")
+      .andWhere('t."bybitNetPnl" IS NOT NULL')
+      .orderBy('t."closedAt"', 'DESC')
+      .limit(maxConsecutive)
+      .getMany();
+
+    if (recentTrades.length < maxConsecutive) {
+      // Not enough Bybit-reconciled trades yet — don't trigger
+      return { approved: true };
+    }
+
+    const allLosses = recentTrades.every(
+      (t) => Number(t.bybitNetPnl) < 0,
+    );
+
+    if (allLosses) {
+      this.pausedUntil = Date.now() + pauseHours * 3600_000;
+      const tradeIds = recentTrades.map((t) => t.id.slice(0, 8)).join(', ');
+      this.logger.error(
+        `🚨 SAFETY BRAKE TRIGGERED: ${maxConsecutive} consecutive Bybit-truth losses ` +
+          `(trades ${tradeIds}). Pausing entries for ${pauseHours}h until ` +
+          new Date(this.pausedUntil).toISOString(),
+      );
+      return {
+        approved: false,
+        reason: `Safety brake: ${maxConsecutive} consecutive losses according to Bybit. Pause ${pauseHours}h.`,
+      };
+    }
+
+    return { approved: true };
+  }
+
+  /**
+   * Manual override to clear the safety brake (for emergency unpause).
+   * Currently no API endpoint — set via DB or restart container.
+   */
+  resetSafetyBrake(): void {
+    this.pausedUntil = 0;
+    this.logger.warn('Safety brake reset manually');
   }
 
   private checkMinNotional(signal: ValidatedSignal): RiskDecision {

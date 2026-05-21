@@ -40,6 +40,10 @@ PULLBACK_HTF_FLIP_TOLERANT=false   # (added 2026-05-15) don't invalidate setup i
 PULLBACK_SLOPE_SOFT=false          # (added 2026-05-15) skip slope-against filter at entry trigger
 PULLBACK_MAX_WAIT_CYCLES=12        # candles to wait for pullback (bump to 20 = 5h)
 PULLBACK_MIN_ATR_PCT=0.15          # min ATR% to create setup (was hardcoded)
+
+# Added 2026-05-21: safety brakes for canary mode (live with capital).
+MAX_CONSECUTIVE_LOSSES=3           # pause entries after N losses in a row (Bybit truth)
+CONSECUTIVE_LOSS_PAUSE_HOURS=24    # hours to stay paused once brake triggers
 ```
 
 ## Daily Telemetry (added 2026-05-14)
