@@ -604,14 +604,25 @@ export class DashboardController {
       const days_array = Array.from(byDay.values()).sort((a, b) =>
         b.date.localeCompare(a.date),
       );
+      // Only warn when there are reconciled trades AND a meaningful diff.
+      // Without reconciled trades, bybitTotal* are all zero by design (not bug).
+      const hasRealDiff = days_array.some(
+        (d) =>
+          d.summary.reconciledTrades > 0 &&
+          Math.abs(d.summary.dbVsBybitDiff) > 0.05,
+      );
+      const hasPendingReconciliation = days_array.some(
+        (d) =>
+          d.summary.totalTrades > 0 && d.summary.reconciledTrades === 0,
+      );
       return {
         sinceDate: sinceDate.toISOString(),
         daysCount: days_array.length,
-        warning: days_array.some(
-          (d) => Math.abs(d.summary.dbVsBybitDiff) > 0.05,
-        )
-          ? 'DB-vs-Bybit diff detected. Use bybitTotalNetPnl as truth.'
-          : null,
+        warning: hasRealDiff
+          ? 'DB-vs-Bybit diff detected on reconciled trades. Use bybitTotalNetPnl as truth.'
+          : hasPendingReconciliation
+            ? 'Some trades have no Bybit reconciliation yet (pnlSource=null). Likely closed before PnL reconciliation deploy. Cannot validate against Bybit truth for those.'
+            : null,
         days: days_array,
       };
     } catch (err) {
