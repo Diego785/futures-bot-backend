@@ -19,7 +19,9 @@ export interface RiskDecision {
 @Injectable()
 export class RiskManagerService {
   private readonly logger = new Logger(RiskManagerService.name);
-  private lastTradeTime = 0;
+  // Per-symbol cooldown (2026-05-24 multi-symbol). Each symbol has its own
+  // 30min lockout — a BTC trade should NOT block ETH entries.
+  private lastTradeTimeBySymbol: Map<string, number> = new Map();
   private readonly COOLDOWN_MS = 30 * 60_000; // 30 minutes between trades (prevents whipsaw)
   // #8 SAFETY BRAKE (2026-05-21) — pause entries after N consecutive losses (Bybit truth)
   private pausedUntil = 0; // ms timestamp; 0 = not paused
@@ -42,7 +44,7 @@ export class RiskManagerService {
       this.checkTradingEnabled(),
       this.checkDailyLossLimit(),
       this.checkPositionSize(signal),
-      this.checkCooldown(),
+      this.checkCooldown(signal.symbol),
       this.checkExistingPosition(signal.symbol),
       this.checkMinNotional(signal),
       this.checkConsecutiveLossesBybit(), // #8 safety brake (2026-05-21)
@@ -60,8 +62,17 @@ export class RiskManagerService {
     return { approved: true };
   }
 
-  recordTradeExecuted(): void {
-    this.lastTradeTime = Date.now();
+  recordTradeExecuted(symbol?: string): void {
+    if (symbol) {
+      this.lastTradeTimeBySymbol.set(symbol, Date.now());
+    } else {
+      // Backward compat: if no symbol passed, set for all known symbols
+      // (treat as global cooldown — legacy behavior).
+      const now = Date.now();
+      for (const sym of this.lastTradeTimeBySymbol.keys()) {
+        this.lastTradeTimeBySymbol.set(sym, now);
+      }
+    }
   }
 
   private checkTradingEnabled(): RiskDecision {
@@ -103,15 +114,16 @@ export class RiskManagerService {
     return { approved: true };
   }
 
-  private checkCooldown(): RiskDecision {
-    const elapsed = Date.now() - this.lastTradeTime;
+  private checkCooldown(symbol: string): RiskDecision {
+    const lastTime = this.lastTradeTimeBySymbol.get(symbol) ?? 0;
+    const elapsed = Date.now() - lastTime;
     if (elapsed < this.COOLDOWN_MS) {
       const remaining = Math.ceil(
         (this.COOLDOWN_MS - elapsed) / 1000,
       );
       return {
         approved: false,
-        reason: `Cooldown active: ${remaining}s remaining`,
+        reason: `Cooldown active for ${symbol}: ${remaining}s remaining`,
       };
     }
     return { approved: true };

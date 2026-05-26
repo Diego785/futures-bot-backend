@@ -165,13 +165,41 @@ export class ExecutionService {
 
       const limitPrice = roundToTickSize(signal.entryPrice, tickSize);
       const LIMIT_WAIT_MS = 180_000;
-
-      this.logger.log(
-        `Placing ${entrySide} LIMIT order: ${quantity} ${symbol} @ ${limitPrice} (zone boundary, wait ${LIMIT_WAIT_MS / 1000}s)`,
-      );
+      // ENTRY_MODE (2026-05-24): 'market' fills 100% of signals at current price (taker).
+      // Backtest validated PF 1.16 (vs LIMIT 0.60). LIMIT-at-boundary suffered adverse
+      // selection — only filled when price BROKE the zone (= bad trades), missing the
+      // good rebounds. MARKET captures both. Robust across H1 (PF 1.31) and H2 (PF 1.06).
+      // 'limit' = legacy behavior (LIMIT GTC 180s + IOC fallback).
+      const entryMode = this.config
+        .get<string>('ENTRY_MODE', 'limit')
+        .toLowerCase()
+        .trim();
 
       let entryResponse;
       const orderPlacedTime = Date.now();
+
+      if (entryMode === 'market') {
+        this.logger.log(
+          `Placing ${entrySide} MARKET order: ${quantity} ${symbol} (ENTRY_MODE=market)`,
+        );
+        try {
+          entryResponse = await this.exchange.placeOrder({
+            symbol,
+            side: entrySide,
+            type: OrderType.MARKET,
+            quantity,
+            clientOrderId: entryClientId,
+          });
+        } catch (marketErr) {
+          this.logger.error(
+            `MARKET order placement failed: ${marketErr}. Skipping trade.`,
+          );
+          return null;
+        }
+      } else {
+      this.logger.log(
+        `Placing ${entrySide} LIMIT order: ${quantity} ${symbol} @ ${limitPrice} (zone boundary, wait ${LIMIT_WAIT_MS / 1000}s)`,
+      );
       try {
         entryResponse = await this.exchange.placeOrder({
           symbol,
@@ -305,6 +333,7 @@ export class ExecutionService {
         );
         return null;
       }
+      } // end else (ENTRY_MODE=limit)
 
       // Save entry order
       const entryOrder = this.orderRepo.create({
@@ -472,8 +501,8 @@ export class ExecutionService {
       }
       await this.orderRepo.save(ordersToLink);
 
-      // 11. Record trade execution
-      this.riskManager.recordTradeExecuted();
+      // 11. Record trade execution (per-symbol cooldown — 2026-05-24 multi-symbol)
+      this.riskManager.recordTradeExecuted(symbol);
 
       this.logger.log(
         `Trade opened: ${savedTrade.id} ${signal.action} ${quantity} ${symbol} ` +
@@ -1054,7 +1083,13 @@ export class ExecutionService {
             }
 
             // TRAILING SL
-            if (entryPrice > 0 && !slHit && !tpHit) {
+            // TRAILING_ENABLED (2026-05-24): set 'false' to disable trailing entirely.
+            // Backtest proved the $50 trailing destroys the edge (PF 0.03 vs 1.16 without).
+            // With ENTRY_MODE=market, trailing must be OFF to match the validated config.
+            const trailingEnabled =
+              this.config.get<string>('TRAILING_ENABLED', 'true').toLowerCase().trim() !==
+              'false';
+            if (trailingEnabled && entryPrice > 0 && !slHit && !tpHit) {
               const priceDiff = isLong
                 ? markPrice - entryPrice
                 : entryPrice - markPrice;

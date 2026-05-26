@@ -105,19 +105,29 @@ export class BacktestService {
     );
     this.logger.log(`Downloaded ${candles.length} candles`);
 
-    // 2. Download 1H candles for HTF context
-    const htfCandles = await this.downloadKlines(
-      config.symbol,
-      '1h',
-      config.days,
-      config.startDate,
-      config.endDate,
-    );
-    this.logger.log(`Downloaded ${htfCandles.length} HTF (1H) candles`);
+    // 2. Download 1H candles for HTF context.
+    // Optimization (2026-05-24): if timeframe is already 1h, reuse — same data,
+    // saves 1 API call and avoids Bybit rate limit when running short replays.
+    let htfCandles: Candle[];
+    if (config.timeframe === '1h') {
+      htfCandles = candles;
+      this.logger.log(`Reusing ${candles.length} primary candles as HTF (1H) — same timeframe`);
+    } else {
+      await new Promise((r) => setTimeout(r, 1500)); // pause to avoid rate-limit
+      htfCandles = await this.downloadKlines(
+        config.symbol,
+        '1h',
+        config.days,
+        config.startDate,
+        config.endDate,
+      );
+      this.logger.log(`Downloaded ${htfCandles.length} HTF (1H) candles`);
+    }
 
     // 2a. Download 4H candles for HTF 4H tiebreaker (only if enabled — saves bandwidth)
     let htf4hCandles: Candle[] = [];
     if (config.pullbackHtf4hTiebreaker) {
+      await new Promise((r) => setTimeout(r, 1500));
       htf4hCandles = await this.downloadKlines(
         config.symbol,
         '4h',
@@ -133,6 +143,7 @@ export class BacktestService {
     if (!config.pessimisticTrail) {
       // Only download 1m if we're NOT using pessimistic shortcut (which doesn't need them)
       // When pessimisticTrail is false and we have 1m data, use it for realistic trailing
+      await new Promise((r) => setTimeout(r, 1500));
       intrabarCandles = await this.downloadKlines(
         config.symbol,
         '1m',
@@ -148,6 +159,55 @@ export class BacktestService {
     // Only fill simulation remains backtest-specific (LIMIT/IOC, slippage, etc).
     const pullbackOb = this.createPullbackService(config);
     this.logger.log('PullbackObSignalService instance created for backtest (live code path)');
+
+    // 2d. #3 REPLAY FRAMEWORK (2026-05-23): load state from live bot snapshot.
+    // When replayFromSnapshotFile is set, restore the state machine to match the
+    // live bot at a specific cycle, then replay forward to validate that the
+    // backtest engine reproduces the live bot's decisions.
+    let replayStartTime: number | null = null;
+    if (config.replayFromSnapshotFile) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const fs = require('fs') as typeof import('fs');
+        const raw = fs.readFileSync(config.replayFromSnapshotFile, 'utf-8');
+        const snap = JSON.parse(raw) as {
+          cycleAt: string;
+          symbol: string;
+          timeframe?: string;
+          state: 'IDLE' | 'WAITING_PULLBACK';
+          bias: 'LONG' | 'SHORT';
+          activeZones: Array<{
+            type: 'OB' | 'FVG';
+            high: number;
+            low: number;
+            confluence?: boolean;
+          }>;
+          waitCycles: number;
+          createdAtBreakTime: number | null;
+        };
+        if (snap.symbol !== config.symbol) {
+          this.logger.warn(
+            `[REPLAY] Snapshot symbol ${snap.symbol} != config ${config.symbol}. Skipping replay restore.`,
+          );
+        } else {
+          pullbackOb.restoreFromSnapshot(config.symbol, {
+            state: snap.state,
+            bias: snap.bias,
+            activeZones: snap.activeZones,
+            waitCycles: snap.waitCycles,
+            createdAtBreakTime: snap.createdAtBreakTime,
+          });
+          replayStartTime = new Date(snap.cycleAt).getTime();
+          this.logger.log(
+            `[REPLAY] State restored from snapshot at ${snap.cycleAt}. ` +
+              `Processing candles strictly AFTER this time.`,
+          );
+        }
+      } catch (err) {
+        this.logger.error(`[REPLAY] Failed to load snapshot: ${err}`);
+        throw err;
+      }
+    }
 
     // 3. Run simulation
     const trades: BacktestTrade[] = [];
@@ -169,7 +229,13 @@ export class BacktestService {
       config.economicBeSafetyPct ?? 0.02,
     );
 
-    const warmup = 100;
+    // Warmup: indicators (ATR, EMA, RSI) need ~50 candles of history before reliable.
+    // In #3 REPLAY mode, the state machine is pre-loaded — we still need indicator
+    // warmup but can shrink it to the minimum (50) if dataset is small.
+    const warmup = replayStartTime !== null
+      ? Math.min(50, Math.floor(candles.length / 2))
+      : 100;
+    this.logger.log(`Warmup: ${warmup} candles (replay mode: ${replayStartTime !== null})`);
     let gatePassCount = 0;
     let cooldownUntil = 0;
 
@@ -212,6 +278,14 @@ export class BacktestService {
 
     for (let i = warmup; i < candles.length; i++) {
       const candle = candles[i];
+
+      // #3 REPLAY MODE: skip candles AT OR BEFORE the snapshot's cycleAt.
+      // The snapshot represents state AT that cycle; we need to start fresh
+      // from the NEXT cycle to avoid double-processing the candle that already
+      // shaped the loaded state.
+      if (replayStartTime !== null && candle.closeTime <= replayStartTime) {
+        continue;
+      }
 
       // Check open position first
       if (simulator.hasPosition) {
@@ -525,7 +599,7 @@ export class BacktestService {
         // Cooldown check (matches live RiskManager.checkCooldown)
         if (i < cooldownUntil) continue;
 
-        // ─── REALISTIC FILL SIMULATION ───
+        // ─── FILL SIMULATION ───
         const limitWaitMs = 180_000;
         const iocEnabled = config.iocFallbackEnabled !== false;
         const iocMaxSlipUsd = config.iocFallbackMaxSlipUsd ?? 50;
@@ -538,44 +612,55 @@ export class BacktestService {
         let fillTime: number | null = null;
         let filledViaIoc = false;
 
-        // Phase 1: LIMIT GTC — fills if price reaches limitPrice
-        for (const sub of fillSubCandles) {
-          if (isLong) {
-            if (sub.open <= signalEntry) {
-              actualEntryPrice = sub.open;
-              fillTime = sub.closeTime;
-              break;
-            } else if (sub.low <= signalEntry) {
-              actualEntryPrice = signalEntry;
-              fillTime = sub.closeTime;
-              break;
-            }
-          } else {
-            if (sub.open >= signalEntry) {
-              actualEntryPrice = sub.open;
-              fillTime = sub.closeTime;
-              break;
-            } else if (sub.high >= signalEntry) {
-              actualEntryPrice = signalEntry;
-              fillTime = sub.closeTime;
-              break;
+        if (config.marketEntry) {
+          // MARKET ENTRY MODE (2026-05-24): fill immediately at signal-trigger price
+          // + taker slippage. Bypasses LIMIT adverse selection. ALWAYS fills.
+          // The signal fired because this candle touched the zone, so the trigger
+          // price is the zone boundary (signalEntry). MARKET fills at boundary +
+          // slippage (worse for us = realistic taker execution).
+          const slip = config.marketEntrySlippageUsd ?? 5;
+          actualEntryPrice = isLong ? signalEntry + slip : signalEntry - slip;
+          fillTime = candle.closeTime;
+        } else {
+          // Phase 1: LIMIT GTC — fills only if price reaches limitPrice
+          for (const sub of fillSubCandles) {
+            if (isLong) {
+              if (sub.open <= signalEntry) {
+                actualEntryPrice = sub.open;
+                fillTime = sub.closeTime;
+                break;
+              } else if (sub.low <= signalEntry) {
+                actualEntryPrice = signalEntry;
+                fillTime = sub.closeTime;
+                break;
+              }
+            } else {
+              if (sub.open >= signalEntry) {
+                actualEntryPrice = sub.open;
+                fillTime = sub.closeTime;
+                break;
+              } else if (sub.high >= signalEntry) {
+                actualEntryPrice = signalEntry;
+                fillTime = sub.closeTime;
+                break;
+              }
             }
           }
-        }
 
-        // Phase 2: IOC fallback (if enabled)
-        if (actualEntryPrice === null && iocEnabled && fillSubCandles.length > 0) {
-          const lastSub = fillSubCandles[fillSubCandles.length - 1];
-          const marketPrice = lastSub.close;
-          const slipCapPrice = isLong ? signalEntry + iocMaxSlipUsd : signalEntry - iocMaxSlipUsd;
-          if (isLong && marketPrice <= slipCapPrice) {
-            actualEntryPrice = marketPrice;
-            fillTime = lastSub.closeTime;
-            filledViaIoc = true;
-          } else if (!isLong && marketPrice >= slipCapPrice) {
-            actualEntryPrice = marketPrice;
-            fillTime = lastSub.closeTime;
-            filledViaIoc = true;
+          // Phase 2: IOC fallback (if enabled)
+          if (actualEntryPrice === null && iocEnabled && fillSubCandles.length > 0) {
+            const lastSub = fillSubCandles[fillSubCandles.length - 1];
+            const marketPrice = lastSub.close;
+            const slipCapPrice = isLong ? signalEntry + iocMaxSlipUsd : signalEntry - iocMaxSlipUsd;
+            if (isLong && marketPrice <= slipCapPrice) {
+              actualEntryPrice = marketPrice;
+              fillTime = lastSub.closeTime;
+              filledViaIoc = true;
+            } else if (!isLong && marketPrice >= slipCapPrice) {
+              actualEntryPrice = marketPrice;
+              fillTime = lastSub.closeTime;
+              filledViaIoc = true;
+            }
           }
         }
 
@@ -1293,10 +1378,32 @@ export class BacktestService {
           }>(url),
         );
         if (response.data.retCode !== 0) {
-          this.logger.error(
-            `Bybit API error ${response.data.retCode}: ${response.data.retMsg}`,
-          );
-          break;
+          // Rate-limit (10006) — backoff and retry once before giving up.
+          if (response.data.retCode === 10006) {
+            this.logger.warn(
+              `Bybit rate-limit (10006). Sleeping 5s and retrying once...`,
+            );
+            await new Promise((r) => setTimeout(r, 5000));
+            const retry = await firstValueFrom(
+              this.httpService.get<{
+                retCode: number;
+                retMsg: string;
+                result: { list: string[][] };
+              }>(url),
+            );
+            if (retry.data.retCode !== 0) {
+              this.logger.error(
+                `Bybit retry failed ${retry.data.retCode}: ${retry.data.retMsg}`,
+              );
+              break;
+            }
+            response.data = retry.data;
+          } else {
+            this.logger.error(
+              `Bybit API error ${response.data.retCode}: ${response.data.retMsg}`,
+            );
+            break;
+          }
         }
         const list = response.data.result?.list ?? [];
         if (list.length === 0) break;

@@ -68,6 +68,29 @@ export interface BacktestConfig {
   // Economic BE — when true, BE buffer covers round-trip fees + safety margin (vs flat 0.05%)
   economicBe: boolean;        // default false (legacy 0.05% buffer)
   economicBeSafetyPct: number; // additional safety on top of 2x commission, default 0.02 = 0.02%
+  // MARKET entry (added 2026-05-24) — bypass LIMIT/IOC simulation, fill immediately
+  // at current price + taker slippage. Tests hypothesis that LIMIT-at-boundary suffers
+  // adverse selection (only fills on breakouts = bad trades). MARKET fills 100% of
+  // signals including the good rebounds that LIMIT misses.
+  marketEntry?: boolean;            // default false (use LIMIT/IOC)
+  marketEntrySlippageUsd?: number;  // taker slippage estimate, default 5
+  // #3 Replay Framework (added 2026-05-23) — load state from live bot's snapshots.
+  // When set, reads the JSON file (exported from strategy_state_snapshots) and
+  // restores PullbackObSignalService state before processing candles forward.
+  // Replay mode is meaningful only when --start-date is at or just after the snapshot's cycleAt.
+  //
+  // Snapshot JSON shape (export from DB query):
+  //   {
+  //     "cycleAt": "2026-05-21T23:00:01.123Z",
+  //     "symbol": "BTCUSDT",
+  //     "timeframe": "1h",
+  //     "state": "WAITING_PULLBACK",
+  //     "bias": "SHORT",
+  //     "activeZones": [{ "type": "OB", "high": 77500, "low": 77400 }, ...],
+  //     "waitCycles": 3,
+  //     "createdAtBreakTime": 1716256800000
+  //   }
+  replayFromSnapshotFile?: string;  // path to JSON file with exported snapshot
 }
 
 // Phase 1 instrumentation — observabilidad para v2 strategic redesign.

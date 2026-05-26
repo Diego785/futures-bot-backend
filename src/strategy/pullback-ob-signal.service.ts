@@ -468,6 +468,47 @@ export class PullbackObSignalService {
     };
   }
 
+  /**
+   * Restores internal setup state from a previously-saved snapshot.
+   * Used by #3 Replay Framework (2026-05-23) to load state from the live bot's
+   * strategy_state_snapshots table and replay forward from that point.
+   *
+   * After calling this, generateSignal() will resume as if the bot had been
+   * processing cycles continuously up to the snapshot's cycleAt.
+   */
+  restoreFromSnapshot(
+    symbol: string,
+    snapshot: {
+      state: 'IDLE' | 'WAITING_PULLBACK';
+      bias: 'LONG' | 'SHORT';
+      activeZones: Array<{
+        type: 'OB' | 'FVG';
+        high: number;
+        low: number;
+        confluence?: boolean;
+      }>;
+      waitCycles: number;
+      createdAtBreakTime: number | null;
+    },
+  ): void {
+    this.setups.set(symbol, {
+      state: snapshot.state,
+      bias: snapshot.bias,
+      targetZones: snapshot.activeZones.map((z) => ({
+        type: z.type,
+        high: z.high,
+        low: z.low,
+        confluence: z.confluence,
+      })),
+      waitCycles: snapshot.waitCycles,
+      createdAtBreakTime: snapshot.createdAtBreakTime,
+    });
+    this.logger.log(
+      `[REPLAY] Restored state for ${symbol}: ${snapshot.state} ${snapshot.bias} ` +
+        `(${snapshot.activeZones.length} zones, wait=${snapshot.waitCycles})`,
+    );
+  }
+
   private hasCandleConfirmation(
     recentCandles: Array<{ o: number; h: number; l: number; c: number; v: number }>,
     bias: 'LONG' | 'SHORT',

@@ -106,6 +106,11 @@ async function main() {
     mrSessions: parseSessionList(getArg('mr-sessions', 'EU,OVERLAP,US')),
     economicBe: hasFlag('economic-be'),
     economicBeSafetyPct: parseFloat(getArg('economic-be-safety-pct', '0.02')),
+    // #3 Replay Framework (2026-05-23): load live bot's state from snapshot JSON.
+    replayFromSnapshotFile: getArg('replay-snapshot', '') || undefined,
+    // MARKET entry (2026-05-24): bypass LIMIT/IOC, fill immediately at current price.
+    marketEntry: hasFlag('market-entry'),
+    marketEntrySlippageUsd: parseFloat(getArg('market-slip', '5')),
   };
 
   console.log('');

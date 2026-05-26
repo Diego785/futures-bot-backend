@@ -71,10 +71,11 @@ export class BotModule implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   onModuleInit(): void {
-    // Subscribe to candle close events -> enqueue BullMQ jobs
+    // Subscribe to candle close events -> enqueue BullMQ jobs (per symbol).
+    // Multi-symbol (2026-05-24): filter against the bot state's symbol list, not single symbol.
     this.candleSub = this.marketData.onCandleClose$.subscribe(
       ({ symbol, candle }) => {
-        if (!this.botState.enabled || symbol !== this.botState.symbol) {
+        if (!this.botState.enabled || !this.botState.symbols.includes(symbol)) {
           return;
         }
 
@@ -106,10 +107,13 @@ export class BotModule implements OnModuleInit, OnModuleDestroy {
       },
     );
 
-    // Subscribe to bot state changes -> connect/disconnect WS
+    // Subscribe to bot state changes -> connect/disconnect WS.
+    // Multi-symbol (2026-05-24): subscribe to each symbol over the same WS.
     this.stateSub = this.botState.onStateChange$.subscribe((state) => {
       if (state.enabled) {
-        this.marketData.subscribe(state.symbol, state.timeframe);
+        for (const sym of state.symbols) {
+          this.marketData.subscribe(sym, state.timeframe);
+        }
         this.userData.start().catch((err) => {
           this.logger.error('Failed to start user data stream', err);
         });

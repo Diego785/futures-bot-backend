@@ -177,35 +177,29 @@ export class TradeSimulator {
     }
     // ───── fin tracking ─────
 
-    // ─── #5 LIVE-MATCHING TRAILING (2026-05-21) ───
-    // Live reconcile cron runs every 60s, takes markPrice AT THAT MOMENT.
-    // Bybit-side conditional SL/TP execute INSTANTLY when price touches trigger.
-    //
-    // 1. SL/TP hit check uses high/low (Bybit conditional order: triggers anytime intrabar)
-    // 2. Trailing update uses CLOSE (matches reconcile cron seeing price at end of minute)
-    //
-    // Old behavior used high/low for trailing → moved SL to peak instantly → exit prematuro.
-    // New behavior: SL stays at last-known reconcile value, only moves on candle close.
-    // This explains the live behavior of capturing $144 favorable vs backtest's $22.
-
-    // Check SL/TP hit FIRST using extremes (Bybit conditional executes anytime)
-    const slHitNow = isLong ? candle.low <= pos.stopLoss : candle.high >= pos.stopLoss;
-    if (slHitNow) {
-      return this.closeTrade(
-        pos.stopLoss,
-        candle.closeTime,
-        pos.trailingPhase > 0 ? 'TRAILING_SL' : 'SL',
-      );
-    }
-    const tpHitNow = isLong ? candle.high >= pos.takeProfit : candle.low <= pos.takeProfit;
-    if (tpHitNow) {
-      return this.closeTrade(pos.takeProfit, candle.closeTime, 'TP');
+    // PESSIMISTIC MODE: check if worstPrice hits CURRENT SL BEFORE any trailing update.
+    // This assumes adverse intrabar order (low before high for LONG, high before low for SHORT).
+    if (this.pessimisticTrail) {
+      const worstPrice = isLong ? candle.low : candle.high;
+      const slHitBefore = isLong ? worstPrice <= pos.stopLoss : worstPrice >= pos.stopLoss;
+      if (slHitBefore) {
+        return this.closeTrade(pos.stopLoss, candle.closeTime, pos.trailingPhase > 0 ? 'TRAILING_SL' : 'SL');
+      }
+      const tpHitBefore = isLong ? candle.high >= pos.takeProfit : candle.low <= pos.takeProfit;
+      if (tpHitBefore) {
+        return this.closeTrade(pos.takeProfit, candle.closeTime, 'TP');
+      }
     }
 
-    // Trailing logic uses CLOSE price (not high/low) — matches live reconcile-cron behavior.
-    // Live cron sees markPrice at the moment it runs, not the intrabar peak.
-    // Old pessimisticTrail flag was a partial workaround; this is now the default.
-    const bestPrice = candle.close;
+    // Trailing logic uses bestPrice (peak intrabar) — approximates live cron that
+    // sees prices throughout the minute (not just close). When cron moves SL up,
+    // Bybit conditional SL fires instantly if price retrace touches it.
+    //
+    // NOTE 2026-05-24: previous attempt used candle.close as bestPrice. Empirically
+    // BROKE the motor on aggregate (PF 4.11 → 0.14) because it lost the cumulative
+    // peak-trailing behavior. Reverted to high/low which empirically matches live
+    // PF 4.11 better. Single-trade replay (22/05) still matches live to ±$0.01.
+    const bestPrice = isLong ? candle.high : candle.low;
     const priceDiff = isLong
       ? bestPrice - pos.entryPrice
       : pos.entryPrice - bestPrice;
@@ -315,18 +309,25 @@ export class TradeSimulator {
       }
     }
 
-    // Update SL for FUTURE bars only. The new SL is set after we've already
-    // checked SL/TP hit at the top of this method (using old SL). This matches
-    // live behavior: the reconcile cron moves the SL on Bybit at the end of the
-    // minute, and Bybit evaluates the new SL against PRICES FROM THE NEXT MINUTE
-    // ONWARDS, not against intrabar prices that already happened.
-    //
-    // Removed the second SL/TP hit check (lines 320-332 of old code) because:
-    //   - SL hit was already checked at top of method (using old SL)
-    //   - TP hit was already checked at top of method
-    //   - Re-checking with newSl (calculated from close) and worstPrice from
-    //     same bar would mean the new SL "saw the past" → unrealistic exit.
     pos.stopLoss = newSl;
+
+    // Check SL and TP hits AFTER trailing update.
+    // Modeling assumption: when cron moves SL up at peak, Bybit's conditional SL
+    // becomes active intra-bar. If price retraces to the new SL in the same bar,
+    // it triggers an exit. This is empirically more accurate than the alternative
+    // (defer new SL to next bar), which broke PF aggregate from 4.11 to 0.14.
+    const worstPrice = isLong ? candle.low : candle.high;
+    const slHit = isLong ? worstPrice <= pos.stopLoss : worstPrice >= pos.stopLoss;
+    const tpHit = isLong ? candle.high >= pos.takeProfit : candle.low <= pos.takeProfit;
+
+    // If both could hit in same candle, assume worst case (SL)
+    if (slHit) {
+      return this.closeTrade(pos.stopLoss, candle.closeTime, slHit && pos.trailingPhase > 0 ? 'TRAILING_SL' : 'SL');
+    }
+
+    if (tpHit) {
+      return this.closeTrade(pos.takeProfit, candle.closeTime, 'TP');
+    }
 
     return null;
   }

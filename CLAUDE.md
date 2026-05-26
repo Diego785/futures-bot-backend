@@ -15,7 +15,11 @@ Desplegado en producción en `38.242.145.246:3300` (Docker).
 ```
 STRATEGY_MODE=pullback-ob          # 'pullback-ob' (active) or 'hybrid' (legacy)
 DEFAULT_TIMEFRAME=15m
-DEFAULT_SYMBOL=BTCUSDT
+DEFAULT_SYMBOL=BTCUSDT             # primary symbol (used if SYMBOLS not set)
+# Added 2026-05-24: multi-symbol support (comma-separated, takes precedence
+# over DEFAULT_SYMBOL). Each symbol has independent state machine + 30min cooldown.
+# Example: SYMBOLS=BTCUSDT,ETHUSDT
+SYMBOLS=BTCUSDT
 MAX_LEVERAGE=5
 MAX_POSITION_NOTIONAL_USDT=100
 MAX_DAILY_LOSS_USDT=20
@@ -44,6 +48,16 @@ PULLBACK_MIN_ATR_PCT=0.15          # min ATR% to create setup (was hardcoded)
 # Added 2026-05-21: safety brakes for canary mode (live with capital).
 MAX_CONSECUTIVE_LOSSES=3           # pause entries after N losses in a row (Bybit truth)
 CONSECUTIVE_LOSS_PAUSE_HOURS=24    # hours to stay paused once brake triggers
+
+# Added 2026-05-24: entry execution mode. CRITICAL FINDING.
+# 'limit' (legacy): LIMIT GTC 180s + IOC fallback. Suffered adverse selection
+#   (only filled when price BROKE the zone = bad trades). Backtest 1Y PF 0.60.
+# 'market': MARKET order at trigger. Fills 100% incl. good rebounds. Backtest 1Y
+#   PF 1.16 (H1 1.31, H2 1.06). THE fix for the 3-month no-profitability period.
+# IMPORTANT: with ENTRY_MODE=market, keep TRAIL_FIXED high or trailing off — the
+#   $50 trailing destroys the edge (PF 0.03). Backtest used NO trailing (TP/SL fixed).
+ENTRY_MODE=market
+TRAILING_ENABLED=false             # disable trailing (the $50 trail destroys edge, PF 0.03 vs 1.16)
 ```
 
 ## Daily Telemetry (added 2026-05-14)
