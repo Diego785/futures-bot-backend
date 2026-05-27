@@ -6,10 +6,12 @@
 > Esta spec es **viva**: se cierra marcando casos reales en el visor (Fase 4–5).
 
 ## Capas (no mezclar — ver `API-CONTRACT.md`)
-- `MyManualMarks` — lo que marca el usuario.
-- `VideoSMC` — réplica de las reglas de este documento.
+- `MyManualMarks` — lo que marca el usuario (sobre **nuestras** velas, en el visor).
+- `VideoSMC` — réplica algorítmica de las reglas de este documento.
 - `StrictFVG` — FVG clásico de 3 velas (definición algorítmica estándar).
-- `LuxAlgoReference` — referencia visual/manual; **NO se intenta clonar**.
+- `LuxAlgoReference` — referencia visual; **NO se clona**. Se puebla **manualmente** (igual que
+  `MyManualMarks`): capturando lo que LuxAlgo marca en TradingView (rangos/timestamps), no por
+  algoritmo, salvo que algún día tengamos el Pine Script fuente.
 
 ---
 
@@ -18,6 +20,8 @@
 **Regla propuesta:** una vela/tramo es `Impulse` si su rango o cuerpo supera `N×` la media reciente
 de rango, y/o cierra cerca del extremo, y/o (si hay) volumen elevado.
 **Parámetros:** `N` (mult. de fuerza), ventana de media, umbral de cierre-en-extremo.
+**Nota (latencia vs confianza):** más velas de confirmación = más fiable pero detección más
+tardía (peor para operar la entrada). Este trade-off se mide con los casos `timing` del dataset.
 🔴 ¿Una sola vela basta o se requiere secuencia? ¿Cuerpo, rango o ambos? ¿Entra el volumen?
 
 ## 2. Estructura
@@ -31,12 +35,28 @@ ruptura del último mínimo/máximo estructural = cambio.
 **Video:** estructura alcista → POI en zona baja; se marca **la última vela bajista antes del
 impulso alcista**, **incluyendo mechas** ("desde la mecha alta hasta la mecha baja"). Se descarta
 si la vela contraria adyacente la "equipara".
-**Regla propuesta:** última vela de color contrario inmediatamente previa a un `Impulse` válido;
-rango = `[low, high]` (con mechas); descartar si la vela contraria siguiente la anula;
-`mitigated` cuando el precio regresa a la zona.
-**Parámetros:** fuerza del impulso; criterio de "equiparar".
-🔴 ¿Siempre toda la mecha o cuerpo+mecha según caso? ¿El impulso debe romper estructura o basta
-el desplazamiento? ¿Cuántas velas mira el impulso?
+
+**Regla PROVISIONAL `VideoSMC`** (2026-05-27 — punto de partida, a validar con casos reales en el visor):
+- OB = última vela de color contrario inmediatamente previa a un `Impulse` válido.
+- Rango = `[low, high]` **completo, con mechas** por defecto (el video insiste en incluir mechas).
+- **Override manual** permitido (cuerpo + mecha parcial), pero cada override es **señal de que la
+  regla necesita ajuste**, NO una muleta permanente: alimenta la calibración.
+- `Impulse` (fuerza/desplazamiento) es **requisito**. Romper estructura **NO** es requisito; es un
+  **factor de calidad/confluencia** (ver §7). Dejar imbalance o coincidir con liquidez = más calidad.
+- La zona se **emite solo cuando el impulso se confirma**, guardando `originCandleTime` (vela del OB)
+  y `confirmedAtTime` (cuando se confirmó). Ver `NO-REPAINT-RULES.md`.
+
+**Parámetros (configurables por timeframe, NO hardcodeados):**
+```ts
+impulseConfirmationBars: 1 | 2 | 3 | 5   // velas para confirmar la fuerza
+strengthRangeMultiplier: number
+strengthBodyMultiplier: number
+closeNearExtremeThreshold: number
+requiresStructureBreak: boolean          // default: false (factor de calidad, no requisito)
+requiresImbalance: boolean               // default: false
+```
+🔴 Por validar en el visor: defaults de los multiplicadores por TF; criterio exacto de "equiparar";
+si la mecha completa sobre-extiende la zona en 15m.
 
 ## 4. VideoImbalance (≠ StrictFVG)
 **Video:** desequilibrio / "imbalance" / FVG = zona dejada por el movimiento con fuerza,
@@ -64,7 +84,7 @@ cercanía al precio; `swept` cuando se barre.
 
 ## 8. Mitigación / Invalidación
 🔴 ¿Un OB queda inválido al ser tocado una vez, al cerrarse dentro, o al atravesarse del todo?
-¿La zona caduca por tiempo?
+¿La zona caduca por tiempo? (Estados en `API-CONTRACT.md`: `UNTOUCHED`/`TOUCHED`/`MITIGATED`/`INVALIDATED`.)
 
 ## 9. Entradas (3 niveles)
 **Video:** entrada alta (más riesgo, más probable), **central (preferida)**, baja (menos riesgo,

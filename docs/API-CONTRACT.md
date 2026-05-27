@@ -7,23 +7,28 @@
 - Tiempos en **epoch ms UTC**. Velas alineadas a UTC (1D cierra 00:00 UTC).
 - Toda zona incluye campos de causalidad (ver `NO-REPAINT-RULES.md`).
 - Toda zona/señal incluye `engineVersion` y `paramsHash` (reproducibilidad).
+- El **visor consume las MISMAS velas del backend** (Binance/Bybit), NO las de TradingView. El
+  golden dataset se marca sobre nuestras velas para ser comparable con el motor; LuxAlgo/TradingView
+  entran solo como capa de referencia (`LuxAlgoReference`).
 
 ## Tipos núcleo (borrador)
 ```ts
 type Timeframe = '15m' | '1h' | '4h' | '1d';
 type Side = 'LONG' | 'SHORT';
 type Layer = 'MyManualMarks' | 'VideoSMC' | 'StrictFVG' | 'LuxAlgoReference';
+type MitigationStatus = 'UNTOUCHED' | 'TOUCHED' | 'MITIGATED' | 'INVALIDATED';
 
 type Candle = { t: number; o: number; h: number; l: number; c: number; v: number; tf: Timeframe };
 
 type Zone = {
   id: string;
   kind: 'OB' | 'VideoImbalance' | 'StrictFVG' | 'Liquidity';
-  layer: Layer; side: Side; tf: Timeframe;
+  sourceLayer: Layer; side: Side; tf: Timeframe;
   high: number; low: number;
   // causalidad (NO-REPAINT)
   originCandleTime: number; confirmedAtTime: number; detectedAtTime: number; validFromTime: number;
-  mitigated: boolean; mitigatedAtTime?: number;
+  // ciclo de vida
+  mitigationStatus: MitigationStatus; mitigatedAtTime?: number; invalidatedAt?: number;
   impulseId?: string;
   engineVersion: string; paramsHash: string;
 };
@@ -39,7 +44,7 @@ type SignalCandidate = {
 };
 
 type ManualMark = {            // marcas que el usuario dibuja en el visor
-  id: string; layer: 'MyManualMarks';
+  id: string; sourceLayer: 'MyManualMarks';
   kind: 'OB' | 'Imbalance' | 'Liquidity' | 'Entry' | 'SL' | 'TP';
   side?: Side; tf: Timeframe; high: number; low: number;
   timeStart: number; timeEnd: number; notes?: string;
@@ -56,7 +61,7 @@ type JournalEntry = {          // broker (read-only) + anotaciones del usuario
 
 ## REST (borrador)
 - `GET  /candles?symbol&tf&from&to` → `Candle[]`
-- `GET  /zones?symbol&tf&layer` → `Zone[]`
+- `GET  /zones?symbol&tf&sourceLayer` → `Zone[]`
 - `GET  /signals?symbol&state` → `SignalCandidate[]`
 - `PATCH /signals/:id` → cambiar estado (`ACCEPTED`/`REJECTED`/…)
 - `GET/POST /marks` → marcas manuales del usuario
