@@ -80,17 +80,21 @@ tramo de fuerza (no el patrón de 3 velas). Se relaciona con el OB que originó 
 
 **Parámetros:**
 ```ts
-imbalanceMode: 'impulse_span' | 'three_candle'  // span del impulso o gap de 3 velas
-imbalanceMinSizePct: number                      // tamaño mínimo (relativo al ATR/rango)
-linkToOriginOB: boolean                          // mantener relación con OB del impulso
+videoImbalanceMode: 'impulse_span' | 'range_to_ob' | 'manual'
+imbalanceMinSizePct: number       // tamaño mínimo (relativo al ATR/rango)
+linkToOriginOB: boolean           // mantener relación con OB del impulso
 ```
+
+> `three_candle` queda **exclusivo de `StrictFVG`** (§5). `VideoImbalance` nunca usa ese modo
+> para no contaminar las dos definiciones.
 
 🔴 Bordes exactos del imbalance (desde dónde hasta dónde); umbral de `filled` parcial vs total.
 
 ## 5. StrictFVG
 **Definición estándar (no del video):** gap de 3 velas — `low[i+1] > high[i-1]` (alcista) /
 `high[i+1] < low[i-1]` (bajista). **Capa separada** para comparar contra `VideoImbalance`.
-**Parámetros:** opcional `minSizePct` para filtrar ruido. No mezclar con `VideoImbalance`.
+**Parámetros:** opcional `minSizePct` para filtrar ruido. **Único** consumidor del patrón
+`three_candle`; nunca se mezcla con `VideoImbalance`.
 
 ## 6. Liquidez
 **Video:** el precio va hacia donde hay liquidez; busca la **más cercana primero**.
