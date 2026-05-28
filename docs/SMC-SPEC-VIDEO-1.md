@@ -1,9 +1,9 @@
 # Especificación SMC — Video 1 (Trading Sin Edición)
 
-> Estado: **BORRADOR para co-validación** · 2026-05-27
-> Regla: nada marcado 🔴 se implementa hasta validarlo con el usuario.
+> Estado: **BORRADOR PROVISIONAL para co-validación** · 2026-05-27
+> Regla: nada marcado 🔴 se implementa con valores fijos hasta validarlo con casos reales en el visor.
+> Nada de números mágicos. Toda regla con parámetros configurables.
 > Fuente: transcripción del directo "Curso Smart Money Gratis (Parte 1)".
-> Esta spec es **viva**: se cierra marcando casos reales en el visor (Fase 4–5).
 
 ## Capas (no mezclar — ver `API-CONTRACT.md`)
 - `MyManualMarks` — lo que marca el usuario (sobre **nuestras** velas, en el visor).
@@ -13,88 +13,192 @@
   `MyManualMarks`): capturando lo que LuxAlgo marca en TradingView (rangos/timestamps), no por
   algoritmo, salvo que algún día tengamos el Pine Script fuente.
 
+> `MyManualMarks`, `VideoSMC` y `StrictFVG` corren todos sobre las **mismas velas del backend**.
+> `LuxAlgoReference` es referencia visual; sus diferencias con `VideoSMC` no son errores del bot,
+> son distintas interpretaciones.
+
 ---
 
 ## 1. Fuerza / Impulso
 **Video:** repite "movimiento con fuerza" = institución operando; mercado "aburrido/lateral" = sin fuerza.
-**Regla propuesta:** una vela/tramo es `Impulse` si su rango o cuerpo supera `N×` la media reciente
-de rango, y/o cierra cerca del extremo, y/o (si hay) volumen elevado.
-**Parámetros:** `N` (mult. de fuerza), ventana de media, umbral de cierre-en-extremo.
+**Regla provisional `VideoSMC`:** una vela/tramo es `Impulse` si su rango y/o cuerpo supera la media
+reciente por un multiplicador, y/o cierra cerca del extremo, y/o (si hay) volumen elevado. La fuerza
+puede medirse por rango, cuerpo, cierre cerca del extremo, secuencia de velas o volumen.
+
+**Parámetros (por timeframe, NO hardcodeados):**
+```ts
+strengthRangeMultiplier: number       // rango supera N x media reciente
+strengthBodyMultiplier: number        // cuerpo supera N x media reciente
+averageWindow: number                 // velas para la media de referencia
+closeNearExtremeThreshold: number     // 0..1, qué tan cerca del extremo cierra
+minDisplacementCandles: number        // mínimo de velas para considerar "impulso"
+```
+
 **Nota (latencia vs confianza):** más velas de confirmación = más fiable pero detección más
-tardía (peor para operar la entrada). Este trade-off se mide con los casos `timing` del dataset.
-🔴 ¿Una sola vela basta o se requiere secuencia? ¿Cuerpo, rango o ambos? ¿Entra el volumen?
+tardía (peor para operar la entrada). Trade-off medido con los casos `timing` del dataset.
+🔴 Defaults por TF; pesos relativos de rango/cuerpo/cierre/volumen.
 
 ## 2. Estructura
-**Video:** alcista mientras no rompa el punto bajo clave; bajista al romperlo. Análisis top-down.
-**Regla propuesta:** swings por pivotes de `k` velas; tendencia por secuencia HH/HL vs LH/LL;
-ruptura del último mínimo/máximo estructural = cambio.
-**Parámetros:** `k` (pivote); definición de "punto clave".
-🔴 ¿Qué pivote refleja tu lectura? ¿BOS/CHoCH formal o ruptura simple del punto?
+**Video:** alcista mientras no rompa el punto bajo clave; bajista al romperlo. **Análisis top-down**
+(mensual → semanal → diario → 4H → 1H → 15m → 5m); una zona de 15m existe **dentro del contexto** 1H/4H.
+**Regla provisional `VideoSMC`:** swings por pivotes de `swingLookback` velas; tendencia por secuencia
+HH/HL vs LH/LL; ruptura del último mínimo/máximo estructural = cambio.
+
+**Parámetros:**
+```ts
+swingLookback: number                  // velas a cada lado para detectar pivote
+structureBreakMode: 'wick' | 'close'   // ruptura por mecha o por cierre (default sugerido: 'close')
+biasTimeframes: Timeframe[]            // top-down: contexto a considerar
+```
+
+🔴 Defaults; ¿BOS/CHoCH formal o ruptura simple? ¿qué es "el punto clave" en cada TF?
 
 ## 3. Order Block
 **Video:** estructura alcista → POI en zona baja; se marca **la última vela bajista antes del
 impulso alcista**, **incluyendo mechas** ("desde la mecha alta hasta la mecha baja"). Se descarta
 si la vela contraria adyacente la "equipara".
 
-**Regla PROVISIONAL `VideoSMC`** (2026-05-27 — punto de partida, a validar con casos reales en el visor):
+**Regla provisional `VideoSMC`** (cerrada en la ronda anterior):
 - OB = última vela de color contrario inmediatamente previa a un `Impulse` válido.
-- Rango = `[low, high]` **completo, con mechas** por defecto (el video insiste en incluir mechas).
-- **Override manual** permitido (cuerpo + mecha parcial), pero cada override es **señal de que la
-  regla necesita ajuste**, NO una muleta permanente: alimenta la calibración.
-- `Impulse` (fuerza/desplazamiento) es **requisito**. Romper estructura **NO** es requisito; es un
-  **factor de calidad/confluencia** (ver §7). Dejar imbalance o coincidir con liquidez = más calidad.
-- La zona se **emite solo cuando el impulso se confirma**, guardando `originCandleTime` (vela del OB)
-  y `confirmedAtTime` (cuando se confirmó). Ver `NO-REPAINT-RULES.md`.
+- Rango = `[low, high]` **completo, con mechas** por defecto.
+- **Override manual** permitido, pero cada override es **señal de que la regla necesita ajuste**,
+  no muleta permanente: alimenta la calibración.
+- `Impulse` es **requisito**. Romper estructura **NO** es requisito; es **factor de calidad** (§7).
+  Dejar imbalance o coincidir con liquidez = más calidad.
+- La zona se **emite solo cuando el impulso se confirma**, guardando `originCandleTime` y
+  `confirmedAtTime` (ver `NO-REPAINT-RULES.md`).
 
-**Parámetros (configurables por timeframe, NO hardcodeados):**
-```ts
-impulseConfirmationBars: 1 | 2 | 3 | 5   // velas para confirmar la fuerza
-strengthRangeMultiplier: number
-strengthBodyMultiplier: number
-closeNearExtremeThreshold: number
-requiresStructureBreak: boolean          // default: false (factor de calidad, no requisito)
-requiresImbalance: boolean               // default: false
-```
-🔴 Por validar en el visor: defaults de los multiplicadores por TF; criterio exacto de "equiparar";
-si la mecha completa sobre-extiende la zona en 15m.
+**Parámetros:** los de §1 (fuerza) + `requiresStructureBreak: boolean` (default `false`) +
+`requiresImbalance: boolean` (default `false`).
+🔴 Criterio de "equiparar"; caducidad por antigüedad (ver §8).
 
 ## 4. VideoImbalance (≠ StrictFVG)
 **Video:** desequilibrio / "imbalance" / FVG = zona dejada por el movimiento con fuerza,
 "parte de la liquidez"; a menudo entre una línea marcada y el OB. **Más amplio** que un FVG de 3 velas.
-El precio "reequilibra" volviendo a rellenarla.
-**Regla propuesta:** zona de desplazamiento asociada a un `Impulse`, medida sobre el tramo de
-fuerza (no el patrón de 3 velas). `filled` cuando el precio la recorre.
-🔴 ¿Cómo defines exactamente sus bordes (desde dónde hasta dónde)?
+**Regla provisional `VideoSMC`:** zona de desplazamiento asociada a un `Impulse`, medida sobre el
+tramo de fuerza (no el patrón de 3 velas). Se relaciona con el OB que originó el impulso.
+
+**Parámetros:**
+```ts
+imbalanceMode: 'impulse_span' | 'three_candle'  // span del impulso o gap de 3 velas
+imbalanceMinSizePct: number                      // tamaño mínimo (relativo al ATR/rango)
+linkToOriginOB: boolean                          // mantener relación con OB del impulso
+```
+
+🔴 Bordes exactos del imbalance (desde dónde hasta dónde); umbral de `filled` parcial vs total.
 
 ## 5. StrictFVG
 **Definición estándar (no del video):** gap de 3 velas — `low[i+1] > high[i-1]` (alcista) /
 `high[i+1] < low[i-1]` (bajista). **Capa separada** para comparar contra `VideoImbalance`.
+**Parámetros:** opcional `minSizePct` para filtrar ruido. No mezclar con `VideoImbalance`.
 
 ## 6. Liquidez
 **Video:** el precio va hacia donde hay liquidez; busca la **más cercana primero**.
-**Regla propuesta:** clusters de máximos/mínimos (buyside arriba / sellside abajo); ordenar por
-cercanía al precio; `swept` cuando se barre.
-🔴 Tolerancia de cluster; ¿igualdad de máximos/mínimos cuenta como liquidez?
+**Regla provisional `VideoSMC`:** la liquidez NO es solo "high/low cercano". Contempla múltiples
+fuentes y se ordena por cercanía y/o fuerza.
 
-## 7. Confluencia (OB + Imbalance)
+**Tipos contemplados:**
+```ts
+equalHighs                  // double/triple top — más fuerte
+equalLows                   // double/triple bottom — más fuerte
+swingHighs                  // swing high único
+swingLows                   // swing low único
+unfilledImbalance           // imbalance no rellenado = liquidez objetivo
+oppositePOI                 // OB/POI contrario alcanzable
+nearestLiquidityByDistance  // ordenar por distancia al precio
+```
+
+**Parámetros:**
+```ts
+clusterTolerancePct: number       // tolerancia para considerar highs/lows "iguales"
+swingTouchesForLiquidity: number  // toques mínimos para marcar swing como liquidez
+liquidityWeighting: 'distance' | 'strength' | 'mixed'
+```
+
+🔴 Pesos exactos; caducidad por tiempo; ¿`swept` cuenta cuando la mecha barre y la vela cierra dentro?
+
+## 7. Confluencia (OB + Imbalance + otros)
 **Video:** "order block más imbalance" = mayor interés/fuerza. **NO** implica intersección geométrica.
-**Regla propuesta:** `ConfluenceScorer` con señales: `sameImpulseId`, `adjacentToOrderBlock`,
-`overlaps`, `distancePctFromOB`, `unfilledImbalanceNearOB`. Salida = **score**, no booleano.
-🔴 Peso de cada criterio; umbral para "alta confluencia".
+**Regla provisional `VideoSMC`:** `ConfluenceScorer` con señales múltiples; salida = **score 0–100**,
+no booleano.
 
-## 8. Mitigación / Invalidación
-🔴 ¿Un OB queda inválido al ser tocado una vez, al cerrarse dentro, o al atravesarse del todo?
-¿La zona caduca por tiempo? (Estados en `API-CONTRACT.md`: `UNTOUCHED`/`TOUCHED`/`MITIGATED`/`INVALIDATED`.)
+**Criterios del score:**
+```ts
+sameImpulseId           // OB e imbalance nacen del mismo impulso
+adjacentToOrderBlock    // zonas vecinas (aunque no se solapen)
+overlaps                // solapamiento geométrico
+distancePctFromOB       // proximidad relativa
+unfilledImbalanceNearOB // imbalance no rellenado próximo al OB
+nearLiquidityCluster    // proximidad a liquidez relevante
+inHTFContext            // dentro del contexto de bias en TF mayor
+```
 
-## 9. Entradas (3 niveles)
+🔴 Pesos relativos de cada criterio; umbral de "alta confluencia" para marcado visual.
+
+## 8. Mitigación / Invalidación (ciclo de vida)
+**Estados** (en `API-CONTRACT.md` como `MitigationStatus`):
+```ts
+UNTOUCHED              // el precio no ha tocado la zona
+TOUCHED                // entró pero no la consumió
+PARTIALLY_MITIGATED    // entró parcialmente sin invalidar la zona
+MITIGATED              // el precio recorrió la zona (consumida)
+INVALIDATED            // estructura/contexto se rompió contra la zona
+```
+
+**Regla provisional `VideoSMC`:**
+- `TOUCHED` = la mecha entró pero el precio rebotó sin consumir más allá de `touchedThresholdPct`.
+- `PARTIALLY_MITIGATED` = consumo entre `touchedThreshold` y `mitigatedThreshold` en una sola visita.
+- `MITIGATED` = se recorrió ≥ `mitigatedThresholdPct` (típicamente extremo distal).
+- `INVALIDATED` = cierre más allá del extremo distal o cambio de bias HTF en contra.
+
+**Parámetros:**
+```ts
+touchedThresholdPct: number                      // p.ej. 25 %
+partiallyMitigatedRangePct: [number, number]    // p.ej. [25, 99]
+mitigatedThresholdPct: number                    // p.ej. 100 %
+invalidationByCloseBeyond: boolean               // requiere cierre, no solo mecha
+zoneMaxAgeBars: number | null                    // caducidad por antigüedad; null = sin caducidad
+```
+
+🔴 Defaults de los umbrales; ¿la mitigación parcial reduce el score de confluencia (§7)?
+
+## 9. Entradas (3 candidatos)
 **Video:** entrada alta (más riesgo, más probable), **central (preferida)**, baja (menos riesgo,
 rara vez se cumple).
-**Regla propuesta:** dentro del OB, ofrecer precios candidatos `HIGH` / `MID` / `LOW`.
+**Regla provisional `VideoSMC`:** dentro del OB, ofrecer 3 candidatos. La preferida por defecto es la central.
+
+**Parámetros:**
+```ts
+entryAggressive: number     // borde proximal (cerca del precio actual)
+entryMid: number            // midpoint del OB
+entryConservative: number   // borde distal (más profundo en el OB)
+preferredEntry: 'AGGRESSIVE' | 'MID' | 'CONSERVATIVE'  // default 'MID' (alineado al video)
+```
 
 ## 10. SL / TP / Break-even
-**Video:** SL al borde distal del OB (gestión ajustada, ej. ~0.5 %); TP a la siguiente liquidez/POI;
+**Video:** SL al borde distal del OB (gestión ajustada, ~0.5 %); TP en la siguiente liquidez/POI;
 BE a mitad del recorrido.
-**Regla propuesta:** SL = borde distal del OB ± buffer; **TPs candidatos** (conservador = primer POI
-contrario, principal = liquidez más cercana, extendido = siguiente OB/imbalance mayor);
-**R:R calculado** desde entry/SL/TP (nunca fijo); BE sugerido al 50 % del camino.
-🔴 Buffer del SL; ¿cuál TP es el "principal" por defecto?
+
+**Regla provisional `VideoSMC`:**
+
+**Stop-Loss:**
+```ts
+slMode: 'distal_ob' | 'distal_ob_plus_buffer'
+slBufferTicks: number      // buffer en ticks del símbolo
+slBufferPct: number        // o buffer en % del precio (elegir uno)
+```
+
+**Take-Profit (siempre múltiples candidatos, R:R calculado):**
+```ts
+tpConservative   // primer POI contrario o primera liquidez
+tpMain           // liquidez relevante más cercana — default "principal"
+tpExtended       // siguiente OB/imbalance mayor
+```
+El R:R se **calcula** desde `entry` / `SL` / `TP`. **Nunca se impone.**
+
+**Break-Even:**
+```ts
+breakEvenTrigger: 'halfway_to_tp1' | 'at_1R' | 'manual'  // default 'halfway_to_tp1' (video)
+```
+
+🔴 Defaults del buffer del SL; cuál TP por defecto es "principal"; si BE se mueve automático o se sugiere.

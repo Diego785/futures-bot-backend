@@ -16,7 +16,7 @@
 type Timeframe = '15m' | '1h' | '4h' | '1d';
 type Side = 'LONG' | 'SHORT';
 type Layer = 'MyManualMarks' | 'VideoSMC' | 'StrictFVG' | 'LuxAlgoReference';
-type MitigationStatus = 'UNTOUCHED' | 'TOUCHED' | 'MITIGATED' | 'INVALIDATED';
+type MitigationStatus = 'UNTOUCHED' | 'TOUCHED' | 'PARTIALLY_MITIGATED' | 'MITIGATED' | 'INVALIDATED';
 
 type Candle = { t: number; o: number; h: number; l: number; c: number; v: number; tf: Timeframe };
 
