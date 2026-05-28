@@ -7,8 +7,15 @@ import {
   OnGatewayDisconnect,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { WS_EVENTS } from '../common/constants/binance.constants';
 
+/**
+ * v2 skeleton — solo infraestructura WS.
+ *
+ * Los eventos del v1 (signal:new, order:update, trade:closed, gate:result,
+ * analysis:complete, price:update) se removieron en la demolición. Los
+ * eventos del v2 (snapshot, candle:closed, signal:update, …) se definen
+ * en docs/API-CONTRACT.md y se implementan en la Fase 5 (Live + capas).
+ */
 @WebSocketGateway({
   cors: { origin: '*' },
   namespace: '/ws',
@@ -17,14 +24,12 @@ export class DashboardGateway
   implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect
 {
   private readonly logger = new Logger(DashboardGateway.name);
-  private analysisHistory: Record<string, unknown>[] = [];
-  private lastGateResult: Record<string, unknown> | null = null;
 
   @WebSocketServer()
   server: Server;
 
   afterInit(): void {
-    this.logger.log('Dashboard WebSocket gateway initialized');
+    this.logger.log('Dashboard WebSocket gateway initialized (v2 skeleton)');
   }
 
   handleConnection(client: Socket): void {
@@ -33,60 +38,5 @@ export class DashboardGateway
 
   handleDisconnect(client: Socket): void {
     this.logger.log(`Client disconnected: ${client.id}`);
-  }
-
-  emitBotStatus(state: Record<string, unknown>): void {
-    this.server?.emit(WS_EVENTS.BOT_STATUS, state);
-  }
-
-  emitSignal(signal: Record<string, unknown>): void {
-    this.server?.emit(WS_EVENTS.SIGNAL_NEW, signal);
-  }
-
-  emitOrderUpdate(data: Record<string, unknown>): void {
-    this.server?.emit(WS_EVENTS.ORDER_UPDATE, data);
-  }
-
-  emitPositionUpdate(position: Record<string, unknown>): void {
-    this.server?.emit(WS_EVENTS.POSITION_UPDATE, position);
-  }
-
-  emitTradeClosed(trade: Record<string, unknown>): void {
-    this.server?.emit(WS_EVENTS.TRADE_CLOSED, trade);
-  }
-
-  emitError(message: string): void {
-    this.server?.emit(WS_EVENTS.ERROR, {
-      message,
-      timestamp: Date.now(),
-    });
-  }
-
-  emitGateResult(result: Record<string, unknown>): void {
-    this.lastGateResult = result;
-    this.server?.emit(WS_EVENTS.GATE_RESULT, result);
-  }
-
-  emitAnalysisComplete(data: Record<string, unknown>): void {
-    this.analysisHistory.unshift(data);
-    if (this.analysisHistory.length > 50) this.analysisHistory.length = 50;
-    this.server?.emit(WS_EVENTS.ANALYSIS_COMPLETE, data);
-  }
-
-  emitPriceUpdate(symbol: string, price: number): void {
-    this.server?.emit(WS_EVENTS.PRICE_UPDATE, { symbol, price });
-  }
-
-  // REST accessors
-  getLastAnalysis(): Record<string, unknown> | null {
-    return this.analysisHistory[0] ?? null;
-  }
-
-  getAnalysisHistory(): Record<string, unknown>[] {
-    return this.analysisHistory;
-  }
-
-  getLastGateResult(): Record<string, unknown> | null {
-    return this.lastGateResult;
   }
 }

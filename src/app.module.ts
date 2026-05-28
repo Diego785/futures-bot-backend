@@ -1,15 +1,11 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { BullModule } from '@nestjs/bullmq';
 import { ScheduleModule } from '@nestjs/schedule';
 import { LoggerModule } from 'nestjs-pino';
 import { validate } from './common/config/env.validation';
 import { HealthModule } from './health/health.module';
 import { ExchangeModule } from './exchange/exchange.module';
-import { StrategyModule } from './strategy/strategy.module';
-import { TradingModule } from './trading/trading.module';
-import { BotModule } from './bot/bot.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 
 @Module({
@@ -22,10 +18,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
 
     LoggerModule.forRoot({
       pinoHttp: {
-        // Disable automatic HTTP request logging — too verbose, spams logs on dashboard polling
-        // (this only disables the per-request logs, NOT this.logger.log() calls in services)
         autoLogging: false,
-        // Keep default level 'info' so this.logger.log() calls still appear
         transport:
           process.env.NODE_ENV !== 'production'
             ? { target: 'pino-pretty', options: { colorize: true } }
@@ -43,30 +36,19 @@ import { DashboardModule } from './dashboard/dashboard.module';
         password: config.get('DB_PASS'),
         database: config.get('DB_NAME'),
         autoLoadEntities: true,
-        synchronize: config.get('NODE_ENV') === 'development',
-        // Only log errors from TypeORM — disable SQL query logging that spams logs
+        // v2: synchronize OFF — entidades v2 (SignalCandidate, JournalEntry…) llegan
+        // en fases posteriores con migraciones explícitas. Nunca sincronizar contra
+        // las tablas v1 vivas en producción.
+        synchronize: false,
         logging: ['error', 'warn'],
-      }),
-    }),
-
-    BullModule.forRootAsync({
-      inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        connection: {
-          host: config.get('REDIS_HOST'),
-          port: config.get('REDIS_PORT'),
-        },
       }),
     }),
 
     ScheduleModule.forRoot(),
 
-    // ─── Feature Modules ───
+    // ─── v2 Feature Modules (skeleton) ───
     HealthModule,
     ExchangeModule,
-    StrategyModule,
-    TradingModule,
-    BotModule,
     DashboardModule,
   ],
 })
