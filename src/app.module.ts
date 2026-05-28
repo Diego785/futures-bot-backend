@@ -1,12 +1,18 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { TypeOrmModule } from '@nestjs/typeorm';
+import { TypeOrmModule, TypeOrmModuleOptions } from '@nestjs/typeorm';
 import { ScheduleModule } from '@nestjs/schedule';
 import { LoggerModule } from 'nestjs-pino';
 import { validate } from './common/config/env.validation';
 import { HealthModule } from './health/health.module';
 import { ExchangeModule } from './exchange/exchange.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+
+// TypeORM se activa SOLO si DB_ENABLED=true. En el skeleton v2 todavía no hay
+// entidades; conectar a Postgres no aporta nada y bloquearía el arranque local
+// sin DB. Cuando llegue MarketDataModule con persistencia, los entornos reales
+// pondrán DB_ENABLED=true.
+const DB_ENABLED = process.env.DB_ENABLED === 'true';
 
 @Module({
   imports: [
@@ -26,23 +32,25 @@ import { DashboardModule } from './dashboard/dashboard.module';
       },
     }),
 
-    TypeOrmModule.forRootAsync({
-      inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        type: 'postgres',
-        host: config.get('DB_HOST'),
-        port: config.get('DB_PORT'),
-        username: config.get('DB_USER'),
-        password: config.get('DB_PASS'),
-        database: config.get('DB_NAME'),
-        autoLoadEntities: true,
-        // v2: synchronize OFF — entidades v2 (SignalCandidate, JournalEntry…) llegan
-        // en fases posteriores con migraciones explícitas. Nunca sincronizar contra
-        // las tablas v1 vivas en producción.
-        synchronize: false,
-        logging: ['error', 'warn'],
-      }),
-    }),
+    ...(DB_ENABLED
+      ? [
+          TypeOrmModule.forRootAsync({
+            inject: [ConfigService],
+            useFactory: (config: ConfigService): TypeOrmModuleOptions => ({
+              type: 'postgres',
+              host: config.get('DB_HOST'),
+              port: config.get('DB_PORT'),
+              username: config.get('DB_USER'),
+              password: config.get('DB_PASS'),
+              database: config.get('DB_NAME'),
+              autoLoadEntities: true,
+              // v2: synchronize OFF siempre. Migraciones explícitas cuando lleguen entities.
+              synchronize: false,
+              logging: ['error', 'warn'],
+            }),
+          }),
+        ]
+      : []),
 
     ScheduleModule.forRoot(),
 

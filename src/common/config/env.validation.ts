@@ -1,62 +1,57 @@
 import { z } from 'zod';
 
-export const envSchema = z.object({
-  NODE_ENV: z
-    .enum(['development', 'production', 'test'])
-    .default('development'),
+// v2 skeleton — sin DeepSeek, sin Redis, sin trading/risk/gates (eliminados con la
+// demolición del v1). Las claves del exchange y la DB son opcionales en esta fase:
+// el skeleton arranca para servir /api/status sin necesidad de credenciales reales.
+
+const boolFlag = z.enum(['true', 'false']).transform((v) => v === 'true');
+
+const baseSchema = z.object({
+  NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   PORT: z.coerce.number().int().default(3300),
 
-  // Exchange selection
+  // Exchange selection (required — define el adapter que se cablea)
   EXCHANGE_PROVIDER: z.enum(['binance', 'bybit']),
 
-  // Execution mode: shadow (signals only, no orders) | live (real orders)
-  EXECUTION_MODE: z.enum(['shadow', 'live']).default('live'),
+  // Default symbol/timeframe (default-only; market data los usará en su fase)
+  DEFAULT_SYMBOL: z.string().min(1).default('BTCUSDT'),
+  DEFAULT_TIMEFRAME: z.string().default('15m'),
 
-  // Binance (required when EXCHANGE_PROVIDER=binance; harmless otherwise)
+  // ─── Database (opcional en skeleton; requerida cuando DB_ENABLED=true) ───
+  DB_ENABLED: boolFlag.default(false),
+  DB_HOST: z.string().optional(),
+  DB_PORT: z.coerce.number().int().optional(),
+  DB_USER: z.string().optional(),
+  DB_PASS: z.string().optional(),
+  DB_NAME: z.string().optional(),
+
+  // ─── Exchange URLs y credenciales (read-only; opcionales en skeleton) ───
+  // Las credenciales sólo se necesitan para endpoints privados (journal, userTrades);
+  // datos de mercado públicos no las requieren.
   BINANCE_FUTURES_BASE_URL: z.string().url().optional(),
   BINANCE_FUTURES_WS_URL: z.string().optional(),
   BINANCE_API_KEY: z.string().optional(),
   BINANCE_API_SECRET: z.string().optional(),
-
-  // Bybit (required when EXCHANGE_PROVIDER=bybit; harmless otherwise)
   BYBIT_BASE_URL: z.string().url().optional(),
   BYBIT_WS_PUBLIC_URL: z.string().optional(),
   BYBIT_WS_PRIVATE_URL: z.string().optional(),
   BYBIT_API_KEY: z.string().optional(),
   BYBIT_API_SECRET: z.string().optional(),
+});
 
-  // DeepSeek
-  DEEPSEEK_API_KEY: z.string().min(1),
-  DEEPSEEK_BASE_URL: z.string().url(),
-
-  // Postgres
-  DB_HOST: z.string().min(1),
-  DB_PORT: z.coerce.number().int().default(5432),
-  DB_USER: z.string().min(1),
-  DB_PASS: z.string().min(1),
-  DB_NAME: z.string().min(1),
-
-  // Redis
-  REDIS_HOST: z.string().min(1),
-  REDIS_PORT: z.coerce.number().int().default(6379),
-
-  // Trading safety
-  TRADING_ENABLED: z
-    .enum(['true', 'false'])
-    .transform((v) => v === 'true'),
-  DEFAULT_SYMBOL: z.string().min(1).default('BTCUSDT'),
-  DEFAULT_TIMEFRAME: z.string().default('5m'),
-  MAX_DAILY_LOSS_USDT: z.coerce.number().positive(),
-  MAX_POSITION_NOTIONAL_USDT: z.coerce.number().positive(),
-  MAX_LEVERAGE: z.coerce.number().int().positive().max(125),
-
-  // Pre-filter gate
-  GATE_ENABLED: z
-    .enum(['true', 'false'])
-    .default('true')
-    .transform((v) => v === 'true'),
-  GATE_MIN_SCORE: z.coerce.number().int().min(0).max(100).default(30),
-  GATE_MIN_ATR_PERCENT: z.coerce.number().min(0).default(0.0015),
+const envSchema = baseSchema.superRefine((data, ctx) => {
+  // Si DB_ENABLED=true, los 4 campos de DB son obligatorios.
+  if (data.DB_ENABLED) {
+    for (const field of ['DB_HOST', 'DB_USER', 'DB_PASS', 'DB_NAME'] as const) {
+      if (!data[field]) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [field],
+          message: `${field} is required when DB_ENABLED=true`,
+        });
+      }
+    }
+  }
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;
