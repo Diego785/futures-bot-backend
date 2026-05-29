@@ -17,8 +17,8 @@ import type {
 @Injectable()
 export class BinanceRestService implements OnModuleInit {
   private readonly logger = new Logger(BinanceRestService.name);
-  private apiKey: string;
-  private apiSecret: string;
+  private apiKey?: string;
+  private apiSecret?: string;
   private baseUrl: string;
   private usedWeight = 0;
   private timeOffset = 0;
@@ -34,10 +34,20 @@ export class BinanceRestService implements OnModuleInit {
       // The factory in ExchangeModule won't resolve to this service.
       return;
     }
-    this.apiKey = this.config.getOrThrow<string>('BINANCE_API_KEY');
-    this.apiSecret = this.config.getOrThrow<string>('BINANCE_API_SECRET');
+    // baseUrl es configuración (no credencial) — requerida para cualquier request.
     this.baseUrl = this.config.getOrThrow<string>('BINANCE_FUTURES_BASE_URL');
+    // Credenciales OPCIONALES: market data público (klines, time, exchangeInfo) NO las
+    // necesita. Solo se exigen al invocar endpoints privados (journal/userTrades/income).
+    // v2 copiloto: nunca claves con permisos de trading; read-only para el journal.
+    this.apiKey = this.config.get<string>('BINANCE_API_KEY');
+    this.apiSecret = this.config.get<string>('BINANCE_API_SECRET');
     await this.syncTime();
+    if (!this.apiKey || !this.apiSecret) {
+      this.logger.warn(
+        'Binance API credentials not set — solo market data PÚBLICA disponible ' +
+          '(klines/time/exchangeInfo). Endpoints privados (journal) requieren API key read-only.',
+      );
+    }
   }
 
   private async syncTime(): Promise<void> {
@@ -223,6 +233,15 @@ export class BinanceRestService implements OnModuleInit {
     path: string,
     params: Record<string, string> = {},
   ): Promise<T> {
+    const apiKey = this.apiKey;
+    const apiSecret = this.apiSecret;
+    if (!apiKey || !apiSecret) {
+      throw new Error(
+        `Binance API credentials required for private endpoint ${path}. ` +
+          `Set BINANCE_API_KEY/BINANCE_API_SECRET (read-only).`,
+      );
+    }
+
     const timestamp = (Date.now() + this.timeOffset).toString();
     const allParams = { ...params, timestamp, recvWindow: '5000' };
 
@@ -230,14 +249,14 @@ export class BinanceRestService implements OnModuleInit {
       Object.entries(allParams).map(([k, v]) => [k, v]),
     ).toString();
 
-    const signature = signQuery(queryString, this.apiSecret);
+    const signature = signQuery(queryString, apiSecret);
     const url = `${this.baseUrl}${path}?${queryString}&signature=${signature}`;
 
     const response = await firstValueFrom(
       this.httpService.request<T>({
         method,
         url,
-        headers: { 'X-MBX-APIKEY': this.apiKey },
+        headers: { 'X-MBX-APIKEY': apiKey },
       }),
     );
 
@@ -267,12 +286,18 @@ export class BinanceRestService implements OnModuleInit {
     method: string,
     path: string,
   ): Promise<T> {
+    const apiKey = this.apiKey;
+    if (!apiKey) {
+      throw new Error(
+        `Binance API key required for ${path}. Set BINANCE_API_KEY (read-only).`,
+      );
+    }
     const url = `${this.baseUrl}${path}`;
     const response = await firstValueFrom(
       this.httpService.request<T>({
         method,
         url,
-        headers: { 'X-MBX-APIKEY': this.apiKey },
+        headers: { 'X-MBX-APIKEY': apiKey },
       }),
     );
     return response.data;
