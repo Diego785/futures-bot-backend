@@ -1,221 +1,81 @@
-# Futures AI Bot — Backend Guide
+# Futures AI Bot — Guía del proyecto (v2: Copiloto SMC)
 
-## Project Overview
-Backend NestJS del bot de trading de **Binance USDT-M Futures** con Smart Money Concepts (SMC).
-Desplegado en producción en `38.242.145.246:3300` (Docker).
+> **Rama activa: `v2-copilot`.** Reescritura del bot como **copiloto** de trading SMC.
+> El v1 (autopiloto) está archivado: vive en `main`, en el historial git y en `legacy/`.
+> No mezclar lógica v1 en v2. Si algo de esta guía contradice el código de la rama, gana el código.
 
-## Stack
-- **Framework**: NestJS 11, TypeScript
-- **DB**: TypeORM + PostgreSQL (`38.242.145.246:5432`, user: postgres, db: futures-bot)
-- **Queue**: BullMQ + Redis (`futures-ai-redis:6379`)
-- **WebSocket**: Socket.IO (namespace `/ws`)
-- **Exchange**: Binance USDT-M Futures (API real, no demo)
+## ⚠️ Regla Cero (innegociable)
+**El bot NO ejecuta operaciones.** Ningún módulo coloca, modifica ni cancela órdenes. El usuario
+opera **manualmente** en Binance. El backend solo lee mercado, detecta/dibuja zonas, **sugiere**
+entradas (candidatas) y registra el journal. Toda señal es una **sugerencia**, nunca una instrucción.
+Si vas a añadir algo que toque órdenes/posiciones/balances de forma activa → **detente y pregunta**.
 
-## Trading Configuration (.env)
-```
-STRATEGY_MODE=pullback-ob          # 'pullback-ob' (active) or 'hybrid' (legacy)
-DEFAULT_TIMEFRAME=15m
-DEFAULT_SYMBOL=BTCUSDT             # primary symbol (used if SYMBOLS not set)
-# Added 2026-05-24: multi-symbol support (comma-separated, takes precedence
-# over DEFAULT_SYMBOL). Each symbol has independent state machine + 30min cooldown.
-# Example: SYMBOLS=BTCUSDT,ETHUSDT
-SYMBOLS=BTCUSDT
-MAX_LEVERAGE=5
-MAX_POSITION_NOTIONAL_USDT=100
-MAX_DAILY_LOSS_USDT=20
-SL_SAFETY_ATR_MULT=0               # DISABLED for pullback-ob (zone provides natural SL)
-SL_SAFETY_MIN_PCT=0                # DISABLED for pullback-ob
-TRAIL_FIXED=50                     # Trailing SL follows price at $50 distance
-TRAILING_BE_PCT=0.5                # Legacy (unused with fixed-amount mode)
-GATE_MIN_SCORE=30
+## Qué es v2
+Un copiloto que ayuda al usuario a operar SMC manualmente en BTC y a **aprender a operar**:
+- detecta y dibuja zonas (Order Blocks, imbalances, liquidez) sobre velas en tiempo real;
+- **sugiere** entradas/SL/TP solo cuando se cumplen condiciones de edge (no al toque de zona);
+- lleva un journal del desempeño (datos del broker read-only + anotaciones del usuario);
+- el usuario acepta / edita / rechaza cada sugerencia → eso alimenta el aprendizaje mutuo.
 
-# Added 2026-05-13: IOC fallback when LIMIT entry doesn't fill in 180s.
-# Previously the bot aborted the trade (captured only 10% of backtest signals).
-# IOC tries to fill at signal.entryPrice +/- IOC_FALLBACK_MAX_SLIP_USD.
-# If liquidity exists within cap -> fills as taker. If price drifted -> IOC cancels itself.
-IOC_FALLBACK_ENABLED=true          # set to "false" to revert to old "no fallback" behavior
-IOC_FALLBACK_MAX_SLIP_USD=50       # max USD slippage tolerated when filling IOC fallback
+## Qué NO es
+Autopiloto · ejecutor de órdenes · clon del ojo del usuario · clon de LuxAlgo · sistema con ML al inicio.
 
-# Added 2026-05-13: proactive fixes for 68% live-vs-backtest gap (17 days no-operation).
-# All flag-OFF until backtest validates each. Activate ONE at a time.
-HTF_4H_TIEBREAKER_ENABLED=false    # use 4H structure when 1H EMA+structure contradict
-HTF_4H_TIEBREAKER_SOFT_ENABLED=false  # (added 2026-05-14) also accept 4H RANGING as soft confirmation
-PULLBACK_HTF_FLIP_TOLERANT=false   # (added 2026-05-15) don't invalidate setup if structure still aligns
-PULLBACK_SLOPE_SOFT=false          # (added 2026-05-15) skip slope-against filter at entry trigger
-PULLBACK_MAX_WAIT_CYCLES=12        # candles to wait for pullback (bump to 20 = 5h)
-PULLBACK_MIN_ATR_PCT=0.15          # min ATR% to create setup (was hardcoded)
+## Lección del v1 (por qué cambiamos)
+El v1 decidía y ejecutaba solo. Backtest PF 7.37 → gap del 68 % en vivo. El problema no era el código:
+era el enfoque (autopiloto sobre una estrategia visual y discrecional, entrando al toque de zona =
+adverse selection). v2 mueve la decisión al humano y usa el software como ojos + memoria + disciplina.
 
-# Added 2026-05-21: safety brakes for canary mode (live with capital).
-MAX_CONSECUTIVE_LOSSES=3           # pause entries after N losses in a row (Bybit truth)
-CONSECUTIVE_LOSS_PAUSE_HOURS=24    # hours to stay paused once brake triggers
+## Stack v2
+- **Framework**: NestJS 11, TypeScript (nodenext)
+- **DB**: TypeORM + PostgreSQL — `synchronize:false`; TypeORM solo se carga si `DB_ENABLED=true`
+- **WebSocket**: Socket.IO (namespace `/ws`) para el dashboard
+- **Exchange**: Binance USDT-M Futures (datos públicos; credenciales read-only solo para journal).
+  Fallback Bybit. Abstracción multi-exchange en `src/exchange/` (puertos + adapters).
+- **Front (futuro)**: React/Next + TradingView Lightweight Charts. Flutter → app móvil posterior.
+- **SIN**: BullMQ/Redis, DeepSeek, risk-manager, ejecución de órdenes (todo eliminado del v1).
 
-# Added 2026-05-24: entry execution mode. CRITICAL FINDING.
-# 'limit' (legacy): LIMIT GTC 180s + IOC fallback. Suffered adverse selection
-#   (only filled when price BROKE the zone = bad trades). Backtest 1Y PF 0.60.
-# 'market': MARKET order at trigger. Fills 100% incl. good rebounds. Backtest 1Y
-#   PF 1.16 (H1 1.31, H2 1.06). THE fix for the 3-month no-profitability period.
-# IMPORTANT: with ENTRY_MODE=market, keep TRAIL_FIXED high or trailing off — the
-#   $50 trailing destroys the edge (PF 0.03). Backtest used NO trailing (TP/SL fixed).
-ENTRY_MODE=market
-TRAILING_ENABLED=false             # disable trailing (the $50 trail destroys edge, PF 0.03 vs 1.16)
-```
+## Estado actual (2026-05-29)
+- Fase 1 Docs: COMPLETA. Ver `docs/` (lista abajo).
+- Fase 2 Demolición: COMPLETA. Esqueleto compila + smoke test verde (`/api/status` 200; endpoints v1
+  → 404; arranca sin DB con `DB_ENABLED=false`).
+- Capa de entrada (`ENTRY-EDGE-SPEC.md`): especificada (provisional).
+- SIGUIENTE: Fase 3 Market Data (velas multi-TF 1D/4H/1H/15m, **persistidas** desde el día uno).
 
-## Daily Telemetry (added 2026-05-14)
+## Documentación (fuente de verdad — leer antes de codear)
+- `docs/VISION-V2.md` — filosofía copiloto + definición de éxito
+- `docs/SAFETY-V2.md` — Regla Cero, API read-only, checklist pre-demolición
+- `docs/INVENTORY-V1.md` — qué se conservó/eliminó/archivó
+- `docs/MIGRATION-PLAN.md` — fases 0–9
+- `docs/API-CONTRACT.md` — modelo canónico de vela, tipos Zone/Setup/SignalCandidate, REST + WS
+- `docs/SMC-SPEC-VIDEO-1.md` — cómo se DIBUJAN las zonas (provisional, con 🔴)
+- `docs/ENTRY-EDGE-SPEC.md` — **dónde vive el edge**: zona ≠ entrada, máquina de estados de señal
+- `docs/DATASET-PROTOCOL.md` — anti-overfitting (calibración/held-out/out-of-time/cuarentena)
+- `docs/NO-REPAINT-RULES.md` — causalidad (lookahead=0, vela por vela)
 
-Persistent diagnostic table `daily_telemetry` that records cycle/signal lifecycle per UTC day.
-Required for diagnosing live-vs-backtest gap empirically (without grepping docker logs).
+## Concepto clave: zona ≠ entrada
+Una **Zone** (OB/FVG/liquidez) es un punto de interés dibujado. Una **entrada** es una decisión bajo
+condiciones de edge: sesgo HTF + barrido de liquidez + confirmación en LTF + premium/discount +
+inducement + régimen + killzone + R:R mínimo. Una `SignalCandidate` (entrada sugerida) **solo** nace
+cuando un `Setup` recorre `WATCHING → MITIGATED → ARMED → TRIGGERED`. Detalle en `ENTRY-EDGE-SPEC.md`.
 
-**Schema** (`src/trading/entities/daily-telemetry.entity.ts`):
-- `date` (PK), `totalCycles`, `setupsCreated`, `entriesAttempted`
-- `signalsGenerated`, `signalsExecuted`, `signalsRejected`
-- `blockedReasons` JSONB — category → count (low_volatility, htf_unclear, no_zones, etc)
-- `rejectionReasons` JSONB — risk-manager rejection category → count
-- `latestCycleAt` — heartbeat timestamp, used by 5min cron to detect bot offline
+## Módulos vivos en `src/`
+- `common/` (utils HMAC/precision, filters, config `env.validation` con zod, interfaces)
+- `health/` (GET /health)
+- `exchange/` + `binance/` + `bybit/` — abstracción multi-exchange (REST, market WS, user WS, info)
+- `dashboard/` — esqueleto: `GET /api/status` + gateway WS (sin eventos v1)
+- `notifications/` — FcmService (existe; aún no cableado en `app.module` — pendiente decidir)
+- `legacy/` — `strategy/smc.service.ts` (motor SMC v1, referencia) + `backtest/`. **Fuera del build**
+  (`tsconfig.build.json` excluye `legacy/`). NO importar desde `legacy/`; si se reutiliza algo, se
+  reescribe para v2.
 
-**Migration**: `migrations/2026-05-14_daily_telemetry.sql` (run manually before deploy):
+## Cómo correr el esqueleto (smoke test)
 ```bash
-docker exec -i postgres-db psql -U postgres -d futures-bot \
-  < migrations/2026-05-14_daily_telemetry.sql
+npm run build
+NODE_ENV=test PORT=3301 EXCHANGE_PROVIDER=binance DB_ENABLED=false node dist/main
+# GET /api/status → 200 {"ok":true,"version":"v2-skeleton"}
 ```
 
-**Diagnostic query** (run after 24h+ of data collection):
-```sql
-SELECT date, "totalCycles", "setupsCreated", "entriesAttempted",
-       "signalsGenerated", "signalsExecuted", "signalsRejected",
-       "blockedReasons", "rejectionReasons", "latestCycleAt"
-FROM daily_telemetry ORDER BY date DESC LIMIT 7;
-```
-
-**What to look for**:
-- `totalCycles ~ 96` per day = healthy uptime (1 cycle per 15m candle)
-- `totalCycles < 60` = bot offline part of day (WS or container issue)
-- Dominant `blockedReasons` key = next strategy lever to relax
-- Dominant `rejectionReasons` key = risk-manager filter to investigate
-
-## Heartbeat Alert (added 2026-05-14)
-
-`MaintenanceCronService.heartbeatCheck()` runs every 5 min. If `latestCycleAt` is > 18 min old
-(i.e. 1 full 15m candle missed), logs ERROR + sends FCM notification "Heartbeat stale: Nmin
-sin cycles". De-duplicated to once every 30 min.
-
-Resolves detectability of bot-offline scenarios that caused the 2026-04-21/04-23 incident
-(memoria: project_ws_staleness_incident).
-
-## Zombie Trade Auto-Cleanup (added 2026-05-14)
-
-`RiskManagerService.checkExistingPosition()` now queries exchange FIRST. If exchange has no
-position but DB has trade marked OPEN, force-closes the trade as `CLOSED_ORPHAN` and approves
-the new signal. Prevents future scenarios where a reconcile failure leaves a zombie OPEN trade
-that blocks all subsequent signals.
-
-If exchange query fails (API timeout), falls back to conservative DB check (reject signal).
-
-## Signal Flow
-1. Binance WS sends candle close event every 15m
-2. BullMQ job queued -> `StrategyCycleProcessor`
-3. Calculate indicators (EMA9/21, RSI14, ATR14, Bollinger Bands)
-4. Calculate SMC (OBs, FVGs, structure, premium/discount)
-5. Compute HTF context (1H EMA + structure)
-6. **Strategy routing** (based on `STRATEGY_MODE`):
-   - `pullback-ob`: State machine waits for pullback to OB/FVG zone
-   - `hybrid`: EMA Crossover + Breakout (legacy)
-7. If confidence >= 0.55 -> Risk Manager validates (6 checks)
-8. Execution: LIMIT entry GTC (180s timeout) -> if not filled, LIMIT IOC fallback at signal price +/- IOC_FALLBACK_MAX_SLIP_USD cap (2026-05-13) -> if also not filled, abort. SL/TP placed as STOP_MARKET / TAKE_PROFIT_MARKET conditionals.
-9. If MARKET fill differs >$50 from signal entry -> recalculates SL/TP from actual fill
-10. Trailing SL: Fixed-$50 mode (TRAIL_FIXED env var). SL follows price at $50 distance. Min $5 movement.
-11. PnL captured via /fapi/v1/income API (commissions + funding fees)
-
-## Pullback-OB Strategy (ACTIVE)
-State machine: IDLE -> WAITING_PULLBACK -> ENTRY
-1. **Bias**: HTF (1H) EMA crossover + market structure must both agree
-2. **Low-vol filter**: ATR% > 0.25% required
-3. **Zone detection**: Unmitigated OBs + unfilled FVGs in pullback direction (0.05%-1.5%)
-4. **Wait**: Max 12 candles (3h on 15m) for pullback to zone
-5. **Entry filter**: EMA slope must NOT be against bias
-6. **Entry trigger**: Candle low/high touches zone -> enter at zone boundary price (suggestedEntryPrice)
-7. **Invalidation**: CHoCH against, timeout, HTF flip, zone blown through
-- SL: Below/above zone + 0.3x ATR buffer | TP: 1.5x SL distance
-- SL safety net: DISABLED (SL_SAFETY_ATR_MULT=0)
-- Trailing: Fixed-$50 (PF 7.37 vs 1.54 without)
-- Backtested 3Y: 2,221 trades, 72% WR, +$1,694 PnL, PF 7.37
-- Multi-year: Profitable every year 2020-2025
-
-## Key Files
-### Strategy
-- `src/strategy/pullback-ob-signal.service.ts` — Pullback state machine + entry logic
-- `src/strategy/signal-generator.service.ts` — Routes to pullback or hybrid
-- `src/strategy/hybrid-signal.service.ts` — Legacy EMA Crossover + Breakout
-- `src/strategy/indicators.service.ts` — EMA, RSI, ATR, Bollinger Bands
-- `src/strategy/smc.service.ts` — OBs, FVGs, structure (BOS/CHoCH)
-- `src/strategy/pre-filter-gate.service.ts` — Gate scoring (skipped in pullback mode)
-- `src/strategy/deepseek.service.ts` — AI prompt + DeepSeek API
-
-### Trading
-- `src/trading/execution.service.ts` — Order placement, trailing SL, reconciliation
-- `src/trading/risk-manager.service.ts` — 7 risk checks, cooldown (30 min hardcoded)
-
-### Bot
-- `src/bot/strategy-cycle.processor.ts` — BullMQ job processor (main loop)
-- `src/bot/maintenance-cron.service.ts` — ListenKey keepalive, reconcile cron
-
-### Binance
-- `src/binance/binance-market-ws.service.ts` — Market data WS (candles)
-- `src/binance/binance-user-ws.service.ts` — User data stream (order/algo updates)
-
-### Dashboard API
-- `src/dashboard/dashboard.controller.ts` — REST API endpoints
-- `src/dashboard/dashboard.gateway.ts` — Socket.IO gateway
-
-### Backtest
-- `src/backtest/backtest.service.ts` — Backtest engine (hybrid + pullback-ob modes)
-- `src/backtest/run.ts` — CLI runner
-- `src/backtest/interfaces.ts` — Config + trade interfaces
-
-## Design Decisions (DO NOT revert without clear reason)
-
-### Timeframe: 15m
-5m produced too many false CHoCH/OB, whipsaw. 15m gives cleaner signals.
-
-### SL safety net (configurable)
-`execution.service.ts` expands any SL smaller than max(SL_SAFETY_ATR_MULT * ATR, SL_SAFETY_MIN_PCT * entry). Set to 0.5x ATR for pullback (zone-based SLs are already tight).
-
-### Trailing SL
-+0.3% -> breakeven, +0.5% -> trail 50%, +0.8% -> trail 70%. Runs in reconcilePositions() every 1 min.
-
-### Race condition prevention
-`closingTrades` Set in execution.service.ts prevents double-count PnL when SL/TP fires multiple WS events (ORDER_TRADE_UPDATE + ALGO_UPDATE). Only ALGO_UPDATE FINISHED is processed.
-
-### Entry price sync
-When ENTRY order FILLED via ORDER_TRADE_UPDATE, trade.entryPrice is updated to actual fill price (not signal price).
-
-### Entry LIMIT (not MARKET)
-LIMIT at mark price +/- $15, timeout 10s, fallback to MARKET. Saves 0.03% per trade in commissions.
-
-### Cooldown: 30 min
-Hardcoded in risk-manager.service.ts. Prevents opening multiple trades in same direction.
-
-### Software SL/TP backup
-Reconcile checks position every 1 min. If Binance algo order fails, closes with MARKET. Keep active.
-
-### Never use demo API
-demo-fapi.binance.com has isolated fake orderbook. OBs/FVGs calculated on fake data are meaningless.
-
-## Backtest CLI
-```bash
-# Pullback-OB (recommended)
-npx ts-node src/backtest/run.ts --mode=pullback-ob --timeframe=15m --days=180 --symbol=BTCUSDT --balance=100 --leverage=5
-
-# Legacy hybrid
-npx ts-node src/backtest/run.ts --mode=hybrid --timeframe=1h --days=180
-
-# Pullback params
---max-wait=12 --ob-sl-buffer=0.3 --zone-type=both --max-distance=1.5 --min-distance=0.05 --rr=1.5
-```
-
-## Deployment
-```bash
-# On VPS (38.242.145.246)
-cd /root/futures-ai-bot  # or wherever deployed
-docker compose down && docker compose up -d --build
-docker compose logs -f bot
-```
+## Despliegue
+La producción `38.242.145.246:3300` corre el **v1** (canary). v2 aún no se despliega; cuando se haga,
+exigirá `DB_ENABLED=true` + credenciales read-only + IP whitelist. Backups (DB, `.env`) ANTES de
+cualquier deploy de v2 (ver checklist en `SAFETY-V2.md`).
