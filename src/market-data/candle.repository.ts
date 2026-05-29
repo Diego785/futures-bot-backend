@@ -29,4 +29,14 @@ export class CandleRepository {
   async count(symbol: string, tf: string): Promise<number> {
     return this.repo.countBy({ symbol, tf });
   }
+
+  /** openTime de la última vela persistida de (symbol, tf), o null si no hay ninguna.
+   *  Punto de partida de la reconciliación al reconectar. */
+  async findLastOpenTime(symbol: string, tf: string): Promise<number | null> {
+    const row = await this.repo.findOne({
+      where: { symbol, tf },
+      order: { openTime: 'DESC' },
+    });
+    return row ? row.openTime : null;
+  }
 }

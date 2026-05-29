@@ -99,6 +99,9 @@ export class BybitMarketWsService
 
   private readonly priceSubject = new Subject<PriceTickEvent>();
   readonly onPrice$ = this.priceSubject.asObservable();
+
+  private readonly reconnectSubject = new Subject<void>();
+  readonly onReconnect$ = this.reconnectSubject.asObservable();
   // Throttle de price ticks por símbolo (max 1 emit / 5s por símbolo).
   private lastPriceEmitBySymbol = new Map<string, number>();
   private readonly PRICE_THROTTLE_MS = 5_000;
@@ -261,6 +264,7 @@ export class BybitMarketWsService
             `Bybit market WS data flowing after ${this.reconnectAttempts} reconnect attempt(s)`,
           );
           this.reconnectAttempts = 0;
+          this.reconnectSubject.next(); // datos recuperados tras reconexión → reconciliar
         }
 
         const event = payload as BybitKlineEvent;

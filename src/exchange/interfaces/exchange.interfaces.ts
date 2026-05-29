@@ -359,6 +359,9 @@ export abstract class IMarketDataPort {
   abstract readonly provider: ExchangeProvider;
   abstract readonly onCandleClose$: Observable<CandleEvent>;
   abstract readonly onPrice$: Observable<PriceTickEvent>;
+  // Emite cuando el WS se reconecta y los datos vuelven a fluir (tras caída). El consumidor
+  // debe reconciliar por REST el hueco para no perder cierres. No emite en la primera conexión.
+  abstract readonly onReconnect$: Observable<void>;
 
   // Acumulativo: añade un stream (symbol, interval) sin descartar los existentes. Idempotente.
   abstract subscribe(symbol: string, interval: string): void;

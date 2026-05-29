@@ -17,6 +17,13 @@ const baseSchema = z.object({
   DEFAULT_SYMBOL: z.string().min(1).default('BTCUSDT'),
   DEFAULT_TIMEFRAME: z.string().default('15m'),
 
+  // ─── Market data ingest (Fase 3) ───
+  // MARKET_DATA_LIVE: si 'true', el ingest se conecta al WS y persiste velas en vivo.
+  // Default 'false' para que boots/tests no se conecten al exchange.
+  MARKET_DATA_LIVE: z.enum(['true', 'false']).default('false'),
+  MARKET_DATA_SYMBOLS: z.string().optional(), // CSV; cae a DEFAULT_SYMBOL si falta
+  MARKET_DATA_TIMEFRAMES: z.string().default('15m,1h,4h,1d'), // CSV
+
   // ─── Database (opcional en skeleton; requerida cuando DB_ENABLED=true) ───
   DB_ENABLED: boolFlag.default(false),
   DB_HOST: z.string().optional(),

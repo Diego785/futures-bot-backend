@@ -72,6 +72,9 @@ export class BinanceMarketWsService implements OnModuleDestroy {
 
   private readonly priceSubject = new Subject<{ symbol: string; price: number }>();
   readonly onPrice$ = this.priceSubject.asObservable();
+
+  private readonly reconnectSubject = new Subject<void>();
+  readonly onReconnect$ = this.reconnectSubject.asObservable();
   // Throttle de price ticks por símbolo (max 1 emit / 5s por símbolo).
   private lastPriceEmitBySymbol = new Map<string, number>();
   private readonly PRICE_THROTTLE_MS = 5_000;
@@ -232,6 +235,7 @@ export class BinanceMarketWsService implements OnModuleDestroy {
           `Market WS data flowing after ${this.reconnectAttempts} reconnect attempt(s)`,
         );
         this.reconnectAttempts = 0;
+        this.reconnectSubject.next(); // datos recuperados tras reconexión → reconciliar
       }
       this.lastMessageTime = Date.now();
       try {
