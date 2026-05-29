@@ -6,6 +6,7 @@ import {
   IMarketDataPort,
   type Candle,
   type CandleEvent,
+  type CandleSubscription,
   type ExchangeProvider,
   type PriceTickEvent,
 } from '../exchange/interfaces/exchange.interfaces';
@@ -27,6 +28,40 @@ interface BybitKlineEvent {
   }>;
 }
 
+/** Mapea intervalo canónico ('15m','1h','4h','1d') al formato Bybit ('15','60','240','D'). */
+export function mapInterval(interval: string): string {
+  const m = interval.match(/^(\d+)([mhdw])$/);
+  if (!m) return interval;
+  const n = m[1];
+  const unit = m[2];
+  switch (unit) {
+    case 'm':
+      return n;
+    case 'h':
+      return (parseInt(n, 10) * 60).toString();
+    case 'd':
+      return 'D';
+    case 'w':
+      return 'W';
+    default:
+      return interval;
+  }
+}
+
+/** Construye el topic de kline de Bybit: `kline.<bybitInterval>.<symbol>`. */
+export function buildKlineTopic(symbol: string, bybitInterval: string): string {
+  return `kline.${bybitInterval}.${symbol}`;
+}
+
+/** Parsea un topic `kline.<bybitInterval>.<symbol>`; null si no es kline. */
+export function parseKlineTopic(
+  topic: string,
+): { bybitInterval: string; symbol: string } | null {
+  const parts = topic.split('.');
+  if (parts.length < 3 || parts[0] !== 'kline') return null;
+  return { bybitInterval: parts[1], symbol: parts[2] };
+}
+
 @Injectable()
 export class BybitMarketWsService
   extends IMarketDataPort
@@ -37,10 +72,12 @@ export class BybitMarketWsService
 
   private ws: InstanceType<typeof WebSocket> | null = null;
   private wsUrl: string;
-  // Multi-symbol support (2026-05-24): bot can subscribe to multiple symbols
-  // simultaneously over the same WS connection (Bybit V5 supports it natively).
-  private subscribedSymbols: Set<string> = new Set();
-  private currentInterval: string | null = null;
+
+  // Multi-symbol / multi-timeframe (2026-05-28): Bybit V5 admite múltiples topics
+  // (distintos símbolos Y distintos intervalos) en una sola conexión. Keyed por topic
+  // (kline.<bybitInterval>.<symbol>); value guarda el intervalo canónico para emitir tf.
+  private subscriptions = new Map<string, CandleSubscription>();
+
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private healthCheckTimer: ReturnType<typeof setInterval> | null = null;
@@ -48,9 +85,6 @@ export class BybitMarketWsService
   private lastMessageTime = 0;
   private destroyed = false;
 
-  // Backoff cap aligned with the lesson learned from the Binance soft-ban
-  // incident: short fixed retries (30s-ish) extend bans. We grow up to 30 min
-  // and stop after MAX_CONSECUTIVE_FAILS to avoid hammering a throttled exchange.
   private readonly INITIAL_BACKOFF_MS = 30_000;
   private readonly MAX_BACKOFF_MS = 30 * 60_000;
   private readonly MAX_CONSECUTIVE_FAILS = 10;
@@ -65,7 +99,8 @@ export class BybitMarketWsService
 
   private readonly priceSubject = new Subject<PriceTickEvent>();
   readonly onPrice$ = this.priceSubject.asObservable();
-  private lastPriceEmit = 0;
+  // Throttle de price ticks por símbolo (max 1 emit / 5s por símbolo).
+  private lastPriceEmitBySymbol = new Map<string, number>();
   private readonly PRICE_THROTTLE_MS = 5_000;
 
   constructor(private readonly config: ConfigService) {
@@ -76,54 +111,50 @@ export class BybitMarketWsService
     );
   }
 
+  /** Acumulativo: añade (symbol, interval) sin tirar las suscripciones existentes. Idempotente. */
   subscribe(symbol: string, interval: string): void {
     const bybitInterval = mapInterval(interval);
+    const topic = buildKlineTopic(symbol, bybitInterval);
 
-    // Idempotent: if already subscribed to this exact (symbol, interval) on an open WS, no-op.
-    if (
-      this.subscribedSymbols.has(symbol) &&
-      this.currentInterval === bybitInterval &&
-      this.ws?.readyState === WebSocket.OPEN
-    ) {
-      this.logger.log(`Already subscribed to ${symbol} kline.${bybitInterval}`);
+    if (this.subscriptions.has(topic) && this.ws?.readyState === WebSocket.OPEN) {
+      this.logger.log(`Already subscribed to ${topic}`);
       return;
     }
 
-    // Interval change → recreate connection. Bybit V5 allows multi-symbol per
-    // socket only when all share the same interval.
-    if (
-      this.currentInterval !== null &&
-      this.currentInterval !== bybitInterval
-    ) {
-      this.logger.warn(
-        `Interval mismatch (${this.currentInterval} → ${bybitInterval}). Recreating WS.`,
-      );
-      this.cleanup();
-    }
-
-    this.subscribedSymbols.add(symbol);
-    this.currentInterval = bybitInterval;
+    this.subscriptions.set(topic, { symbol, interval });
 
     if (this.ws?.readyState === WebSocket.OPEN) {
-      // Already connected — send incremental subscribe for this new symbol only.
-      this.logger.log(`Subscribing additional symbol: kline.${bybitInterval}.${symbol}`);
-      this.ws.send(
-        JSON.stringify({
-          op: 'subscribe',
-          args: [`kline.${bybitInterval}.${symbol}`],
-        }),
-      );
+      this.logger.log(`Subscribing additional topic: ${topic}`);
+      this.ws.send(JSON.stringify({ op: 'subscribe', args: [topic] }));
     } else {
-      // No connection yet (or closed) — open one. All symbols subscribed at 'open'.
       this.destroyed = false;
       this.circuitOpen = false;
       this.connect();
     }
   }
 
-  unsubscribe(): void {
+  /** Desuscribe un (symbol, interval) específico; sin args desuscribe todo y cierra. */
+  unsubscribe(symbol?: string, interval?: string): void {
+    if (symbol && interval) {
+      const topic = buildKlineTopic(symbol, mapInterval(interval));
+      if (this.subscriptions.delete(topic)) {
+        if (this.ws?.readyState === WebSocket.OPEN) {
+          this.ws.send(JSON.stringify({ op: 'unsubscribe', args: [topic] }));
+        }
+        this.logger.log(`Unsubscribed from ${topic}`);
+      }
+      if (this.subscriptions.size === 0) {
+        this.destroyed = true;
+        this.cleanup();
+      }
+      return;
+    }
     this.destroyed = true;
     this.cleanup();
+  }
+
+  getSubscriptions(): CandleSubscription[] {
+    return Array.from(this.subscriptions.values());
   }
 
   onModuleDestroy(): void {
@@ -131,8 +162,7 @@ export class BybitMarketWsService
   }
 
   private cleanup(): void {
-    this.subscribedSymbols.clear();
-    this.currentInterval = null;
+    this.subscriptions.clear();
     this.stopHealthCheck();
     this.stopPing();
     if (this.reconnectTimer) {
@@ -157,7 +187,7 @@ export class BybitMarketWsService
       );
       return;
     }
-    if (this.subscribedSymbols.size === 0 || !this.currentInterval) return;
+    if (this.subscriptions.size === 0) return;
 
     this.logger.log(`Connecting to Bybit market WS: ${this.wsUrl}`);
 
@@ -182,18 +212,11 @@ export class BybitMarketWsService
 
     this.ws.on('open', () => {
       this.lastMessageTime = Date.now();
-      const topics = Array.from(this.subscribedSymbols).map(
-        (sym) => `kline.${this.currentInterval}.${sym}`,
-      );
+      const topics = Array.from(this.subscriptions.keys());
       this.logger.log(
         `Bybit market WS connected, subscribing to ${topics.length} topic(s): ${topics.join(', ')}`,
       );
-      this.ws?.send(
-        JSON.stringify({
-          op: 'subscribe',
-          args: topics,
-        }),
-      );
+      this.ws?.send(JSON.stringify({ op: 'subscribe', args: topics }));
       this.startHealthCheck();
       this.startPing();
     });
@@ -211,8 +234,6 @@ export class BybitMarketWsService
       if (payload.op === 'subscribe') {
         if (payload.success) {
           this.logger.log(`Subscription ack: ${payload.ret_msg ?? 'OK'}`);
-          // Real data confirmed — reset failure counter only after we've seen
-          // an actual data event (handled below), not just on subscribe ack.
         } else {
           this.logger.error(`Subscription failed: ${payload.ret_msg}`);
         }
@@ -222,7 +243,6 @@ export class BybitMarketWsService
       if (payload.op === 'pong') return;
 
       if (payload.topic && payload.topic.startsWith('kline.')) {
-        // Real kline data received — reset failure counter.
         if (this.reconnectAttempts !== 0) {
           this.logger.log(
             `Bybit market WS data flowing after ${this.reconnectAttempts} reconnect attempt(s)`,
@@ -231,23 +251,21 @@ export class BybitMarketWsService
         }
 
         const event = payload as BybitKlineEvent;
-        // Multi-symbol: extract symbol from topic (kline.<interval>.<symbol>).
-        // This replaces the prior single-symbol assumption.
-        const topicParts = payload.topic.split('.');
-        const symbol = topicParts[2] ?? Array.from(this.subscribedSymbols)[0];
-        if (!this.subscribedSymbols.has(symbol)) {
-          // Defensive: shouldn't happen, but ignore foreign topics.
+        const sub = this.subscriptions.get(payload.topic);
+        if (!sub) {
+          // Topic ajeno / desuscrito — ignorar.
           return;
         }
+        const { symbol, interval: tf } = sub;
+
         for (const k of event.data ?? []) {
-          // Emit price tick (throttled)
           const now = Date.now();
-          if (now - this.lastPriceEmit >= this.PRICE_THROTTLE_MS) {
-            this.lastPriceEmit = now;
+          const lastEmit = this.lastPriceEmitBySymbol.get(symbol) ?? 0;
+          if (now - lastEmit >= this.PRICE_THROTTLE_MS) {
+            this.lastPriceEmitBySymbol.set(symbol, now);
             this.priceSubject.next({ symbol, price: parseFloat(k.close) });
           }
 
-          // Emit candle close only when finalized
           if (k.confirm) {
             const candle: Candle = {
               openTime: k.start,
@@ -260,7 +278,7 @@ export class BybitMarketWsService
               quoteVolume: parseFloat(k.turnover ?? '0'),
               trades: 0,
             };
-            this.candleCloseSubject.next({ symbol, candle });
+            this.candleCloseSubject.next({ symbol, tf, candle });
           }
         }
       }
@@ -298,7 +316,7 @@ export class BybitMarketWsService
   private startHealthCheck(): void {
     this.stopHealthCheck();
     this.healthCheckTimer = setInterval(() => {
-      if (!this.ws || this.subscribedSymbols.size === 0 || this.destroyed) return;
+      if (!this.ws || this.subscriptions.size === 0 || this.destroyed) return;
 
       const elapsedMessage = Date.now() - this.lastMessageTime;
       if (elapsedMessage > this.STALE_MESSAGE_THRESHOLD_MS) {
@@ -318,7 +336,7 @@ export class BybitMarketWsService
   }
 
   private scheduleReconnect(): void {
-    if (this.destroyed || this.subscribedSymbols.size === 0) return;
+    if (this.destroyed || this.subscriptions.size === 0) return;
 
     if (this.reconnectAttempts >= this.MAX_CONSECUTIVE_FAILS) {
       this.circuitOpen = true;
@@ -329,7 +347,6 @@ export class BybitMarketWsService
       return;
     }
 
-    // Exponential backoff: 30s, 60s, 120s, 240s, 480s, 960s, 1800s (cap)
     const delay = Math.min(
       this.INITIAL_BACKOFF_MS * Math.pow(2, this.reconnectAttempts),
       this.MAX_BACKOFF_MS,
@@ -342,24 +359,5 @@ export class BybitMarketWsService
     this.reconnectTimer = setTimeout(() => {
       if (!this.destroyed) this.connect();
     }, delay);
-  }
-}
-
-function mapInterval(interval: string): string {
-  const m = interval.match(/^(\d+)([mhdw])$/);
-  if (!m) return interval;
-  const n = m[1];
-  const unit = m[2];
-  switch (unit) {
-    case 'm':
-      return n;
-    case 'h':
-      return (parseInt(n, 10) * 60).toString();
-    case 'd':
-      return 'D';
-    case 'w':
-      return 'W';
-    default:
-      return interval;
   }
 }

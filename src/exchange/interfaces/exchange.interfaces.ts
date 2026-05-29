@@ -218,7 +218,13 @@ export interface ExchangeInfo {
 
 export interface CandleEvent {
   symbol: string;
+  tf: string; // timeframe/interval que produjo esta vela (p.ej. '15m', '1h', '4h', '1d')
   candle: Candle;
+}
+
+export interface CandleSubscription {
+  symbol: string;
+  interval: string;
 }
 
 export interface PriceTickEvent {
@@ -354,8 +360,12 @@ export abstract class IMarketDataPort {
   abstract readonly onCandleClose$: Observable<CandleEvent>;
   abstract readonly onPrice$: Observable<PriceTickEvent>;
 
+  // Acumulativo: añade un stream (symbol, interval) sin descartar los existentes. Idempotente.
   abstract subscribe(symbol: string, interval: string): void;
-  abstract unsubscribe(): void;
+  // Desuscribe un (symbol, interval) específico; omitir ambos args desuscribe todo.
+  abstract unsubscribe(symbol?: string, interval?: string): void;
+  // Snapshot de las suscripciones activas.
+  abstract getSubscriptions(): CandleSubscription[];
 }
 
 /**

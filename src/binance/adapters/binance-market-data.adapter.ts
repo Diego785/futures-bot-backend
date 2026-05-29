@@ -5,6 +5,7 @@ import {
   IMarketDataPort,
   type ExchangeProvider,
   type CandleEvent,
+  type CandleSubscription,
   type PriceTickEvent,
 } from '../../exchange/interfaces/exchange.interfaces';
 
@@ -32,8 +33,12 @@ export class BinanceMarketDataAdapter
     this.inner.subscribe(symbol, interval);
   }
 
-  unsubscribe(): void {
-    this.inner.unsubscribe();
+  unsubscribe(symbol?: string, interval?: string): void {
+    this.inner.unsubscribe(symbol, interval);
+  }
+
+  getSubscriptions(): CandleSubscription[] {
+    return this.inner.getSubscriptions();
   }
 
   onModuleDestroy(): void {

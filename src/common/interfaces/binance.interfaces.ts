@@ -153,6 +153,14 @@ export interface KlineWsPayload {
   };
 }
 
+// ─── WebSocket: combined stream wrapper (/stream endpoint) ───
+// Cuando se usa el endpoint combinado /stream, cada mensaje viene envuelto como
+// { stream: "btcusdt@kline_15m", data: <payload> }. El endpoint single /ws no envuelve.
+export interface CombinedStreamPayload<T> {
+  stream: string;
+  data: T;
+}
+
 // ─── WebSocket: ORDER_TRADE_UPDATE event ───
 export interface OrderTradeUpdatePayload {
   e: 'ORDER_TRADE_UPDATE';
