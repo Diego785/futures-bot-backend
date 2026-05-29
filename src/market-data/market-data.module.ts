@@ -5,6 +5,7 @@ import { CandleEntity } from './entities/candle.entity';
 import { CandleRepository } from './candle.repository';
 import { BackfillService } from './backfill.service';
 import { CandleIngestService } from './candle-ingest.service';
+import { MarketDataController } from './market-data.controller';
 
 /**
  * Market Data (Fase 3). Persistencia de velas (entidad + repositorio) + backfill REST +
@@ -14,6 +15,7 @@ import { CandleIngestService } from './candle-ingest.service';
  */
 @Module({
   imports: [TypeOrmModule.forFeature([CandleEntity]), ExchangeModule],
+  controllers: [MarketDataController],
   providers: [CandleRepository, BackfillService, CandleIngestService],
   exports: [CandleRepository, BackfillService, CandleIngestService],
 })

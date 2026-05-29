@@ -39,4 +39,27 @@ export class CandleRepository {
     });
     return row ? row.openTime : null;
   }
+
+  /**
+   * Lectura paginada de velas por (symbol, tf), ordenadas por openTime ascendente.
+   * Filtros opcionales: rango [from, to] y cursor (openTime exclusivo) para paginar.
+   */
+  async findCandles(params: {
+    symbol: string;
+    tf: string;
+    from?: number;
+    to?: number;
+    cursor?: number;
+    limit: number;
+  }): Promise<CandleEntity[]> {
+    const { symbol, tf, from, to, cursor, limit } = params;
+    const qb = this.repo
+      .createQueryBuilder('c')
+      .where('c.symbol = :symbol', { symbol })
+      .andWhere('c.tf = :tf', { tf });
+    if (from !== undefined) qb.andWhere('c.openTime >= :from', { from });
+    if (to !== undefined) qb.andWhere('c.openTime <= :to', { to });
+    if (cursor !== undefined) qb.andWhere('c.openTime > :cursor', { cursor });
+    return qb.orderBy('c.openTime', 'ASC').limit(limit).getMany();
+  }
 }
