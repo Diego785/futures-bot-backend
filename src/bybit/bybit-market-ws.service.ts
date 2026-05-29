@@ -123,9 +123,13 @@ export class BybitMarketWsService
 
     this.subscriptions.set(topic, { symbol, interval });
 
-    if (this.ws?.readyState === WebSocket.OPEN) {
+    const state = this.ws?.readyState;
+    if (state === WebSocket.OPEN) {
       this.logger.log(`Subscribing additional topic: ${topic}`);
-      this.ws.send(JSON.stringify({ op: 'subscribe', args: [topic] }));
+      this.ws?.send(JSON.stringify({ op: 'subscribe', args: [topic] }));
+    } else if (state === WebSocket.CONNECTING) {
+      // Conexión en curso: el handler 'open' suscribirá TODOS los topics acumulados.
+      this.logger.log(`Queued ${topic} (WS connecting)`);
     } else {
       this.destroyed = false;
       this.circuitOpen = false;
@@ -188,11 +192,20 @@ export class BybitMarketWsService
       return;
     }
     if (this.subscriptions.size === 0) return;
+    // Idempotente: no abrir una segunda conexión sobre una ya viva o en curso.
+    if (
+      this.ws &&
+      (this.ws.readyState === WebSocket.CONNECTING ||
+        this.ws.readyState === WebSocket.OPEN)
+    ) {
+      return;
+    }
 
     this.logger.log(`Connecting to Bybit market WS: ${this.wsUrl}`);
 
     if (this.ws) {
       this.ws.removeAllListeners();
+      this.ws.on('error', () => {}); // absorbe errores tardíos del socket abandonado
       if (
         this.ws.readyState === WebSocket.OPEN ||
         this.ws.readyState === WebSocket.CONNECTING

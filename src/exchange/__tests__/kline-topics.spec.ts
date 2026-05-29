@@ -1,4 +1,7 @@
-import { klineStreamName } from '../../binance/binance-market-ws.service';
+import {
+  klineStreamName,
+  binanceWsBase,
+} from '../../binance/binance-market-ws.service';
 import {
   mapInterval,
   buildKlineTopic,
@@ -13,6 +16,35 @@ describe('Binance kline stream naming', () => {
     expect(klineStreamName('ETHUSDT', '1h')).toBe('ethusdt@kline_1h');
     expect(klineStreamName('BTCUSDT', '4h')).toBe('btcusdt@kline_4h');
     expect(klineStreamName('BTCUSDT', '1d')).toBe('btcusdt@kline_1d');
+  });
+});
+
+describe('Binance WS base normalization (migración /market 2026)', () => {
+  it('deja intacto el host base', () => {
+    expect(binanceWsBase('wss://fstream.binance.com')).toBe(
+      'wss://fstream.binance.com',
+    );
+  });
+  it('quita el slash final', () => {
+    expect(binanceWsBase('wss://fstream.binance.com/')).toBe(
+      'wss://fstream.binance.com',
+    );
+  });
+  it('normaliza rutas legacy /ws y /stream al host base', () => {
+    expect(binanceWsBase('wss://fstream.binance.com/ws')).toBe(
+      'wss://fstream.binance.com',
+    );
+    expect(binanceWsBase('wss://fstream.binance.com/stream')).toBe(
+      'wss://fstream.binance.com',
+    );
+  });
+  it('normaliza rutas nuevas /market y /market/stream al host base', () => {
+    expect(binanceWsBase('wss://fstream.binance.com/market')).toBe(
+      'wss://fstream.binance.com',
+    );
+    expect(binanceWsBase('wss://fstream.binance.com/market/stream')).toBe(
+      'wss://fstream.binance.com',
+    );
   });
 });
 

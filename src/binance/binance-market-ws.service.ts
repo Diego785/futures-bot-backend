@@ -21,6 +21,24 @@ export function klineStreamName(symbol: string, interval: string): string {
   return `${symbol.toLowerCase()}@kline_${interval}`;
 }
 
+// Migración WS de Binance USDⓈ-M Futures (2026): las klines viven bajo la ruta /market.
+// Las rutas legacy /ws y /stream fueron DECOMISIONADAS el 2026-04-23 — una conexión sin
+// ruta /market NO recibe klines. Ref: developers.binance.com (Important WebSocket Change Notice).
+export const BINANCE_MARKET_COMBINED_PATH = '/market/stream';
+
+/**
+ * Normaliza BINANCE_FUTURES_WS_URL al host base, tolerando configuraciones legacy o
+ * con ruta ya incluida. Acepta `wss://fstream.binance.com`, `.../ws`, `.../stream`,
+ * `.../market` o `.../market/stream` y devuelve siempre solo el host base.
+ */
+export function binanceWsBase(configured: string): string {
+  let u = configured.trim().replace(/\/+$/, '');
+  u = u.replace(/\/(public|market|private)\/(ws|stream)$/i, '');
+  u = u.replace(/\/(public|market|private)$/i, '');
+  u = u.replace(/\/(ws|stream)$/i, '');
+  return u;
+}
+
 @Injectable()
 export class BinanceMarketWsService implements OnModuleDestroy {
   private readonly logger = new Logger(BinanceMarketWsService.name);
@@ -59,9 +77,11 @@ export class BinanceMarketWsService implements OnModuleDestroy {
   private readonly PRICE_THROTTLE_MS = 5_000;
 
   constructor(private readonly config: ConfigService) {
+    // BINANCE_FUTURES_WS_URL = host base, p.ej. `wss://fstream.binance.com`.
+    // El servicio le añade /market/stream (klines viven bajo /market desde 2026).
     // Lenient read so the service can be instantiated even when EXCHANGE_PROVIDER=bybit
-    // and Binance creds aren't configured. subscribe() will fail loudly if called
-    // without a wsUrl, which only happens when this provider is actually selected.
+    // and Binance creds aren't configured. subscribe() only runs when this provider
+    // is actually selected.
     this.wsUrl = this.config.get<string>('BINANCE_FUTURES_WS_URL', '');
   }
 
@@ -76,10 +96,15 @@ export class BinanceMarketWsService implements OnModuleDestroy {
 
     this.subscriptions.set(stream, { symbol, interval });
 
-    if (this.ws?.readyState === WebSocket.OPEN) {
+    const state = this.ws?.readyState;
+    if (state === WebSocket.OPEN) {
       // Conexión viva — suscripción incremental solo de este stream.
       this.sendSubscribe([stream]);
       this.logger.log(`Subscribed (incremental) to ${stream}`);
+    } else if (state === WebSocket.CONNECTING) {
+      // Conexión en curso: el handler 'open' suscribirá TODOS los streams acumulados.
+      // No reconectar aquí — terminar un socket CONNECTING provoca un error no manejado.
+      this.logger.log(`Queued ${stream} (WS connecting)`);
     } else {
       // Sin conexión (o cerrada) — abrir una; todos los streams se suscriben en 'open'.
       this.destroyed = false;
@@ -153,9 +178,17 @@ export class BinanceMarketWsService implements OnModuleDestroy {
 
   private connect(): void {
     if (this.circuitOpen || this.destroyed || this.subscriptions.size === 0) return;
+    // Idempotente: no abrir una segunda conexión sobre una ya viva o en curso.
+    if (
+      this.ws &&
+      (this.ws.readyState === WebSocket.CONNECTING ||
+        this.ws.readyState === WebSocket.OPEN)
+    ) {
+      return;
+    }
 
-    // Endpoint combinado: una conexión, múltiples streams vía SUBSCRIBE.
-    const url = `${this.wsUrl}/stream`;
+    // Endpoint combinado ruteado /market: una conexión, múltiples streams vía SUBSCRIBE.
+    const url = `${binanceWsBase(this.wsUrl)}${BINANCE_MARKET_COMBINED_PATH}`;
     this.logger.log(
       `Connecting to combined market WS: ${url} (${this.subscriptions.size} stream(s))`,
     );
@@ -163,6 +196,7 @@ export class BinanceMarketWsService implements OnModuleDestroy {
     // Cleanup any stale socket reference before creating a new one.
     if (this.ws) {
       this.ws.removeAllListeners();
+      this.ws.on('error', () => {}); // absorbe errores tardíos del socket abandonado
       if (
         this.ws.readyState === WebSocket.OPEN ||
         this.ws.readyState === WebSocket.CONNECTING
