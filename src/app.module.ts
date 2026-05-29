@@ -7,6 +7,7 @@ import { validate } from './common/config/env.validation';
 import { HealthModule } from './health/health.module';
 import { ExchangeModule } from './exchange/exchange.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { MarketDataModule } from './market-data/market-data.module';
 
 // TypeORM se activa SOLO si DB_ENABLED=true. En el skeleton v2 todavía no hay
 // entidades; conectar a Postgres no aporta nada y bloquearía el arranque local
@@ -49,6 +50,8 @@ const DB_ENABLED = process.env.DB_ENABLED === 'true';
               logging: ['error', 'warn'],
             }),
           }),
+          // MarketDataModule depende de TypeORM — solo cuando DB_ENABLED.
+          MarketDataModule,
         ]
       : []),
 
