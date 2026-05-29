@@ -13,7 +13,7 @@ import { MarketDataModule } from './market-data/market-data.module';
 // entidades; conectar a Postgres no aporta nada y bloquearía el arranque local
 // sin DB. Cuando llegue MarketDataModule con persistencia, los entornos reales
 // pondrán DB_ENABLED=true.
-const DB_ENABLED = process.env.DB_ENABLED === 'true';
+const DB_ENABLED = process.env.DB_ENABLED?.trim() === 'true';
 
 @Module({
   imports: [

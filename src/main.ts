@@ -1,3 +1,6 @@
+// Cargar .env ANTES de importar AppModule: los gates de módulos (DB_ENABLED) se
+// evalúan al importar app.module, por lo que el .env debe estar en process.env ya.
+import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
