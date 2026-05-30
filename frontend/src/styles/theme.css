@@ -164,10 +164,32 @@ body {
 .mkt-offline, .mkt-disconnected { color: var(--muted); }
 
 .panel { padding: 10px 12px; }
-.panel-title { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.panel-title { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); display: flex; align-items: baseline; justify-content: space-between; }
 .layer-list { list-style: none; margin: 0; padding: 0; }
 .layer-item { display: flex; align-items: center; gap: 8px; padding: 5px 0; }
 .layer-item.disabled { color: var(--muted); }
+.layer-toggle { font-size: 11px; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--muted); cursor: pointer; }
+
+/* Workspace de marcas (Slice 3C) */
+.ws-summary { display: flex; flex-wrap: wrap; gap: 8px; font-size: 11px; color: var(--text); margin: 4px 0; }
+.ws-filters { display: flex; gap: 3px; margin: 8px 0; }
+.ws-filter {
+  flex: 1 1 auto; background: var(--panel-2); color: var(--muted);
+  border: 1px solid var(--border); border-radius: 4px; padding: 3px 4px;
+  cursor: pointer; font-size: 11px;
+}
+.ws-filter:hover { color: var(--text); }
+.ws-filter.active { color: #fff; background: #1d2740; border-color: var(--accent); }
+.marks-list { list-style: none; margin: 0; padding: 0; max-height: 42vh; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.mark-row {
+  display: flex; align-items: center; gap: 6px; padding: 4px 6px;
+  border-radius: 4px; cursor: pointer; border: 1px solid transparent;
+}
+.mark-row:hover { background: var(--panel-2); }
+.mark-row.selected { background: #1d2740; border-color: var(--accent); }
+.mark-dot { width: 8px; height: 8px; border-radius: 2px; flex: 0 0 auto; }
+.mark-row-label { flex: 1 1 auto; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mark-status { font-size: 10px; font-weight: 600; flex: 0 0 auto; }
 .hint { color: var(--muted); font-size: 12px; font-style: italic; margin-top: 8px; }
 .kv { display: flex; justify-content: space-between; padding: 3px 0; }
 .kv span { color: var(--muted); }

@@ -36,6 +36,9 @@ interface Props {
   onSelectMark: (id: string | null) => void;
   onUpdateMark: (id: string, patch: Partial<ManualMark>) => void;
   onDeleteMark: (id: string) => void;
+  // Petición de centrar la vista en una marca (desde la lista del workspace). nonce re-dispara
+  // aunque sea la misma marca.
+  focusRequest?: { id: string; nonce: number } | null;
 }
 
 type HandlePart = 'l' | 'r' | 't' | 'b' | 'tl' | 'tr' | 'bl' | 'br';
@@ -98,7 +101,7 @@ function fmtPrice(p: number | null): string {
 }
 
 export function CandleChart(props: Props) {
-  const { candles, viewKey, liveBar, marks, tool, selectedId, layerVisible } = props;
+  const { candles, viewKey, liveBar, marks, tool, selectedId, layerVisible, focusRequest } = props;
   const hostRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -412,6 +415,28 @@ export function CandleChart(props: Props) {
     recompute();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [liveBar]);
+
+  // ── centrar la vista en una marca (workspace) ──
+  useEffect(() => {
+    if (!focusRequest) return;
+    const chart = chartRef.current;
+    const cs = stateRef.current.candles;
+    if (!chart || cs.length === 0) return;
+    const m = stateRef.current.marks.find((x) => x.id === focusRequest.id);
+    if (!m) return;
+    // Centro temporal de la marca; niveles (Liquidity) abarcan todo el ancho → no se centran.
+    const t = m.timeStart != null ? (m.timeEnd != null ? (m.timeStart + m.timeEnd) / 2 : m.timeStart) : null;
+    if (t == null) return;
+    const lastMs = cs[cs.length - 1].openTime;
+    const logical = (cs.length - 1) + (t - lastMs) / tfToMs(stateRef.current.tf);
+    const range = chart.timeScale().getVisibleLogicalRange();
+    const span = range ? range.to - range.from : 80;
+    chart.timeScale().setVisibleLogicalRange({
+      from: (logical - span / 2) as Logical,
+      to: (logical + span / 2) as Logical,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusRequest?.nonce]);
 
   // Cambios discretos de datos (marcas/visibilidad/selección/herramienta): recompute
   // SÍNCRONO antes del paint, para que crear/borrar se vea de inmediato sin un click extra.

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { LiveClient, type MarketStatus } from '../lib/liveClient';
 import { AppShell } from '../components/layout/AppShell';
-import { LeftSidebar } from '../components/layout/LeftSidebar';
+import { LeftSidebar, type TypeFilter } from '../components/layout/LeftSidebar';
 import { RightInspector } from '../components/layout/RightInspector';
 import { BottomPanel } from '../components/layout/BottomPanel';
 import { ChartToolbar } from '../components/chart/ChartToolbar';
@@ -46,6 +46,13 @@ export function TradingCockpit() {
   const { marks, selectedId, commit, select, replace, reset, undo, redo } = useMarkHistory();
   const [tool, setTool] = useState<ManualTool>('Select');
   const [marksVisible, setMarksVisible] = useState(true);
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>('ALL');
+  // Petición de centrar la gráfica en una marca (al hacer click en la lista del workspace).
+  const [focusReq, setFocusReq] = useState<{ id: string; nonce: number } | null>(null);
+  function handleSelectFromList(id: string): void {
+    select(id);
+    setFocusReq((p) => ({ id, nonce: (p?.nonce ?? 0) + 1 }));
+  }
 
   // ─── Persistencia (Slice 3B) ───
   // El estado local (historial) es la verdad para render; la API es efecto colateral. PATCH con
@@ -303,6 +310,7 @@ export function TradingCockpit() {
           onSelectMark={select}
           onUpdateMark={handleUpdateMark}
           onDeleteMark={handleDeleteMark}
+          focusRequest={focusReq}
         />
       </div>
     );
@@ -342,7 +350,11 @@ export function TradingCockpit() {
         <LeftSidebar
           marksVisible={marksVisible}
           onToggleMarks={() => setMarksVisible((v) => !v)}
-          marksCount={visibleMarks.length}
+          marks={visibleMarks}
+          selectedId={selectedId}
+          onSelectMark={handleSelectFromList}
+          typeFilter={typeFilter}
+          onTypeFilter={setTypeFilter}
         />
       }
       center={center}
