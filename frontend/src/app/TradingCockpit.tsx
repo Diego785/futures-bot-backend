@@ -6,8 +6,11 @@ import { RightInspector } from '../components/layout/RightInspector';
 import { BottomPanel } from '../components/layout/BottomPanel';
 import { ChartToolbar } from '../components/chart/ChartToolbar';
 import { CandleChart } from '../components/chart/CandleChart';
+import { MarkTools } from '../components/chart/MarkTools';
 import { fetchCandles } from '../features/candles/candles.api';
 import { TIMEFRAMES, type Candle, type Timeframe } from '../features/candles/candles.types';
+import type { ManualMark, ManualTool } from '../features/manual-marks/manualMarks.types';
+import { createMark, type NewMarkInput } from '../features/manual-marks/marks.util';
 
 type Status = 'loading' | 'error' | 'ready';
 const PAGE = 500;
@@ -32,6 +35,31 @@ export function TradingCockpit() {
   const [hasMoreOlder, setHasMoreOlder] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [panels, setPanels] = useState({ left: true, right: true, bottom: true });
+
+  // ─── Marcas manuales (Slice 3A, estado local) ───
+  const [marks, setMarks] = useState<ManualMark[]>([]);
+  const [tool, setTool] = useState<ManualTool>('Select');
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [marksVisible, setMarksVisible] = useState(true);
+
+  const visibleMarks = marks.filter((m) => m.symbol === symbol && m.tf === tf);
+  const selectedMark = marks.find((m) => m.id === selectedId) ?? null;
+
+  function handleCreateMark(input: NewMarkInput): void {
+    const mark = createMark(input, Date.now());
+    setMarks((prev) => [...prev, mark]);
+    setSelectedId(mark.id);
+    setTool('Select'); // tras crear, volver a selección (evita marcas accidentales)
+  }
+  function handleUpdateNote(id: string, note: string): void {
+    setMarks((prev) =>
+      prev.map((m) => (m.id === id ? { ...m, note, updatedAt: Date.now() } : m)),
+    );
+  }
+  function handleDeleteMark(id: string): void {
+    setMarks((prev) => prev.filter((m) => m.id !== id));
+    setSelectedId((cur) => (cur === id ? null : cur));
+  }
 
   // ─── Live ───
   const [liveBar, setLiveBar] = useState<Candle | null>(null);
@@ -79,6 +107,7 @@ export function TradingCockpit() {
     setStatus('loading');
     setError(null);
     setHover(null);
+    setSelectedId(null); // la marca seleccionada puede no pertenecer a este símbolo/tf
     fetchCandles(symbol, tf, PAGE)
       .then((res) => {
         if (cancelled) return;
@@ -136,7 +165,21 @@ export function TradingCockpit() {
             {loadingMore ? 'Cargando…' : '◄ Cargar más historial'}
           </button>
         )}
-        <CandleChart candles={candles} viewKey={viewKey} liveBar={liveBar} onHover={setHover} />
+        <MarkTools value={tool} onChange={setTool} />
+        <CandleChart
+          candles={candles}
+          viewKey={viewKey}
+          liveBar={liveBar}
+          marks={visibleMarks}
+          tool={tool}
+          selectedId={selectedId}
+          layerVisible={marksVisible}
+          symbol={symbol}
+          tf={tf}
+          onHover={setHover}
+          onCreateMark={handleCreateMark}
+          onSelectMark={setSelectedId}
+        />
       </div>
     );
   }
@@ -171,9 +214,25 @@ export function TradingCockpit() {
           }
         />
       }
-      left={<LeftSidebar />}
+      left={
+        <LeftSidebar
+          marksVisible={marksVisible}
+          onToggleMarks={() => setMarksVisible((v) => !v)}
+          marksCount={visibleMarks.length}
+        />
+      }
       center={center}
-      right={<RightInspector symbol={symbol} tf={tf} loaded={candles.length} hover={hover} />}
+      right={
+        <RightInspector
+          symbol={symbol}
+          tf={tf}
+          loaded={candles.length}
+          hover={hover}
+          selectedMark={selectedMark}
+          onUpdateNote={handleUpdateNote}
+          onDeleteMark={handleDeleteMark}
+        />
+      }
       bottom={<BottomPanel />}
     />
   );

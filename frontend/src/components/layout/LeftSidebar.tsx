@@ -1,19 +1,31 @@
-// Panel de capas. En slices futuros estas capas se podrán activar/desactivar
-// (ver docs/API-CONTRACT.md y ENTRY-EDGE-SPEC.md). Por ahora son placeholders.
-const LAYERS = ['Mis marcas', 'VideoSMC', 'StrictFVG', 'LuxAlgo (ref)', 'Señales', 'Journal'];
+interface Props {
+  marksVisible: boolean;
+  onToggleMarks: () => void;
+  marksCount: number;
+}
 
-export function LeftSidebar() {
+// Capas. "Mis marcas" ya es un toggle real (Slice 3A). El resto son placeholders de
+// slices futuros (VideoSMC, StrictFVG, LuxAlgo, señales, journal).
+const FUTURE_LAYERS = ['VideoSMC', 'StrictFVG', 'LuxAlgo (ref)', 'Señales', 'Journal'];
+
+export function LeftSidebar({ marksVisible, onToggleMarks, marksCount }: Props) {
   return (
     <div className="panel">
       <h3 className="panel-title">Capas</h3>
       <ul className="layer-list">
-        {LAYERS.map((layer) => (
+        <li className="layer-item">
+          <label>
+            <input type="checkbox" checked={marksVisible} onChange={onToggleMarks} />{' '}
+            <span>Mis marcas</span> <span className="muted">({marksCount})</span>
+          </label>
+        </li>
+        {FUTURE_LAYERS.map((layer) => (
           <li key={layer} className="layer-item disabled">
             <input type="checkbox" disabled /> <span>{layer}</span>
           </li>
         ))}
       </ul>
-      <p className="hint">Próximos slices</p>
+      <p className="hint">Más capas en próximos slices.</p>
     </div>
   );
 }

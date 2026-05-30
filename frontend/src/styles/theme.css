@@ -37,7 +37,42 @@ body {
 .shell-bottom { grid-area: bottom; background: var(--panel); overflow: auto; }
 
 .candle-chart { position: absolute; inset: 0; }
-.chart-wrap { position: absolute; inset: 0; }
+.chart-wrap { position: absolute; inset: 0; overflow: hidden; }
+.chart-host { position: absolute; inset: 0; }
+
+/* Marcas manuales */
+.draw-overlay { position: absolute; inset: 0; z-index: 6; }
+.zone-mark { position: absolute; border: 1px solid; box-sizing: border-box; z-index: 4; border-radius: 2px; }
+.zone-mark.selected { box-shadow: 0 0 0 1px #fff inset; }
+.draw-draft {
+  position: absolute; z-index: 7; pointer-events: none;
+  border: 1px dashed #fff; background: rgba(255, 255, 255, 0.08);
+}
+.mark-tools {
+  position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 8;
+  display: flex; gap: 2px; background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 6px; padding: 3px;
+}
+.tool-btn {
+  background: transparent; color: var(--muted); border: 1px solid transparent;
+  border-radius: 4px; padding: 3px 9px; cursor: pointer; font-size: 12px; line-height: 1.2;
+}
+.tool-btn:hover { color: var(--text); }
+.tool-btn.active { color: #fff; background: #1d2740; border-color: var(--accent); }
+
+/* Inspector: detalle de marca */
+.mark-detail { display: flex; flex-direction: column; gap: 2px; }
+.note-label { display: flex; flex-direction: column; gap: 4px; color: var(--muted); margin: 8px 0; font-size: 12px; }
+.note-input {
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 4px; padding: 6px; min-height: 48px; resize: vertical; font: inherit;
+}
+.btn-danger {
+  background: transparent; color: var(--down); border: 1px solid var(--down);
+  border-radius: 4px; padding: 5px 10px; cursor: pointer;
+}
+.btn-danger:hover { background: rgba(239, 83, 80, 0.12); }
+
 .load-older {
   position: absolute; top: 8px; left: 8px; z-index: 5;
   background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
