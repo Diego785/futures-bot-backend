@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { LiveClient, type MarketStatus } from '../lib/liveClient';
 import { AppShell } from '../components/layout/AppShell';
 import { LeftSidebar } from '../components/layout/LeftSidebar';
@@ -10,7 +10,8 @@ import { MarkTools } from '../components/chart/MarkTools';
 import { fetchCandles } from '../features/candles/candles.api';
 import { TIMEFRAMES, type Candle, type Timeframe } from '../features/candles/candles.types';
 import type { ManualMark, ManualTool } from '../features/manual-marks/manualMarks.types';
-import { createMark, type NewMarkInput } from '../features/manual-marks/marks.util';
+import { createMark, marksDiffer, type NewMarkInput } from '../features/manual-marks/marks.util';
+import { useMarkHistory } from '../features/manual-marks/useMarkHistory';
 import {
   fetchMarks,
   createMarkRemote,
@@ -27,9 +28,8 @@ function initialTf(): Timeframe {
 }
 
 /**
- * Trading Cockpit — Slice 2A: gráfica profesional.
- * Velas más recientes al abrir + "cargar más historial" hacia atrás, inspector con OHLCV,
- * paneles colapsables / focus, y persistencia de símbolo/tf. Sin OB/FVG ni señales aún.
+ * Trading Cockpit. Gráfica profesional + marcas manuales (OB/FVG/Liquidity/TradePlan) con
+ * historial undo/redo (Slice 3A.1-e) y persistencia en DB (Slice 3B). Sin motor SMC ni señales.
  */
 export function TradingCockpit() {
   const [symbol, setSymbol] = useState(() => localStorage.getItem('cockpit.symbol') ?? 'BTCUSDT');
@@ -42,16 +42,15 @@ export function TradingCockpit() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [panels, setPanels] = useState({ left: true, right: true, bottom: true });
 
-  // ─── Marcas manuales (Slice 3A, estado local) ───
-  const [marks, setMarks] = useState<ManualMark[]>([]);
+  // ─── Marcas manuales: estado con historial undo/redo (Slice 3A.1-e) ───
+  const { marks, selectedId, commit, select, replace, reset, undo, redo } = useMarkHistory();
   const [tool, setTool] = useState<ManualTool>('Select');
-  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [marksVisible, setMarksVisible] = useState(true);
 
-  // ─── Persistencia de marcas (Slice 3B) ───
-  // El estado local es la verdad para render; la API es efecto colateral. PATCH con debounce
-  // por id: coalesce ediciones (nota/arrastre) y da tiempo a que el POST de creación aterrice
-  // antes del primer PATCH. Si la API falla (DB off / backend caído) se mantiene local.
+  // ─── Persistencia (Slice 3B) ───
+  // El estado local (historial) es la verdad para render; la API es efecto colateral. PATCH con
+  // debounce por id: coalesce ediciones y da tiempo a que el POST de creación aterrice antes del
+  // primer PATCH. Si la API falla (DB off / backend caído) se mantiene local.
   const marksRef = useRef(marks);
   marksRef.current = marks;
   const patchTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
@@ -75,35 +74,87 @@ export function TradingCockpit() {
       patchTimers.current.delete(id);
     }
   }
+  const cancelAllPatches = useCallback(() => {
+    patchTimers.current.forEach((t) => clearTimeout(t));
+    patchTimers.current.clear();
+  }, []);
+
+  // Reconciliación de persistencia tras undo/redo: el diff before→after se traduce a POST
+  // (reaparece), DELETE (desaparece) o PATCH (cambió), para que la DB quede igual que la pantalla.
+  const reconcile = useCallback((before: ManualMark[], after: ManualMark[]) => {
+    const beforeById = new Map(before.map((m) => [m.id, m]));
+    const afterById = new Map(after.map((m) => [m.id, m]));
+    for (const m of after) {
+      const prev = beforeById.get(m.id);
+      if (!prev) createMarkRemote(m).catch((e) => console.warn('undo/redo POST falló:', e));
+      else if (marksDiffer(prev, m)) patchMarkRemote(m).catch((e) => console.warn('undo/redo PATCH falló:', e));
+    }
+    for (const m of before) {
+      if (!afterById.has(m.id)) deleteMarkRemote(m.id).catch((e) => console.warn('undo/redo DELETE falló:', e));
+    }
+  }, []);
 
   const visibleMarks = marks.filter((m) => m.symbol === symbol && m.tf === tf);
   const selectedMark = marks.find((m) => m.id === selectedId) ?? null;
 
   function handleCreateMark(input: NewMarkInput): void {
     const mark = createMark(input, Date.now());
-    setMarks((prev) => [...prev, mark]);
-    setSelectedId(mark.id);
+    commit((prev) => [...prev, mark], () => mark.id);
     setTool('Select'); // tras crear, volver a selección (evita marcas accidentales)
     createMarkRemote(mark).catch((e) => console.warn('POST marca falló (se mantiene local):', e));
   }
   function handleUpdateNote(id: string, note: string): void {
-    setMarks((prev) =>
-      prev.map((m) => (m.id === id ? { ...m, note, updatedAt: Date.now() } : m)),
-    );
+    // Nota en vivo: sin historial (el textarea ya tiene undo nativo de texto). Persiste con debounce.
+    replace((prev) => prev.map((m) => (m.id === id ? { ...m, note, updatedAt: Date.now() } : m)));
     schedulePatch(id);
   }
   function handleUpdateMark(id: string, patch: Partial<ManualMark>): void {
-    setMarks((prev) =>
-      prev.map((m) => (m.id === id ? { ...m, ...patch, updatedAt: Date.now() } : m)),
-    );
+    const cur = marksRef.current.find((m) => m.id === id);
+    if (cur && !marksDiffer(cur, { ...cur, ...patch })) return; // drag sin cambio real: nada
+    commit((prev) => prev.map((m) => (m.id === id ? { ...m, ...patch, updatedAt: Date.now() } : m)));
     schedulePatch(id);
   }
   function handleDeleteMark(id: string): void {
     cancelPatch(id);
-    setMarks((prev) => prev.filter((m) => m.id !== id));
-    setSelectedId((cur) => (cur === id ? null : cur));
+    commit(
+      (prev) => prev.filter((m) => m.id !== id),
+      (sel) => (sel === id ? null : sel),
+    );
     deleteMarkRemote(id).catch((e) => console.warn('DELETE marca falló:', e));
   }
+
+  // Undo/redo: transición de historial + reconciliación de DB. Cancela PATCH pendientes para
+  // que el debounce no pise la reconciliación.
+  const doUndo = useCallback(() => {
+    cancelAllPatches();
+    const t = undo();
+    if (t) reconcile(t.before, t.after);
+  }, [undo, reconcile, cancelAllPatches]);
+  const doRedo = useCallback(() => {
+    cancelAllPatches();
+    const t = redo();
+    if (t) reconcile(t.before, t.after);
+  }, [redo, reconcile, cancelAllPatches]);
+
+  // Ctrl+Z deshace, Ctrl+Shift+Z / Ctrl+Y rehace. NO interceptar si el foco está en un
+  // input/textarea (la nota usa el undo nativo del texto).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const tag = (document.activeElement?.tagName ?? '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea') return;
+      const k = e.key.toLowerCase();
+      if (k === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        doUndo();
+      } else if (k === 'y' || (k === 'z' && e.shiftKey)) {
+        e.preventDefault();
+        doRedo();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [doUndo, doRedo]);
 
   // ─── Live ───
   const [liveBar, setLiveBar] = useState<Candle | null>(null);
@@ -145,13 +196,12 @@ export function TradingCockpit() {
     liveRef.current?.setStream(symbol, tf);
   }, [symbol, tf]);
 
-  // Carga fresca al cambiar símbolo/timeframe.
+  // Carga fresca de velas al cambiar símbolo/timeframe.
   useEffect(() => {
     let cancelled = false;
     setStatus('loading');
     setError(null);
     setHover(null);
-    setSelectedId(null); // la marca seleccionada puede no pertenecer a este símbolo/tf
     fetchCandles(symbol, tf, PAGE)
       .then((res) => {
         if (cancelled) return;
@@ -169,25 +219,23 @@ export function TradingCockpit() {
     };
   }, [symbol, tf]);
 
-  // Cargar marcas persistidas al cambiar símbolo/tf. Reemplaza solo la porción (symbol,tf);
-  // si falla (DB off / backend caído) se conserva el estado local (modo sin persistencia).
+  // Cargar marcas persistidas al cambiar símbolo/tf. Limpia la vista al instante (reset) y
+  // repuebla con lo de DB; reset limpia el historial (no se deshace a través de un cambio de tf).
+  // Si falla (DB off / backend caído) queda vista limpia, sin romper el cockpit.
   useEffect(() => {
     let cancelled = false;
+    reset([], null);
     fetchMarks(symbol, tf)
       .then((res) => {
-        if (cancelled) return;
-        setMarks((prev) => [
-          ...prev.filter((m) => !(m.symbol === symbol && m.tf === tf)),
-          ...res.marks,
-        ]);
+        if (!cancelled) reset(res.marks, null);
       })
       .catch(() => {
-        /* sin persistencia: el cockpit sigue funcionando con marcas locales */
+        /* sin persistencia: vista sin marcas */
       });
     return () => {
       cancelled = true;
     };
-  }, [symbol, tf]);
+  }, [symbol, tf, reset]);
 
   // Limpia los timers de PATCH pendientes al desmontar.
   useEffect(() => {
@@ -251,7 +299,7 @@ export function TradingCockpit() {
           tf={tf}
           onHover={setHover}
           onCreateMark={handleCreateMark}
-          onSelectMark={setSelectedId}
+          onSelectMark={select}
           onUpdateMark={handleUpdateMark}
           onDeleteMark={handleDeleteMark}
         />

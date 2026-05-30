@@ -58,3 +58,15 @@ export function createMark(input: NewMarkInput, now: number): ManualMark {
   }
   return { ...base, price: input.price };
 }
+
+// Campos persistibles que pueden cambiar. Base para detectar cambios reales (evita historial
+// y PATCH en un "drag" sin movimiento, y dirige la reconciliación de undo/redo).
+const PERSIST_FIELDS = [
+  'timeStart', 'timeEnd', 'priceLow', 'priceHigh', 'price',
+  'side', 'entry', 'stopLoss', 'takeProfit', 'note',
+] as const;
+
+/** ¿Difieren a y b en algún campo persistible? Ignora id/sourceLayer/timestamps. */
+export function marksDiffer(a: ManualMark, b: ManualMark): boolean {
+  return PERSIST_FIELDS.some((f) => a[f] !== b[f]);
+}

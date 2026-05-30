@@ -562,6 +562,12 @@ export function CandleChart(props: Props) {
       s.onCreateMark({ kind: 'TradePlan', symbol: s.symbol, tf: s.tf, side, entry, stopLoss: sl, takeProfit: tp, timeStart: tStart, timeEnd: tEnd });
       return;
     }
+    // Click sin arrastre real sobre una marca: fue selección (ya hecha en pointerdown), no
+    // edición. Evita un PATCH redundante y una entrada de undo espuria por round-trip de floats.
+    if ('sx' in d && Math.hypot(x - d.sx, y - d.sy) < MIN_DRAW) {
+      recompute();
+      return;
+    }
     const ng = applyDragGeom(d, x, y);
     if (ng && ng.type === 'zone') {
       s.onUpdateMark(d.id, {
