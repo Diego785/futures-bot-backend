@@ -67,6 +67,22 @@ export class ManualMarkEntity {
   @Column({ type: 'text', default: '' })
   note: string;
 
+  // ─── Revisión / estudio (Slice 3C) ───
+  @Column({ type: 'varchar', length: 12, default: 'DRAFT' })
+  status: string; // DRAFT | REVIEWED | VALID | INVALID | DOUBTFUL
+
+  @Column({ type: 'text', nullable: true })
+  context: string | null; // contexto de mercado
+
+  @Column({ type: 'text', nullable: true })
+  reason: string | null; // razón de la marca
+
+  @Column({ type: 'text', nullable: true })
+  doubt: string | null; // duda / qué revisar
+
+  @Column({ type: 'text', nullable: true })
+  outcome: string | null; // resultado / observación
+
   @Column({ type: 'bigint', transformer: bigintToNumber })
   createdAt: number; // epoch ms UTC
 

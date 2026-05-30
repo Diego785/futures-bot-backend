@@ -19,6 +19,11 @@ export interface ManualMarkDto {
   takeProfit?: number;
   rr?: number;
   note: string;
+  status: string;
+  context?: string;
+  reason?: string;
+  doubt?: string;
+  outcome?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -32,6 +37,7 @@ export function toManualMarkDto(e: ManualMarkEntity): ManualMarkDto {
     symbol: e.symbol,
     tf: e.tf,
     note: e.note ?? '',
+    status: e.status ?? 'DRAFT',
     createdAt: e.createdAt,
     updatedAt: e.updatedAt,
   };
@@ -45,5 +51,9 @@ export function toManualMarkDto(e: ManualMarkEntity): ManualMarkDto {
   if (e.stopLoss != null) dto.stopLoss = e.stopLoss;
   if (e.takeProfit != null) dto.takeProfit = e.takeProfit;
   if (e.rr != null) dto.rr = e.rr;
+  if (e.context != null) dto.context = e.context;
+  if (e.reason != null) dto.reason = e.reason;
+  if (e.doubt != null) dto.doubt = e.doubt;
+  if (e.outcome != null) dto.outcome = e.outcome;
   return dto;
 }

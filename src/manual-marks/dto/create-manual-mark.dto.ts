@@ -14,6 +14,7 @@ import { MANUAL_MARK_TIMEFRAMES, type ManualMarkTimeframe } from './get-manual-m
 export const MANUAL_MARK_KINDS = ['OB', 'FVG', 'Liquidity', 'TradePlan'] as const;
 export type ManualMarkKindDto = (typeof MANUAL_MARK_KINDS)[number];
 export const MANUAL_MARK_SIDES = ['LONG', 'SHORT'] as const;
+export const MANUAL_MARK_STATUSES = ['DRAFT', 'REVIEWED', 'VALID', 'INVALID', 'DOUBTFUL'] as const;
 
 /**
  * POST /api/manual-marks. forbidNonWhitelisted está activo: el cliente envía SOLO estos
@@ -65,4 +66,20 @@ export class CreateManualMarkDto {
 
   @IsOptional() @IsString() @MaxLength(2000)
   note?: string;
+
+  // ─── Revisión / estudio (Slice 3C) ───
+  @IsOptional() @IsIn(MANUAL_MARK_STATUSES)
+  status?: (typeof MANUAL_MARK_STATUSES)[number];
+
+  @IsOptional() @IsString() @MaxLength(2000)
+  context?: string;
+
+  @IsOptional() @IsString() @MaxLength(2000)
+  reason?: string;
+
+  @IsOptional() @IsString() @MaxLength(2000)
+  doubt?: string;
+
+  @IsOptional() @IsString() @MaxLength(2000)
+  outcome?: string;
 }

@@ -53,6 +53,11 @@ export class ManualMarksController {
     e.takeProfit = dto.takeProfit ?? null;
     e.rr = computeRr(dto.kind, e.entry, e.stopLoss, e.takeProfit);
     e.note = dto.note ?? '';
+    e.status = dto.status ?? 'DRAFT';
+    e.context = dto.context ?? null;
+    e.reason = dto.reason ?? null;
+    e.doubt = dto.doubt ?? null;
+    e.outcome = dto.outcome ?? null;
     e.createdAt = now;
     e.updatedAt = now;
     return toManualMarkDto(await this.repo.save(e));
@@ -72,6 +77,11 @@ export class ManualMarksController {
     if (dto.stopLoss !== undefined) e.stopLoss = dto.stopLoss;
     if (dto.takeProfit !== undefined) e.takeProfit = dto.takeProfit;
     if (dto.note !== undefined) e.note = dto.note;
+    if (dto.status !== undefined) e.status = dto.status;
+    if (dto.context !== undefined) e.context = dto.context;
+    if (dto.reason !== undefined) e.reason = dto.reason;
+    if (dto.doubt !== undefined) e.doubt = dto.doubt;
+    if (dto.outcome !== undefined) e.outcome = dto.outcome;
     e.rr = computeRr(e.kind, e.entry, e.stopLoss, e.takeProfit);
     e.updatedAt = Date.now();
     return toManualMarkDto(await this.repo.save(e));

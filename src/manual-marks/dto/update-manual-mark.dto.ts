@@ -1,6 +1,6 @@
 import { Type } from 'class-transformer';
 import { IsIn, IsInt, IsNumber, IsOptional, IsString, MaxLength, Min } from 'class-validator';
-import { MANUAL_MARK_SIDES } from './create-manual-mark.dto';
+import { MANUAL_MARK_SIDES, MANUAL_MARK_STATUSES } from './create-manual-mark.dto';
 
 /**
  * PATCH /api/manual-marks/:id. Solo geometría/contenido editable (mover/redimensionar,
@@ -37,4 +37,20 @@ export class UpdateManualMarkDto {
 
   @IsOptional() @IsString() @MaxLength(2000)
   note?: string;
+
+  // ─── Revisión / estudio (Slice 3C) ───
+  @IsOptional() @IsIn(MANUAL_MARK_STATUSES)
+  status?: (typeof MANUAL_MARK_STATUSES)[number];
+
+  @IsOptional() @IsString() @MaxLength(2000)
+  context?: string;
+
+  @IsOptional() @IsString() @MaxLength(2000)
+  reason?: string;
+
+  @IsOptional() @IsString() @MaxLength(2000)
+  doubt?: string;
+
+  @IsOptional() @IsString() @MaxLength(2000)
+  outcome?: string;
 }
