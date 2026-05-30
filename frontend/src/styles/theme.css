@@ -40,10 +40,22 @@ body {
 .chart-wrap { position: absolute; inset: 0; overflow: hidden; }
 .chart-host { position: absolute; inset: 0; }
 
-/* Marcas manuales */
-.draw-overlay { position: absolute; inset: 0; z-index: 6; }
-.zone-mark { position: absolute; border: 1px solid; box-sizing: border-box; z-index: 4; border-radius: 2px; }
-.zone-mark.selected { box-shadow: 0 0 0 1px #fff inset; }
+/* Marcas manuales: la capa es solo visual; el hit-test se hace en JS sobre la gráfica. */
+.marks-layer { position: absolute; inset: 0; z-index: 4; pointer-events: none; }
+.zone-mark { position: absolute; border: 1px solid; box-sizing: border-box; border-radius: 2px; }
+.zone-mark.selected { box-shadow: 0 0 0 1px rgba(255,255,255,0.5) inset; }
+.fvg-mid { position: absolute; left: 0; right: 0; top: 50%; border-top: 1px dashed; opacity: 0.7; }
+.zone-handle {
+  position: absolute; width: 8px; height: 8px; transform: translate(-50%, -50%);
+  background: #0e0f14; border: 1px solid; border-radius: 2px;
+}
+.level-line { position: absolute; left: 0; right: 0; height: 0; border-top: 1px dashed; }
+.level-line.selected { border-top-width: 2px; }
+.mark-label {
+  position: absolute; left: 3px; top: 2px; font-size: 10px; font-weight: 600;
+  padding: 0 3px; border-radius: 2px; background: rgba(14,15,20,0.7);
+}
+.mark-label.level { left: auto; right: 56px; top: -7px; }
 .draw-draft {
   position: absolute; z-index: 7; pointer-events: none;
   border: 1px dashed #fff; background: rgba(255, 255, 255, 0.08);

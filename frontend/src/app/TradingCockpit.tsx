@@ -56,6 +56,11 @@ export function TradingCockpit() {
       prev.map((m) => (m.id === id ? { ...m, note, updatedAt: Date.now() } : m)),
     );
   }
+  function handleUpdateMark(id: string, patch: Partial<ManualMark>): void {
+    setMarks((prev) =>
+      prev.map((m) => (m.id === id ? { ...m, ...patch, updatedAt: Date.now() } : m)),
+    );
+  }
   function handleDeleteMark(id: string): void {
     setMarks((prev) => prev.filter((m) => m.id !== id));
     setSelectedId((cur) => (cur === id ? null : cur));
@@ -179,6 +184,8 @@ export function TradingCockpit() {
           onHover={setHover}
           onCreateMark={handleCreateMark}
           onSelectMark={setSelectedId}
+          onUpdateMark={handleUpdateMark}
+          onDeleteMark={handleDeleteMark}
         />
       </div>
     );
