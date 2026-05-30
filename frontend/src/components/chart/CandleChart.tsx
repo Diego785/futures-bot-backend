@@ -113,6 +113,11 @@ export function CandleChart(props: Props) {
   const dragRef = useRef<Drag | null>(null);
   const emptyDown = useRef<{ x: number; y: number } | null>(null);
   const geomsRef = useRef<Geom[]>([]);
+  // Sincronización de overlays con el transform del chart (Slice 3A.1-c).
+  const overlayRafRef = useRef<number | null>(null); // recompute coalescente (1/frame)
+  const gestureRafRef = useRef<number | null>(null); // loop RAF mientras dura un gesto
+  const wheelStopRef = useRef<number | null>(null); // debounce para terminar el gesto de wheel
+  const lastSigRef = useRef<string>(''); // firma de la última geometría (diff-guard)
 
   const [geoms, setGeoms] = useState<Geom[]>([]);
   geomsRef.current = geoms;
@@ -181,9 +186,54 @@ export function CandleChart(props: Props) {
     }
     return out;
   }
-  function recompute(): void {
-    if (dragRef.current) return;
-    setGeoms(computeGeoms());
+  // Firma en píxeles enteros: si no cambia, la geometría visible es idéntica.
+  function geomSignature(gs: Geom[]): string {
+    let s = '';
+    for (const g of gs) {
+      if (g.type === 'zone') s += `z${g.id}:${Math.round(g.left)},${Math.round(g.top)},${Math.round(g.right)},${Math.round(g.bottom)};`;
+      else if (g.type === 'level') s += `l${g.id}:${Math.round(g.y)};`;
+      else s += `p${g.id}:${Math.round(g.left)},${Math.round(g.right)},${Math.round(g.yEntry)},${Math.round(g.ySL)},${Math.round(g.yTP)};`;
+    }
+    return s;
+  }
+
+  // Recalcula la geometría YA. Diff-guard: si en píxeles enteros nada cambió no hace
+  // setState — así el loop de gesto puede correr a 60 fps sin meter renders/lag.
+  function recomputeNow(): void {
+    if (dragRef.current) return; // durante un drag propio, onPointerMove fija la geometría
+    const next = computeGeoms();
+    const sig = geomSignature(next);
+    if (sig === lastSigRef.current) return;
+    lastSigRef.current = sig;
+    setGeoms(next);
+  }
+  // Coalescente: a lo sumo un recompute por frame (para eventos sueltos).
+  function scheduleOverlayRecompute(): void {
+    if (overlayRafRef.current != null) return;
+    overlayRafRef.current = requestAnimationFrame(() => {
+      overlayRafRef.current = null;
+      recomputeNow();
+    });
+  }
+  function recompute(): void { scheduleOverlayRecompute(); }
+
+  // Loop RAF temporal para gestos del chart que NO emiten evento — sobre todo el
+  // arrastre VERTICAL de la escala de precio (cambia precio→Y sin disparar
+  // subscribeVisibleLogicalRangeChange; ver issue lightweight-charts #1442).
+  function gestureTick(): void {
+    recomputeNow();
+    gestureRafRef.current = requestAnimationFrame(gestureTick);
+  }
+  function startGestureLoop(): void {
+    if (gestureRafRef.current != null) return;
+    gestureRafRef.current = requestAnimationFrame(gestureTick);
+  }
+  function endGestureLoop(): void {
+    if (gestureRafRef.current == null) return;
+    cancelAnimationFrame(gestureRafRef.current);
+    gestureRafRef.current = null;
+    lastSigRef.current = ''; // fuerza un último recompute limpio al soltar
+    scheduleOverlayRecompute();
   }
 
   function hitTest(x: number, y: number): Hit | null {
@@ -255,6 +305,23 @@ export function CandleChart(props: Props) {
     ro.observe(el);
     chart.timeScale().subscribeVisibleLogicalRangeChange(() => recompute());
 
+    // ── Sincronización de overlays durante gestos del chart (Slice 3A.1-c) ──
+    // pointerdown en CAPTURA: arranca el loop pase lo que pase (incl. arrastre del eje
+    // de precio), aunque lightweight-charts detenga la propagación del evento.
+    const onAreaPointerDown = () => startGestureLoop();
+    el.addEventListener('pointerdown', onAreaPointerDown, true);
+    // wheel: zoom de tiempo o de precio → loop con debounce de fin.
+    const onAreaWheel = () => {
+      startGestureLoop();
+      if (wheelStopRef.current != null) clearTimeout(wheelStopRef.current);
+      wheelStopRef.current = window.setTimeout(() => { wheelStopRef.current = null; endGestureLoop(); }, 180);
+    };
+    el.addEventListener('wheel', onAreaWheel, { capture: true, passive: true });
+    // El gesto termina con el pointer GLOBAL (el chart puede capturar el puntero).
+    const onWinPointerUp = () => endGestureLoop();
+    window.addEventListener('pointerup', onWinPointerUp);
+    window.addEventListener('pointercancel', onWinPointerUp);
+
     const onKey = (e: KeyboardEvent) => {
       const s = stateRef.current;
       if (e.key === ' ') {
@@ -276,8 +343,15 @@ export function CandleChart(props: Props) {
 
     return () => {
       ro.disconnect();
+      el.removeEventListener('pointerdown', onAreaPointerDown, true);
+      el.removeEventListener('wheel', onAreaWheel, true);
+      window.removeEventListener('pointerup', onWinPointerUp);
+      window.removeEventListener('pointercancel', onWinPointerUp);
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('keyup', onKeyUp);
+      if (overlayRafRef.current != null) cancelAnimationFrame(overlayRafRef.current);
+      if (gestureRafRef.current != null) cancelAnimationFrame(gestureRafRef.current);
+      if (wheelStopRef.current != null) clearTimeout(wheelStopRef.current);
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
@@ -325,7 +399,7 @@ export function CandleChart(props: Props) {
   useEffect(() => {
     recompute();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [marks, layerVisible, selectedId]);
+  }, [marks, layerVisible, selectedId, tool]);
 
   function setChartInteractive(on: boolean): void {
     chartRef.current?.applyOptions({ handleScroll: on, handleScale: on });
