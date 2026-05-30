@@ -35,6 +35,7 @@ export function createMark(input: NewMarkInput, now: number): ManualMark {
     symbol: input.symbol,
     tf: input.tf,
     note: '',
+    status: 'DRAFT',
     createdAt: now,
     updatedAt: now,
   };
@@ -64,6 +65,7 @@ export function createMark(input: NewMarkInput, now: number): ManualMark {
 const PERSIST_FIELDS = [
   'timeStart', 'timeEnd', 'priceLow', 'priceHigh', 'price',
   'side', 'entry', 'stopLoss', 'takeProfit', 'note',
+  'status', 'context', 'reason', 'doubt', 'outcome',
 ] as const;
 
 /** ¿Difieren a y b en algún campo persistible? Ignora id/sourceLayer/timestamps. */

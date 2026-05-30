@@ -103,9 +103,10 @@ export function TradingCockpit() {
     setTool('Select'); // tras crear, volver a selección (evita marcas accidentales)
     createMarkRemote(mark).catch((e) => console.warn('POST marca falló (se mantiene local):', e));
   }
-  function handleUpdateNote(id: string, note: string): void {
-    // Nota en vivo: sin historial (el textarea ya tiene undo nativo de texto). Persiste con debounce.
-    replace((prev) => prev.map((m) => (m.id === id ? { ...m, note, updatedAt: Date.now() } : m)));
+  function handleUpdateMeta(id: string, patch: Partial<ManualMark>): void {
+    // Metadatos de revisión (estado/notas): sin historial (el textarea ya tiene undo nativo de
+    // texto; el estado es un toggle de estudio). Persiste con debounce.
+    replace((prev) => prev.map((m) => (m.id === id ? { ...m, ...patch, updatedAt: Date.now() } : m)));
     schedulePatch(id);
   }
   function handleUpdateMark(id: string, patch: Partial<ManualMark>): void {
@@ -352,7 +353,7 @@ export function TradingCockpit() {
           loaded={candles.length}
           hover={hover}
           selectedMark={selectedMark}
-          onUpdateNote={handleUpdateNote}
+          onUpdateMeta={handleUpdateMeta}
           onDeleteMark={handleDeleteMark}
         />
       }

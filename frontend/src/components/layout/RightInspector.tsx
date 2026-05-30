@@ -4,6 +4,9 @@ import {
   isPlanKind,
   computeRR,
   MARK_COLORS,
+  REVIEW_STATUSES,
+  STATUS_LABELS,
+  STATUS_COLORS,
   type ManualMark,
 } from '../../features/manual-marks/manualMarks.types';
 import { formatPrice } from '../../lib/price-format';
@@ -23,8 +26,22 @@ interface Props {
   loaded: number;
   hover: Candle | null;
   selectedMark: ManualMark | null;
-  onUpdateNote: (id: string, note: string) => void;
+  onUpdateMeta: (id: string, patch: Partial<ManualMark>) => void;
   onDeleteMark: (id: string) => void;
+}
+
+function NoteField(props: { label: string; value: string; placeholder: string; onChange: (v: string) => void }) {
+  return (
+    <label className="note-label">
+      {props.label}
+      <textarea
+        className="note-input"
+        value={props.value}
+        placeholder={props.placeholder}
+        onChange={(e) => props.onChange(e.target.value)}
+      />
+    </label>
+  );
 }
 
 export function RightInspector({
@@ -33,7 +50,7 @@ export function RightInspector({
   loaded,
   hover,
   selectedMark,
-  onUpdateNote,
+  onUpdateMeta,
   onDeleteMark,
 }: Props) {
   return (
@@ -52,10 +69,31 @@ export function RightInspector({
               {isPlanKind(selectedMark.kind) ? `${selectedMark.side ?? ''} Position` : selectedMark.kind}
             </b>
           </div>
+
+          {/* Estado de revisión */}
+          <div className="status-row">
+            {REVIEW_STATUSES.map((s) => {
+              const active = (selectedMark.status ?? 'DRAFT') === s;
+              return (
+                <button
+                  key={s}
+                  type="button"
+                  className={`status-btn${active ? ' active' : ''}`}
+                  style={active ? { borderColor: STATUS_COLORS[s], color: STATUS_COLORS[s] } : undefined}
+                  onClick={() => onUpdateMeta(selectedMark.id, { status: s })}
+                >
+                  {STATUS_LABELS[s]}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Datos técnicos */}
           {isZoneKind(selectedMark.kind) ? (
             <>
               <div className="kv"><span>Precio alto</span><b>{formatPrice(selectedMark.priceHigh ?? 0)}</b></div>
               <div className="kv"><span>Precio bajo</span><b>{formatPrice(selectedMark.priceLow ?? 0)}</b></div>
+              <div className="kv"><span>Alto de zona</span><b>{formatPrice(Math.abs((selectedMark.priceHigh ?? 0) - (selectedMark.priceLow ?? 0)))}</b></div>
               <div className="kv"><span>Desde</span><b>{selectedMark.timeStart ? formatUtc(selectedMark.timeStart) : '—'}</b></div>
               <div className="kv"><span>Hasta</span><b>{selectedMark.timeEnd ? formatUtc(selectedMark.timeEnd) : '—'}</b></div>
             </>
@@ -74,6 +112,8 @@ export function RightInspector({
                   })()}
                 </b>
               </div>
+              <div className="kv"><span>Dist. Entry→SL</span><b>{formatPrice(Math.abs((selectedMark.entry ?? 0) - (selectedMark.stopLoss ?? 0)))}</b></div>
+              <div className="kv"><span>Dist. Entry→TP</span><b>{formatPrice(Math.abs((selectedMark.takeProfit ?? 0) - (selectedMark.entry ?? 0)))}</b></div>
               {!planSideValid(selectedMark) && (
                 <p className="warn">⚠ SL/TP del lado incorrecto para {selectedMark.side}. En {selectedMark.side === 'LONG' ? 'LONG el TP va arriba y el SL abajo' : 'SHORT el TP va abajo y el SL arriba'}.</p>
               )}
@@ -81,15 +121,13 @@ export function RightInspector({
           ) : (
             <div className="kv"><span>Precio</span><b>{formatPrice(selectedMark.price ?? 0)}</b></div>
           )}
-          <label className="note-label">
-            Nota
-            <textarea
-              className="note-input"
-              value={selectedMark.note ?? ''}
-              placeholder="¿Por qué marcaste esto?"
-              onChange={(e) => onUpdateNote(selectedMark.id, e.target.value)}
-            />
-          </label>
+
+          {/* Notas estructuradas de revisión */}
+          <NoteField label="Contexto" value={selectedMark.context ?? ''} placeholder="Contexto de mercado (HTF, sesión…)" onChange={(v) => onUpdateMeta(selectedMark.id, { context: v })} />
+          <NoteField label="Razón" value={selectedMark.reason ?? ''} placeholder="¿Por qué marcaste esto?" onChange={(v) => onUpdateMeta(selectedMark.id, { reason: v })} />
+          <NoteField label="Duda" value={selectedMark.doubt ?? ''} placeholder="¿Qué te genera dudas / qué revisar?" onChange={(v) => onUpdateMeta(selectedMark.id, { doubt: v })} />
+          <NoteField label="Resultado / observación" value={selectedMark.outcome ?? ''} placeholder="¿Qué pasó después? ¿Qué aprendiste?" onChange={(v) => onUpdateMeta(selectedMark.id, { outcome: v })} />
+
           <button className="btn-danger" type="button" onClick={() => onDeleteMark(selectedMark.id)}>
             Borrar marca
           </button>
@@ -106,9 +144,6 @@ export function RightInspector({
       ) : (
         <p className="hint">Selecciona una marca o pasa el cursor sobre una vela.</p>
       )}
-
-      <div className="divider" />
-      <p className="hint">Detalle de zona/señal del bot: próximos slices.</p>
     </div>
   );
 }

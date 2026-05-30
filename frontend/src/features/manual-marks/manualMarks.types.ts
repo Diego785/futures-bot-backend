@@ -10,6 +10,9 @@ export type ManualMarkKind = 'OB' | 'FVG' | 'Liquidity' | 'TradePlan';
 // Herramienta activa. Long/Short crean un TradePlan con su side.
 export type ManualTool = 'Select' | 'OB' | 'FVG' | 'Liquidity' | 'Long' | 'Short';
 
+// Estado de revisión manual (Slice 3C). El usuario clasifica su propio análisis.
+export type ReviewStatus = 'DRAFT' | 'REVIEWED' | 'VALID' | 'INVALID' | 'DOUBTFUL';
+
 export interface ManualMark {
   id: string;
   sourceLayer: 'MyManualMarks';
@@ -29,6 +32,12 @@ export interface ManualMark {
   stopLoss?: number;
   takeProfit?: number;
   note?: string;
+  // Revisión / estudio (Slice 3C).
+  status?: ReviewStatus;
+  context?: string;
+  reason?: string;
+  doubt?: string;
+  outcome?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -57,3 +66,19 @@ export function computeRR(entry: number, stopLoss: number, takeProfit: number): 
   if (risk === 0) return null;
   return Math.abs(takeProfit - entry) / risk;
 }
+
+export const REVIEW_STATUSES: ReviewStatus[] = ['DRAFT', 'REVIEWED', 'VALID', 'INVALID', 'DOUBTFUL'];
+export const STATUS_LABELS: Record<ReviewStatus, string> = {
+  DRAFT: 'Borrador',
+  REVIEWED: 'Revisado',
+  VALID: 'Válido',
+  INVALID: 'Inválido',
+  DOUBTFUL: 'Dudoso',
+};
+export const STATUS_COLORS: Record<ReviewStatus, string> = {
+  DRAFT: '#94a3b8',
+  REVIEWED: '#60a5fa',
+  VALID: '#22c55e',
+  INVALID: '#ef5350',
+  DOUBTFUL: '#eab308',
+};

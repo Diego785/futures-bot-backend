@@ -116,6 +116,16 @@ body {
 .btn-danger:hover { background: rgba(239, 83, 80, 0.12); }
 .warn { color: #fbbf24; font-size: 11px; margin: 6px 0 0; line-height: 1.35; }
 
+/* Estado de revisión (Slice 3C) */
+.status-row { display: flex; flex-wrap: wrap; gap: 3px; margin: 8px 0; }
+.status-btn {
+  flex: 1 1 auto; background: transparent; color: var(--muted);
+  border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px;
+  cursor: pointer; font-size: 10px; line-height: 1.2; white-space: nowrap;
+}
+.status-btn:hover { color: var(--text); }
+.status-btn.active { background: rgba(255, 255, 255, 0.05); font-weight: 700; }
+
 .load-older {
   position: absolute; top: 8px; left: 8px; z-index: 5;
   background: var(--panel-2); color: var(--text); border: 1px solid var(--border);

@@ -27,6 +27,11 @@ function createPayload(m: ManualMark) {
     stopLoss: m.stopLoss,
     takeProfit: m.takeProfit,
     note: m.note ?? '',
+    status: m.status,
+    context: m.context,
+    reason: m.reason,
+    doubt: m.doubt,
+    outcome: m.outcome,
   };
 }
 
@@ -34,6 +39,7 @@ function createPayload(m: ManualMark) {
 const PATCH_FIELDS = [
   'timeStart', 'timeEnd', 'priceLow', 'priceHigh', 'price',
   'side', 'entry', 'stopLoss', 'takeProfit', 'note',
+  'status', 'context', 'reason', 'doubt', 'outcome',
 ] as const;
 
 function patchPayload(m: ManualMark): Record<string, unknown> {
