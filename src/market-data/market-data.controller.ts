@@ -20,19 +20,22 @@ export class MarketDataController {
       from: q.from,
       to: q.to,
       cursor: q.cursor,
+      before: q.before,
       limit: q.limit,
     });
     const candles = rows.map(toCandleDto);
-    // Si la página llegó llena, hay potencial siguiente página → cursor = último openTime.
-    const nextCursor =
-      candles.length === q.limit && candles.length > 0
-        ? candles[candles.length - 1].openTime
-        : null;
+    // Para "cargar más historial": si la página llegó llena, la vela más antigua marca
+    // desde dónde seguir hacia atrás (el front pasa before = oldestOpenTime).
+    const full = candles.length === q.limit && candles.length > 0;
+    const oldestOpenTime = candles.length > 0 ? candles[0].openTime : null;
+    const newestOpenTime = candles.length > 0 ? candles[candles.length - 1].openTime : null;
     return {
       symbol: q.symbol,
       tf: q.tf,
       count: candles.length,
-      nextCursor,
+      oldestOpenTime,
+      newestOpenTime,
+      hasMoreOlder: full,
       candles,
     };
   }

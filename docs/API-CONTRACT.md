@@ -115,7 +115,12 @@ type JournalEntry = {             // broker (read-only) + anotaciones del usuari
 ```
 
 ## REST (borrador)
-- `GET  /candles?symbol&tf&from&to[&cursor]` → `Candle[]` (paginado por cursor sobre `openTime`)
+- `GET  /candles?symbol&tf&limit[&from&to&cursor&before]` →
+  `{ symbol, tf, count, oldestOpenTime, newestOpenTime, hasMoreOlder, candles: Candle[] }`
+  - sin rango → las `limit` velas **más recientes** (lo que la gráfica abre)
+  - `before=<openTime>` → las `limit` velas más recientes **anteriores** (cargar más historial)
+  - `from`/`to`/`cursor` → rango explícito ascendente
+  - `candles` siempre en orden `openTime` ascendente; proyección `o/h/l/c/v` (paginado por cursor sobre `openTime`)
 - `GET  /zones?symbol&tf&sourceLayer` → `Zone[]`
 - `GET  /setups?symbol&state` → `Setup[]`
 - `GET  /signals?symbol&userState` → `SignalCandidate[]`

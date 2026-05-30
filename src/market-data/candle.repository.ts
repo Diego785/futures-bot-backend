@@ -41,8 +41,15 @@ export class CandleRepository {
   }
 
   /**
-   * Lectura paginada de velas por (symbol, tf), ordenadas por openTime ascendente.
-   * Filtros opcionales: rango [from, to] y cursor (openTime exclusivo) para paginar.
+   * Lectura paginada de velas por (symbol, tf), siempre devueltas en orden openTime ascendente.
+   *
+   * Modos:
+   *  - Rango explícito (from/to/cursor): ascendente desde el inicio del rango. Para consultas
+   *    puntuales y paginación hacia adelante.
+   *  - Por defecto (sin rango): las `limit` velas MÁS RECIENTES (lo que una gráfica quiere ver
+   *    al abrir).
+   *  - `before`: las `limit` velas más recientes ANTERIORES a `before` (cargar más historial
+   *    hacia atrás). El front pasa before = openTime de su vela más antigua cargada.
    */
   async findCandles(params: {
     symbol: string;
@@ -50,16 +57,26 @@ export class CandleRepository {
     from?: number;
     to?: number;
     cursor?: number;
+    before?: number;
     limit: number;
   }): Promise<CandleEntity[]> {
-    const { symbol, tf, from, to, cursor, limit } = params;
+    const { symbol, tf, from, to, cursor, before, limit } = params;
     const qb = this.repo
       .createQueryBuilder('c')
       .where('c.symbol = :symbol', { symbol })
       .andWhere('c.tf = :tf', { tf });
-    if (from !== undefined) qb.andWhere('c.openTime >= :from', { from });
-    if (to !== undefined) qb.andWhere('c.openTime <= :to', { to });
-    if (cursor !== undefined) qb.andWhere('c.openTime > :cursor', { cursor });
-    return qb.orderBy('c.openTime', 'ASC').limit(limit).getMany();
+
+    // Rango explícito → ascendente.
+    if (from !== undefined || to !== undefined || cursor !== undefined) {
+      if (from !== undefined) qb.andWhere('c.openTime >= :from', { from });
+      if (to !== undefined) qb.andWhere('c.openTime <= :to', { to });
+      if (cursor !== undefined) qb.andWhere('c.openTime > :cursor', { cursor });
+      return qb.orderBy('c.openTime', 'ASC').limit(limit).getMany();
+    }
+
+    // Más recientes (o más recientes antes de `before`): DESC + limit, reordenadas a ASC.
+    if (before !== undefined) qb.andWhere('c.openTime < :before', { before });
+    const rows = await qb.orderBy('c.openTime', 'DESC').limit(limit).getMany();
+    return rows.reverse();
   }
 }

@@ -39,10 +39,18 @@ export class GetCandlesQueryDto {
   @Min(0)
   to?: number;
 
-  // Cursor de paginación: openTime de la última vela de la página previa (exclusivo).
+  // Cursor de paginación hacia adelante (rango explícito): openTime exclusivo.
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(0)
   cursor?: number;
+
+  // Paginación hacia ATRÁS (cargar más historial): devuelve las `limit` velas más
+  // recientes con openTime < before. epoch ms UTC, exclusivo.
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  before?: number;
 }
