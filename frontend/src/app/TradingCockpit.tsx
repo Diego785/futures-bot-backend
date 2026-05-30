@@ -11,6 +11,12 @@ import { fetchCandles } from '../features/candles/candles.api';
 import { TIMEFRAMES, type Candle, type Timeframe } from '../features/candles/candles.types';
 import type { ManualMark, ManualTool } from '../features/manual-marks/manualMarks.types';
 import { createMark, type NewMarkInput } from '../features/manual-marks/marks.util';
+import {
+  fetchMarks,
+  createMarkRemote,
+  patchMarkRemote,
+  deleteMarkRemote,
+} from '../features/manual-marks/marks.api';
 
 type Status = 'loading' | 'error' | 'ready';
 const PAGE = 500;
@@ -42,6 +48,34 @@ export function TradingCockpit() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [marksVisible, setMarksVisible] = useState(true);
 
+  // ─── Persistencia de marcas (Slice 3B) ───
+  // El estado local es la verdad para render; la API es efecto colateral. PATCH con debounce
+  // por id: coalesce ediciones (nota/arrastre) y da tiempo a que el POST de creación aterrice
+  // antes del primer PATCH. Si la API falla (DB off / backend caído) se mantiene local.
+  const marksRef = useRef(marks);
+  marksRef.current = marks;
+  const patchTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  function schedulePatch(id: string): void {
+    const timers = patchTimers.current;
+    const existing = timers.get(id);
+    if (existing) clearTimeout(existing);
+    timers.set(
+      id,
+      setTimeout(() => {
+        timers.delete(id);
+        const m = marksRef.current.find((x) => x.id === id);
+        if (m) patchMarkRemote(m).catch((e) => console.warn('PATCH marca falló (se mantiene local):', e));
+      }, 500),
+    );
+  }
+  function cancelPatch(id: string): void {
+    const t = patchTimers.current.get(id);
+    if (t) {
+      clearTimeout(t);
+      patchTimers.current.delete(id);
+    }
+  }
+
   const visibleMarks = marks.filter((m) => m.symbol === symbol && m.tf === tf);
   const selectedMark = marks.find((m) => m.id === selectedId) ?? null;
 
@@ -50,20 +84,25 @@ export function TradingCockpit() {
     setMarks((prev) => [...prev, mark]);
     setSelectedId(mark.id);
     setTool('Select'); // tras crear, volver a selección (evita marcas accidentales)
+    createMarkRemote(mark).catch((e) => console.warn('POST marca falló (se mantiene local):', e));
   }
   function handleUpdateNote(id: string, note: string): void {
     setMarks((prev) =>
       prev.map((m) => (m.id === id ? { ...m, note, updatedAt: Date.now() } : m)),
     );
+    schedulePatch(id);
   }
   function handleUpdateMark(id: string, patch: Partial<ManualMark>): void {
     setMarks((prev) =>
       prev.map((m) => (m.id === id ? { ...m, ...patch, updatedAt: Date.now() } : m)),
     );
+    schedulePatch(id);
   }
   function handleDeleteMark(id: string): void {
+    cancelPatch(id);
     setMarks((prev) => prev.filter((m) => m.id !== id));
     setSelectedId((cur) => (cur === id ? null : cur));
+    deleteMarkRemote(id).catch((e) => console.warn('DELETE marca falló:', e));
   }
 
   // ─── Live ───
@@ -129,6 +168,35 @@ export function TradingCockpit() {
       cancelled = true;
     };
   }, [symbol, tf]);
+
+  // Cargar marcas persistidas al cambiar símbolo/tf. Reemplaza solo la porción (symbol,tf);
+  // si falla (DB off / backend caído) se conserva el estado local (modo sin persistencia).
+  useEffect(() => {
+    let cancelled = false;
+    fetchMarks(symbol, tf)
+      .then((res) => {
+        if (cancelled) return;
+        setMarks((prev) => [
+          ...prev.filter((m) => !(m.symbol === symbol && m.tf === tf)),
+          ...res.marks,
+        ]);
+      })
+      .catch(() => {
+        /* sin persistencia: el cockpit sigue funcionando con marcas locales */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [symbol, tf]);
+
+  // Limpia los timers de PATCH pendientes al desmontar.
+  useEffect(() => {
+    const timers = patchTimers.current;
+    return () => {
+      timers.forEach((t) => clearTimeout(t));
+      timers.clear();
+    };
+  }, []);
 
   async function loadOlder() {
     if (loadingMore || !hasMoreOlder || candles.length === 0) return;

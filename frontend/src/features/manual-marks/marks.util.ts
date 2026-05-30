@@ -20,17 +20,16 @@ export interface NewMarkInput {
   takeProfit?: number;
 }
 
-let seq = 0;
-
-export function makeId(now: number): string {
-  seq += 1;
-  return `m${now.toString(36)}_${seq.toString(36)}`;
+// uuid: id estable y único entre sesiones/dispositivos, válido como PK en el backend
+// (^[A-Za-z0-9_-]{1,64}$). crypto.randomUUID está disponible en contexto seguro (localhost).
+export function makeId(): string {
+  return crypto.randomUUID();
 }
 
 /** Crea una ManualMark desde la entrada de dibujo. Normaliza low/high de las zonas. */
 export function createMark(input: NewMarkInput, now: number): ManualMark {
   const base: ManualMark = {
-    id: makeId(now),
+    id: makeId(),
     sourceLayer: 'MyManualMarks',
     kind: input.kind,
     symbol: input.symbol,
