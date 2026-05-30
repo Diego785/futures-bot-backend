@@ -1,19 +1,23 @@
 import type { ManualMark, ManualMarkKind } from './manualMarks.types';
-import { isZoneKind } from './manualMarks.types';
+import { isZoneKind, isPlanKind } from './manualMarks.types';
 import type { Timeframe } from '../candles/candles.types';
 
 export interface NewMarkInput {
   kind: ManualMarkKind;
   symbol: string;
   tf: Timeframe;
-  // zona
+  // zona (OB/FVG)
   timeStart?: number;
   timeEnd?: number;
   priceLow?: number;
   priceHigh?: number;
-  // nivel
+  // nivel (Liquidity)
   price?: number;
+  // plan (TradePlan)
   side?: 'LONG' | 'SHORT';
+  entry?: number;
+  stopLoss?: number;
+  takeProfit?: number;
 }
 
 let seq = 0;
@@ -31,7 +35,6 @@ export function createMark(input: NewMarkInput, now: number): ManualMark {
     kind: input.kind,
     symbol: input.symbol,
     tf: input.tf,
-    side: input.side,
     note: '',
     createdAt: now,
     updatedAt: now,
@@ -42,6 +45,17 @@ export function createMark(input: NewMarkInput, now: number): ManualMark {
     const t1 = Math.min(input.timeStart ?? 0, input.timeEnd ?? 0);
     const t2 = Math.max(input.timeStart ?? 0, input.timeEnd ?? 0);
     return { ...base, priceLow: lo, priceHigh: hi, timeStart: t1, timeEnd: t2 };
+  }
+  if (isPlanKind(input.kind)) {
+    return {
+      ...base,
+      side: input.side,
+      entry: input.entry,
+      stopLoss: input.stopLoss,
+      takeProfit: input.takeProfit,
+      timeStart: input.timeStart,
+      timeEnd: input.timeEnd,
+    };
   }
   return { ...base, price: input.price };
 }

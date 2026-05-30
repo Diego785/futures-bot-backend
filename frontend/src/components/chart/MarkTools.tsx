@@ -5,9 +5,8 @@ const TOOLS: { tool: ManualTool; label: string; title: string }[] = [
   { tool: 'OB', label: 'OB', title: 'Order Block (zona)' },
   { tool: 'FVG', label: 'FVG', title: 'Fair Value Gap / imbalance (zona)' },
   { tool: 'Liquidity', label: 'Liq', title: 'Liquidez (nivel)' },
-  { tool: 'Entry', label: 'Entry', title: 'Entrada (nivel)' },
-  { tool: 'SL', label: 'SL', title: 'Stop Loss (nivel)' },
-  { tool: 'TP', label: 'TP', title: 'Take Profit (nivel)' },
+  { tool: 'Long', label: 'Long', title: 'Long Position (Entry + SL + TP)' },
+  { tool: 'Short', label: 'Short', title: 'Short Position (Entry + SL + TP)' },
 ];
 
 interface Props {
@@ -22,7 +21,7 @@ export function MarkTools({ value, onChange }: Props) {
         <button
           key={tool}
           type="button"
-          className={tool === value ? 'tool-btn active' : 'tool-btn'}
+          className={`tool-btn${tool === value ? ' active' : ''}${tool === 'Long' ? ' long' : ''}${tool === 'Short' ? ' short' : ''}`}
           title={title}
           onClick={() => onChange(tool)}
         >

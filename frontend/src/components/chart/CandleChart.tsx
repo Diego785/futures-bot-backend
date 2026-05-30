@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import {
   createChart,
   ColorType,
@@ -11,6 +11,8 @@ import {
 import type { Candle, Timeframe } from '../../features/candles/candles.types';
 import {
   isZoneKind,
+  isPlanKind,
+  computeRR,
   MARK_COLORS,
   type ManualMark,
   type ManualMarkKind,
@@ -38,21 +40,29 @@ interface Props {
 
 type HandlePart = 'l' | 'r' | 't' | 'b' | 'tl' | 'tr' | 'bl' | 'br';
 const HANDLES: HandlePart[] = ['l', 'r', 't', 'b', 'tl', 'tr', 'bl', 'br'];
+type PlanPart = 'entry' | 'sl' | 'tp' | 'plan-body';
 
 interface ZoneGeom { type: 'zone'; id: string; kind: ManualMarkKind; left: number; top: number; right: number; bottom: number; }
 interface LevelGeom { type: 'level'; id: string; kind: ManualMarkKind; y: number; }
-type Geom = ZoneGeom | LevelGeom;
+interface PlanGeom { type: 'plan'; id: string; side: 'LONG' | 'SHORT'; left: number; right: number; yEntry: number; ySL: number; yTP: number; }
+type Geom = ZoneGeom | LevelGeom | PlanGeom;
 
-interface Hit { id: string; part: 'body' | 'line' | HandlePart }
+interface Hit { id: string; part: 'body' | 'line' | HandlePart | PlanPart }
 type Drag =
   | { kind: 'move'; id: string; sx: number; sy: number; orig: Geom }
   | { kind: 'resize'; id: string; handle: HandlePart; sx: number; sy: number; orig: ZoneGeom }
+  | { kind: 'plan-move'; id: string; sx: number; sy: number; orig: PlanGeom }
+  | { kind: 'plan-line'; id: string; line: 'entry' | 'sl' | 'tp'; sx: number; sy: number; orig: PlanGeom }
   | { kind: 'draw-zone'; sx: number; sy: number }
-  | { kind: 'draw-level' };
+  | { kind: 'draw-level' }
+  | { kind: 'draw-plan'; side: 'LONG' | 'SHORT' };
 
 const HANDLE_HIT = 9;
 const LINE_HIT = 6;
 const MIN_DRAW = 4;
+// Plan nuevo: SL a 0.5 % de la entrada, TP a 1.0 % (R:R 2.0) y ~12 velas de ancho.
+const DEFAULT_RISK_FRAC = 0.005;
+const DEFAULT_PLAN_BARS = 12;
 
 function handleCenter(left: number, top: number, right: number, bottom: number, h: HandlePart): { x: number; y: number } {
   const mx = (left + right) / 2;
@@ -72,11 +82,19 @@ function handleCenter(left: number, top: number, right: number, bottom: number, 
 function cursorFor(part: Hit['part']): string {
   switch (part) {
     case 'l': case 'r': return 'ew-resize';
-    case 't': case 'b': case 'line': return 'ns-resize';
+    case 't': case 'b': case 'line':
+    case 'entry': case 'sl': case 'tp': return 'ns-resize';
     case 'tl': case 'br': return 'nwse-resize';
     case 'tr': case 'bl': return 'nesw-resize';
     default: return 'move';
   }
+}
+
+function fmtPrice(p: number | null): string {
+  if (p == null) return '—';
+  const abs = Math.abs(p);
+  const dec = abs >= 1000 ? 1 : abs >= 1 ? 2 : 4;
+  return p.toFixed(dec);
 }
 
 export function CandleChart(props: Props) {
@@ -143,12 +161,23 @@ export function CandleChart(props: Props) {
         const yL = series.priceToCoordinate(m.priceLow ?? m.priceHigh);
         if (x1 == null || x2 == null || yH == null || yL == null) continue;
         out.push({ type: 'zone', id: m.id, kind: m.kind, left: Math.min(x1, x2), right: Math.max(x1, x2), top: Math.min(yH, yL), bottom: Math.max(yH, yL) });
-      } else {
-        if (m.price == null) continue;
-        const y = series.priceToCoordinate(m.price);
-        if (y == null) continue;
-        out.push({ type: 'level', id: m.id, kind: m.kind, y });
+        continue;
       }
+      if (isPlanKind(m.kind)) {
+        if (m.entry == null || m.stopLoss == null || m.takeProfit == null) continue;
+        const x1 = msToPx(m.timeStart ?? 0);
+        const x2 = msToPx(m.timeEnd ?? m.timeStart ?? 0);
+        const yE = series.priceToCoordinate(m.entry);
+        const yS = series.priceToCoordinate(m.stopLoss);
+        const yT = series.priceToCoordinate(m.takeProfit);
+        if (x1 == null || x2 == null || yE == null || yS == null || yT == null) continue;
+        out.push({ type: 'plan', id: m.id, side: m.side ?? 'LONG', left: Math.min(x1, x2), right: Math.max(x1, x2), yEntry: yE, ySL: yS, yTP: yT });
+        continue;
+      }
+      if (m.price == null) continue;
+      const y = series.priceToCoordinate(m.price);
+      if (y == null) continue;
+      out.push({ type: 'level', id: m.id, kind: m.kind, y });
     }
     return out;
   }
@@ -160,6 +189,7 @@ export function CandleChart(props: Props) {
   function hitTest(x: number, y: number): Hit | null {
     const sel = stateRef.current.selectedId;
     const list = geomsRef.current;
+    // 1) Handles de la zona seleccionada (precisos, máxima prioridad).
     const selGeom = list.find((g) => g.id === sel && g.type === 'zone') as ZoneGeom | undefined;
     if (selGeom) {
       for (const h of HANDLES) {
@@ -167,10 +197,29 @@ export function CandleChart(props: Props) {
         if (Math.abs(x - c.x) <= HANDLE_HIT && Math.abs(y - c.y) <= HANDLE_HIT) return { id: selGeom.id, part: h };
       }
     }
+    // 2) Líneas de cualquier plan (entry/sl/tp) dentro de su rango horizontal.
+    for (let i = list.length - 1; i >= 0; i--) {
+      const g = list[i];
+      if (g.type !== 'plan') continue;
+      if (x < g.left - LINE_HIT || x > g.right + LINE_HIT) continue;
+      if (Math.abs(y - g.yEntry) <= LINE_HIT) return { id: g.id, part: 'entry' };
+      if (Math.abs(y - g.ySL) <= LINE_HIT) return { id: g.id, part: 'sl' };
+      if (Math.abs(y - g.yTP) <= LINE_HIT) return { id: g.id, part: 'tp' };
+    }
+    // 3) Cuerpo de zonas.
     for (let i = list.length - 1; i >= 0; i--) {
       const g = list[i];
       if (g.type === 'zone' && x >= g.left && x <= g.right && y >= g.top && y <= g.bottom) return { id: g.id, part: 'body' };
     }
+    // 4) Cuerpo del plan (mover grupo completo).
+    for (let i = list.length - 1; i >= 0; i--) {
+      const g = list[i];
+      if (g.type !== 'plan') continue;
+      const top = Math.min(g.yEntry, g.ySL, g.yTP);
+      const bottom = Math.max(g.yEntry, g.ySL, g.yTP);
+      if (x >= g.left && x <= g.right && y >= top && y <= bottom) return { id: g.id, part: 'plan-body' };
+    }
+    // 5) Niveles (Liquidity).
     for (let i = list.length - 1; i >= 0; i--) {
       const g = list[i];
       if (g.type === 'level' && Math.abs(y - g.y) <= LINE_HIT) return { id: g.id, part: 'line' };
@@ -286,7 +335,8 @@ export function CandleChart(props: Props) {
     if (d.kind === 'move') {
       const dx = x - d.sx, dy = y - d.sy;
       if (d.orig.type === 'zone') return { ...d.orig, left: d.orig.left + dx, right: d.orig.right + dx, top: d.orig.top + dy, bottom: d.orig.bottom + dy };
-      return { ...d.orig, y: d.orig.y + dy };
+      if (d.orig.type === 'level') return { ...d.orig, y: d.orig.y + dy };
+      return d.orig;
     }
     if (d.kind === 'resize') {
       const dx = x - d.sx, dy = y - d.sy;
@@ -295,6 +345,18 @@ export function CandleChart(props: Props) {
       if (d.handle.includes('r')) g.right = d.orig.right + dx;
       if (d.handle.includes('t')) g.top = d.orig.top + dy;
       if (d.handle.includes('b')) g.bottom = d.orig.bottom + dy;
+      return g;
+    }
+    if (d.kind === 'plan-move') {
+      const dx = x - d.sx, dy = y - d.sy;
+      return { ...d.orig, left: d.orig.left + dx, right: d.orig.right + dx, yEntry: d.orig.yEntry + dy, ySL: d.orig.ySL + dy, yTP: d.orig.yTP + dy };
+    }
+    if (d.kind === 'plan-line') {
+      const dy = y - d.sy;
+      const g: PlanGeom = { ...d.orig };
+      if (d.line === 'entry') g.yEntry = d.orig.yEntry + dy;
+      else if (d.line === 'sl') g.ySL = d.orig.ySL + dy;
+      else g.yTP = d.orig.yTP + dy;
       return g;
     }
     return null;
@@ -315,16 +377,29 @@ export function CandleChart(props: Props) {
       s.onSelectMark(hit.id);
       const g = geomsRef.current.find((gg) => gg.id === hit.id);
       if (!g) return;
-      if (hit.part === 'body' || hit.part === 'line') dragRef.current = { kind: 'move', id: hit.id, sx: x, sy: y, orig: g };
-      else if (g.type === 'zone') dragRef.current = { kind: 'resize', id: hit.id, handle: hit.part, sx: x, sy: y, orig: g };
+      if ((hit.part === 'entry' || hit.part === 'sl' || hit.part === 'tp') && g.type === 'plan') {
+        dragRef.current = { kind: 'plan-line', id: hit.id, line: hit.part, sx: x, sy: y, orig: g };
+      } else if (hit.part === 'plan-body' && g.type === 'plan') {
+        dragRef.current = { kind: 'plan-move', id: hit.id, sx: x, sy: y, orig: g };
+      } else if (hit.part === 'body' || hit.part === 'line') {
+        dragRef.current = { kind: 'move', id: hit.id, sx: x, sy: y, orig: g };
+      } else if (g.type === 'zone') {
+        dragRef.current = { kind: 'resize', id: hit.id, handle: hit.part as HandlePart, sx: x, sy: y, orig: g };
+      }
       return;
     }
     if (tool !== 'Select') {
       e.preventDefault();
       hostRef.current?.setPointerCapture(e.pointerId);
       setChartInteractive(false);
-      dragRef.current = isZoneKind(tool) ? { kind: 'draw-zone', sx: x, sy: y } : { kind: 'draw-level' };
-      if (dragRef.current.kind === 'draw-level') setDraft({ left: 0, top: y - 1, width: containerRef.current?.clientWidth ?? 0, height: 2 });
+      if (tool === 'OB' || tool === 'FVG') {
+        dragRef.current = { kind: 'draw-zone', sx: x, sy: y };
+      } else if (tool === 'Liquidity') {
+        dragRef.current = { kind: 'draw-level' };
+        setDraft({ left: 0, top: y - 1, width: containerRef.current?.clientWidth ?? 0, height: 2 });
+      } else {
+        dragRef.current = { kind: 'draw-plan', side: tool === 'Long' ? 'LONG' : 'SHORT' };
+      }
       return;
     }
     emptyDown.current = { x, y }; // Select sobre vacío: posible deselección
@@ -346,6 +421,7 @@ export function CandleChart(props: Props) {
       setDraft({ left: 0, top: y - 1, width: containerRef.current?.clientWidth ?? 0, height: 2 });
       return;
     }
+    if (d.kind === 'draw-plan') return; // se crea al soltar (un clic)
     const ng = applyDragGeom(d, x, y);
     if (ng) setGeoms((prev) => prev.map((g) => (g.id === d.id ? ng : g)));
   }
@@ -379,7 +455,18 @@ export function CandleChart(props: Props) {
     if (d.kind === 'draw-level') {
       setDraft(null);
       const price = pxToPrice(y);
-      if (price != null) s.onCreateMark({ kind: tool as ManualMarkKind, symbol: s.symbol, tf: s.tf, price });
+      if (price != null) s.onCreateMark({ kind: 'Liquidity', symbol: s.symbol, tf: s.tf, price });
+      return;
+    }
+    if (d.kind === 'draw-plan') {
+      const entry = pxToPrice(y);
+      if (entry == null) return;
+      const side = d.side;
+      const sl = side === 'LONG' ? entry * (1 - DEFAULT_RISK_FRAC) : entry * (1 + DEFAULT_RISK_FRAC);
+      const tp = side === 'LONG' ? entry * (1 + 2 * DEFAULT_RISK_FRAC) : entry * (1 - 2 * DEFAULT_RISK_FRAC);
+      const tStart = pxToMs(x);
+      const tEnd = tStart + DEFAULT_PLAN_BARS * tfToMs(s.tf);
+      s.onCreateMark({ kind: 'TradePlan', symbol: s.symbol, tf: s.tf, side, entry, stopLoss: sl, takeProfit: tp, timeStart: tStart, timeEnd: tEnd });
       return;
     }
     const ng = applyDragGeom(d, x, y);
@@ -393,6 +480,14 @@ export function CandleChart(props: Props) {
     } else if (ng && ng.type === 'level') {
       const price = pxToPrice(ng.y);
       if (price != null) s.onUpdateMark(d.id, { price });
+    } else if (ng && ng.type === 'plan') {
+      s.onUpdateMark(d.id, {
+        entry: pxToPrice(ng.yEntry) ?? undefined,
+        stopLoss: pxToPrice(ng.ySL) ?? undefined,
+        takeProfit: pxToPrice(ng.yTP) ?? undefined,
+        timeStart: pxToMs(Math.min(ng.left, ng.right)),
+        timeEnd: pxToMs(Math.max(ng.left, ng.right)),
+      });
     }
     recompute();
   }
@@ -412,9 +507,9 @@ export function CandleChart(props: Props) {
       {layerVisible && (
         <div className="marks-layer">
           {geoms.map((g) => {
-            const color = MARK_COLORS[g.kind];
             const selected = g.id === selectedId;
             if (g.type === 'zone') {
+              const color = MARK_COLORS[g.kind];
               const w = g.right - g.left;
               const h = g.bottom - g.top;
               return (
@@ -428,6 +523,35 @@ export function CandleChart(props: Props) {
                 </div>
               );
             }
+            if (g.type === 'plan') {
+              const w = g.right - g.left;
+              const eP = pxToPrice(g.yEntry);
+              const sP = pxToPrice(g.ySL);
+              const tP = pxToPrice(g.yTP);
+              const rr = eP != null && sP != null && tP != null ? computeRR(eP, sP, tP) : null;
+              const cw = containerRef.current?.clientWidth ?? 0;
+              const rrLeft = Math.min(g.right + 6, Math.max(0, cw - 96));
+              const sel = selected ? ' selected' : '';
+              return (
+                <Fragment key={g.id}>
+                  <div className={`plan-reward${sel}`} style={{ left: g.left, top: Math.min(g.yEntry, g.yTP), width: w, height: Math.abs(g.yTP - g.yEntry) }} />
+                  <div className={`plan-risk${sel}`} style={{ left: g.left, top: Math.min(g.yEntry, g.ySL), width: w, height: Math.abs(g.ySL - g.yEntry) }} />
+                  <div className={`plan-line entry${sel}`} style={{ left: g.left, top: g.yEntry, width: w }}>
+                    <span className="plan-tag entry">Entry {fmtPrice(eP)}</span>
+                  </div>
+                  <div className={`plan-line sl${sel}`} style={{ left: g.left, top: g.ySL, width: w }}>
+                    <span className="plan-tag sl">SL {fmtPrice(sP)}</span>
+                  </div>
+                  <div className={`plan-line tp${sel}`} style={{ left: g.left, top: g.yTP, width: w }}>
+                    <span className="plan-tag tp">TP {fmtPrice(tP)}</span>
+                  </div>
+                  <div className={`plan-rr${sel} ${g.side === 'LONG' ? 'long' : 'short'}`} style={{ left: rrLeft, top: g.yEntry }}>
+                    {g.side} · R:R {rr != null ? rr.toFixed(2) : '—'}
+                  </div>
+                </Fragment>
+              );
+            }
+            const color = MARK_COLORS[g.kind];
             return (
               <div key={g.id} className={`level-line${selected ? ' selected' : ''}`} style={{ top: g.y, borderColor: color }}>
                 <span className="mark-label level" style={{ color, background: color + '22' }}>{g.kind}</span>

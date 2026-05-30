@@ -1,12 +1,12 @@
 import type { Timeframe } from '../candles/candles.types';
 
-// Marcas manuales del usuario sobre las velas. Serán el golden dataset para que el motor
-// SMC aprenda el criterio del usuario. OB/FVG son ZONAS (rango tiempo+precio);
-// Liquidity/Entry/SL/TP son NIVELES (un precio). NO son señales del bot.
-export type ManualMarkKind = 'OB' | 'FVG' | 'Liquidity' | 'Entry' | 'SL' | 'TP';
+// Marcas manuales del usuario sobre las velas (golden dataset). OB/FVG = zonas;
+// Liquidity = nivel; TradePlan = plan de trade agrupado (Entry+SL+TP, tipo posición de
+// TradingView). NO son señales del bot.
+export type ManualMarkKind = 'OB' | 'FVG' | 'Liquidity' | 'TradePlan';
 
-// Herramienta activa en la toolbar de dibujo.
-export type ManualTool = 'Select' | ManualMarkKind;
+// Herramienta activa. Long/Short crean un TradePlan con su side.
+export type ManualTool = 'Select' | 'OB' | 'FVG' | 'Liquidity' | 'Long' | 'Short';
 
 export interface ManualMark {
   id: string;
@@ -19,27 +19,39 @@ export interface ManualMark {
   timeEnd?: number;
   priceLow?: number;
   priceHigh?: number;
-  // Niveles (Liquidity/Entry/SL/TP): un solo precio.
+  // Nivel (Liquidity): un precio.
   price?: number;
+  // TradePlan: entrada/stop/target + lado. timeStart/timeEnd definen su extensión horizontal.
   side?: 'LONG' | 'SHORT';
+  entry?: number;
+  stopLoss?: number;
+  takeProfit?: number;
   note?: string;
   createdAt: number;
   updatedAt: number;
 }
 
 export const ZONE_KINDS: ManualMarkKind[] = ['OB', 'FVG'];
-export const LEVEL_KINDS: ManualMarkKind[] = ['Liquidity', 'Entry', 'SL', 'TP'];
 
 export function isZoneKind(kind: ManualMarkKind): boolean {
   return kind === 'OB' || kind === 'FVG';
 }
+export function isPlanKind(kind: ManualMarkKind): boolean {
+  return kind === 'TradePlan';
+}
 
-// Colores por tipo (también usados en la gráfica).
 export const MARK_COLORS: Record<ManualMarkKind, string> = {
   OB: '#3b82f6',
   FVG: '#a855f7',
   Liquidity: '#eab308',
-  Entry: '#26a69a',
-  SL: '#ef5350',
-  TP: '#22c55e',
+  TradePlan: '#60a5fa',
 };
+export const RISK_COLOR = '#ef5350';
+export const REWARD_COLOR = '#22c55e';
+
+/** R:R = |TP − Entry| / |Entry − SL|. null si el riesgo es 0. */
+export function computeRR(entry: number, stopLoss: number, takeProfit: number): number | null {
+  const risk = Math.abs(entry - stopLoss);
+  if (risk === 0) return null;
+  return Math.abs(takeProfit - entry) / risk;
+}
