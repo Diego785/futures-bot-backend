@@ -102,6 +102,12 @@ export class BybitMarketWsService
 
   private readonly reconnectSubject = new Subject<void>();
   readonly onReconnect$ = this.reconnectSubject.asObservable();
+
+  // Vela en formación (visual). Throttle por (symbol, tf).
+  private readonly candleUpdateSubject = new Subject<CandleEvent>();
+  readonly onCandleUpdate$ = this.candleUpdateSubject.asObservable();
+  private lastCandleUpdateEmit = new Map<string, number>();
+  private readonly CANDLE_UPDATE_THROTTLE_MS = 1000;
   // Throttle de price ticks por símbolo (max 1 emit / 5s por símbolo).
   private lastPriceEmitBySymbol = new Map<string, number>();
   private readonly PRICE_THROTTLE_MS = 5_000;
@@ -283,18 +289,31 @@ export class BybitMarketWsService
             this.priceSubject.next({ symbol, price: parseFloat(k.close) });
           }
 
+          const candle: Candle = {
+            openTime: k.start,
+            open: parseFloat(k.open),
+            high: parseFloat(k.high),
+            low: parseFloat(k.low),
+            close: parseFloat(k.close),
+            volume: parseFloat(k.volume),
+            closeTime: k.end,
+            quoteVolume: parseFloat(k.turnover ?? '0'),
+            trades: 0,
+          };
+
+          // Vela en formación (visual), throttled por (symbol, tf); siempre en el cierre.
+          const uKey = `${symbol}:${tf}`;
+          if (
+            k.confirm ||
+            now - (this.lastCandleUpdateEmit.get(uKey) ?? 0) >=
+              this.CANDLE_UPDATE_THROTTLE_MS
+          ) {
+            this.lastCandleUpdateEmit.set(uKey, now);
+            this.candleUpdateSubject.next({ symbol, tf, candle });
+          }
+
+          // Vela cerrada (causal) solo cuando se finaliza.
           if (k.confirm) {
-            const candle: Candle = {
-              openTime: k.start,
-              open: parseFloat(k.open),
-              high: parseFloat(k.high),
-              low: parseFloat(k.low),
-              close: parseFloat(k.close),
-              volume: parseFloat(k.volume),
-              closeTime: k.end,
-              quoteVolume: parseFloat(k.turnover ?? '0'),
-              trades: 0,
-            };
             this.candleCloseSubject.next({ symbol, tf, candle });
           }
         }

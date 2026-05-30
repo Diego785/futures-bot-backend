@@ -358,6 +358,9 @@ export abstract class IExchangeRest {
 export abstract class IMarketDataPort {
   abstract readonly provider: ExchangeProvider;
   abstract readonly onCandleClose$: Observable<CandleEvent>;
+  // Vela EN FORMACIÓN (no cerrada), emitida throttled mientras la vela actual se actualiza.
+  // Es VISUAL: puede cambiar. NO usar para detección causal (el motor SMC solo usa cerradas).
+  abstract readonly onCandleUpdate$: Observable<CandleEvent>;
   abstract readonly onPrice$: Observable<PriceTickEvent>;
   // Emite cuando el WS se reconecta y los datos vuelven a fluir (tras caída). El consumidor
   // debe reconciliar por REST el hueco para no perder cierres. No emite en la primera conexión.

@@ -21,12 +21,14 @@ export class BinanceMarketDataAdapter
 {
   readonly provider: ExchangeProvider = 'binance';
   readonly onCandleClose$: Observable<CandleEvent>;
+  readonly onCandleUpdate$: Observable<CandleEvent>;
   readonly onPrice$: Observable<PriceTickEvent>;
   readonly onReconnect$: Observable<void>;
 
   constructor(private readonly inner: BinanceMarketWsService) {
     super();
     this.onCandleClose$ = inner.onCandleClose$;
+    this.onCandleUpdate$ = inner.onCandleUpdate$;
     this.onPrice$ = inner.onPrice$;
     this.onReconnect$ = inner.onReconnect$;
   }

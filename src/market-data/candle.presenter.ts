@@ -1,4 +1,5 @@
 import type { CandleEntity } from './entities/candle.entity';
+import type { Candle as RawCandle } from '../exchange/interfaces/exchange.interfaces';
 
 // Shape del contrato hacia el front (API-CONTRACT): OHLCV abreviado o/h/l/c/v.
 export interface CandleDto {
@@ -34,5 +35,31 @@ export function toCandleDto(row: CandleEntity): CandleDto {
     quoteVolume: row.quoteVolume,
     trades: row.trades,
     isClosed: row.isClosed,
+  };
+}
+
+/**
+ * Proyecta una Candle CRUDA del exchange (open/high/low/close, sin symbol/tf) al shape del
+ * contrato. Usado por el gateway live para emitir candle.live_update / candle.closed.
+ */
+export function rawToCandleDto(
+  symbol: string,
+  tf: string,
+  c: RawCandle,
+  isClosed: boolean,
+): CandleDto {
+  return {
+    symbol,
+    tf,
+    openTime: c.openTime,
+    closeTime: c.closeTime,
+    o: c.open,
+    h: c.high,
+    l: c.low,
+    c: c.close,
+    v: c.volume,
+    quoteVolume: c.quoteVolume ?? null,
+    trades: c.trades ?? null,
+    isClosed,
   };
 }
