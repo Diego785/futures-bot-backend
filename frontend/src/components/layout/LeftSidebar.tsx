@@ -55,8 +55,6 @@ export function LeftSidebar({
 }: Props) {
   const counts = { OB: 0, FVG: 0, Liquidity: 0, TradePlan: 0 } as Record<ManualMarkKind, number>;
   for (const m of marks) counts[m.kind] += 1;
-  const valid = marks.filter((m) => m.status === 'VALID').length;
-  const doubtful = marks.filter((m) => m.status === 'DOUBTFUL').length;
 
   const filtered = (typeFilter === 'ALL' ? marks : marks.filter((m) => m.kind === typeFilter))
     .slice()
@@ -76,10 +74,6 @@ export function LeftSidebar({
         <span>FVG {counts.FVG}</span>
         <span>Liq {counts.Liquidity}</span>
         <span>Plan {counts.TradePlan}</span>
-      </div>
-      <div className="ws-summary">
-        <span style={{ color: STATUS_COLORS.VALID }}>Válidas {valid}</span>
-        <span style={{ color: STATUS_COLORS.DOUBTFUL }}>Dudosas {doubtful}</span>
         <span className="muted">Total {marks.length}</span>
       </div>
 

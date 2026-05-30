@@ -125,6 +125,9 @@ body {
 }
 .status-btn:hover { color: var(--text); }
 .status-btn.active { background: rgba(255, 255, 255, 0.05); font-weight: 700; }
+.advanced { margin: 8px 0; }
+.advanced > summary { cursor: pointer; font-size: 11px; color: var(--muted); padding: 4px 0; user-select: none; }
+.advanced > summary:hover { color: var(--text); }
 
 .load-older {
   position: absolute; top: 8px; left: 8px; z-index: 5;

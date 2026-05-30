@@ -70,24 +70,6 @@ export function RightInspector({
             </b>
           </div>
 
-          {/* Estado de revisión */}
-          <div className="status-row">
-            {REVIEW_STATUSES.map((s) => {
-              const active = (selectedMark.status ?? 'DRAFT') === s;
-              return (
-                <button
-                  key={s}
-                  type="button"
-                  className={`status-btn${active ? ' active' : ''}`}
-                  style={active ? { borderColor: STATUS_COLORS[s], color: STATUS_COLORS[s] } : undefined}
-                  onClick={() => onUpdateMeta(selectedMark.id, { status: s })}
-                >
-                  {STATUS_LABELS[s]}
-                </button>
-              );
-            })}
-          </div>
-
           {/* Datos técnicos */}
           {isZoneKind(selectedMark.kind) ? (
             <>
@@ -122,11 +104,30 @@ export function RightInspector({
             <div className="kv"><span>Precio</span><b>{formatPrice(selectedMark.price ?? 0)}</b></div>
           )}
 
-          {/* Notas estructuradas de revisión */}
-          <NoteField label="Contexto" value={selectedMark.context ?? ''} placeholder="Contexto de mercado (HTF, sesión…)" onChange={(v) => onUpdateMeta(selectedMark.id, { context: v })} />
-          <NoteField label="Razón" value={selectedMark.reason ?? ''} placeholder="¿Por qué marcaste esto?" onChange={(v) => onUpdateMeta(selectedMark.id, { reason: v })} />
-          <NoteField label="Duda" value={selectedMark.doubt ?? ''} placeholder="¿Qué te genera dudas / qué revisar?" onChange={(v) => onUpdateMeta(selectedMark.id, { doubt: v })} />
-          <NoteField label="Resultado / observación" value={selectedMark.outcome ?? ''} placeholder="¿Qué pasó después? ¿Qué aprendiste?" onChange={(v) => onUpdateMeta(selectedMark.id, { outcome: v })} />
+          {/* Estudio: estado de revisión + notas. Opcional y secundario (colapsado). */}
+          <details className="advanced">
+            <summary>Estudio / notas avanzadas</summary>
+            <div className="status-row">
+              {REVIEW_STATUSES.map((s) => {
+                const active = (selectedMark.status ?? 'DRAFT') === s;
+                return (
+                  <button
+                    key={s}
+                    type="button"
+                    className={`status-btn${active ? ' active' : ''}`}
+                    style={active ? { borderColor: STATUS_COLORS[s], color: STATUS_COLORS[s] } : undefined}
+                    onClick={() => onUpdateMeta(selectedMark.id, { status: s })}
+                  >
+                    {STATUS_LABELS[s]}
+                  </button>
+                );
+              })}
+            </div>
+            <NoteField label="Contexto" value={selectedMark.context ?? ''} placeholder="Contexto de mercado (HTF, sesión…)" onChange={(v) => onUpdateMeta(selectedMark.id, { context: v })} />
+            <NoteField label="Razón" value={selectedMark.reason ?? ''} placeholder="¿Por qué marcaste esto?" onChange={(v) => onUpdateMeta(selectedMark.id, { reason: v })} />
+            <NoteField label="Duda" value={selectedMark.doubt ?? ''} placeholder="¿Qué te genera dudas / qué revisar?" onChange={(v) => onUpdateMeta(selectedMark.id, { doubt: v })} />
+            <NoteField label="Resultado / observación" value={selectedMark.outcome ?? ''} placeholder="¿Qué pasó después? ¿Qué aprendiste?" onChange={(v) => onUpdateMeta(selectedMark.id, { outcome: v })} />
+          </details>
 
           <button className="btn-danger" type="button" onClick={() => onDeleteMark(selectedMark.id)}>
             Borrar marca
