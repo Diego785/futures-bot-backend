@@ -17,7 +17,7 @@ import {
   type ManualTool,
 } from '../../features/manual-marks/manualMarks.types';
 import type { NewMarkInput } from '../../features/manual-marks/marks.util';
-import { msToUtcSeconds } from '../../lib/time';
+import { msToUtcSeconds, tfToMs } from '../../lib/time';
 
 interface Props {
   candles: Candle[];
@@ -104,11 +104,24 @@ export function CandleChart(props: Props) {
   function pxToPrice(y: number): number | null {
     return seriesRef.current?.coordinateToPrice(y) ?? null;
   }
+  // Mapeo tiempo↔coordenada vía índice LÓGICO: cubre el espacio futuro a la derecha
+  // (donde no hay vela y coordinateToTime devolvería null) sin clamp a la última vela.
   function pxToMs(x: number): number {
-    const t = chartRef.current?.timeScale().coordinateToTime(x);
-    if (t != null) return Number(t) * 1000;
+    const ts = chartRef.current?.timeScale();
     const cs = stateRef.current.candles;
-    return cs.length ? cs[cs.length - 1].openTime : 0;
+    if (!ts || cs.length === 0) return 0;
+    const lg = ts.coordinateToLogical(x);
+    const lastMs = cs[cs.length - 1].openTime;
+    if (lg == null) return lastMs;
+    return Math.round(lastMs + (Number(lg) - (cs.length - 1)) * tfToMs(stateRef.current.tf));
+  }
+  function msToPx(ms: number): number | null {
+    const ts = chartRef.current?.timeScale();
+    const cs = stateRef.current.candles;
+    if (!ts || cs.length === 0) return null;
+    const lastMs = cs[cs.length - 1].openTime;
+    const logical = ((cs.length - 1) + (ms - lastMs) / tfToMs(stateRef.current.tf)) as Logical;
+    return ts.logicalToCoordinate(logical);
   }
   function localXY(e: React.PointerEvent): { x: number; y: number } {
     const r = containerRef.current!.getBoundingClientRect();
@@ -120,13 +133,12 @@ export function CandleChart(props: Props) {
     const series = seriesRef.current;
     const s = stateRef.current;
     if (!chart || !series || !s.layerVisible) return [];
-    const ts = chart.timeScale();
     const out: Geom[] = [];
     for (const m of s.marks) {
       if (isZoneKind(m.kind)) {
         if (m.timeStart == null || m.priceHigh == null) continue;
-        const x1 = ts.timeToCoordinate(msToUtcSeconds(m.timeStart));
-        const x2 = ts.timeToCoordinate(msToUtcSeconds(m.timeEnd ?? m.timeStart));
+        const x1 = msToPx(m.timeStart);
+        const x2 = msToPx(m.timeEnd ?? m.timeStart);
         const yH = series.priceToCoordinate(m.priceHigh);
         const yL = series.priceToCoordinate(m.priceLow ?? m.priceHigh);
         if (x1 == null || x2 == null || yH == null || yL == null) continue;
@@ -175,7 +187,8 @@ export function CandleChart(props: Props) {
       layout: { background: { type: ColorType.Solid, color: '#0e0f14' }, textColor: '#c7ccd6' },
       grid: { vertLines: { color: '#1b1e27' }, horzLines: { color: '#1b1e27' } },
       crosshair: { mode: CrosshairMode.Normal },
-      timeScale: { timeVisible: true, secondsVisible: false, borderColor: '#2a2e3a' },
+      // rightOffset deja espacio vacío a la derecha para proyectar zonas/posiciones al futuro.
+      timeScale: { timeVisible: true, secondsVisible: false, borderColor: '#2a2e3a', rightOffset: 12 },
       rightPriceScale: { borderColor: '#2a2e3a' },
     });
     const series = chart.addCandlestickSeries({
