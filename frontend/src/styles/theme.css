@@ -68,6 +68,13 @@ body {
 .status-loading { color: #d6a23b; }
 .status-error { color: var(--down); }
 
+.live-price { color: #fff; font-variant-numeric: tabular-nums; }
+.mkt { font-weight: 600; }
+.mkt-live { color: var(--up); border-color: #1f5e57; }
+.mkt-stale { color: #d6a23b; }
+.mkt-reconnecting { color: #d6a23b; }
+.mkt-offline, .mkt-disconnected { color: var(--muted); }
+
 .panel { padding: 10px 12px; }
 .panel-title { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
 .layer-list { list-style: none; margin: 0; padding: 0; }

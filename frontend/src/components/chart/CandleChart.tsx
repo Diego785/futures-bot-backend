@@ -16,10 +16,13 @@ interface Props {
   // Cambia con (symbol, tf): si cambió → fitContent; si no y crecieron las velas → prepend
   // (preservar la vista desplazando el rango lógico por las velas añadidas a la izquierda).
   viewKey: string;
+  // Vela viva (en formación o recién cerrada): se aplica con series.update (incremental,
+  // sin resetear la vista). null cuando no hay live o al cambiar de stream.
+  liveBar?: Candle | null;
   onHover?: (candle: Candle | null) => void;
 }
 
-export function CandleChart({ candles, viewKey, onHover }: Props) {
+export function CandleChart({ candles, viewKey, liveBar, onHover }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
@@ -108,6 +111,16 @@ export function CandleChart({ candles, viewKey, onHover }: Props) {
     prevViewKey.current = viewKey;
     prevLen.current = candles.length;
   }, [candles, viewKey]);
+
+  // Vela viva: update incremental (sin setData → no resetea zoom/pan). Solo tras la carga
+  // histórica inicial (prevLen > 0), para no dibujar antes de tener contexto.
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series || !liveBar || prevLen.current === 0) return;
+    const t = msToUtcSeconds(liveBar.openTime);
+    series.update({ time: t, open: liveBar.o, high: liveBar.h, low: liveBar.l, close: liveBar.c });
+    bySecond.current.set(t as number, liveBar); // que el hover vea la vela viva
+  }, [liveBar]);
 
   return <div ref={containerRef} className="candle-chart" />;
 }

@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { LiveClient, type MarketStatus } from '../lib/liveClient';
 import { AppShell } from '../components/layout/AppShell';
 import { LeftSidebar } from '../components/layout/LeftSidebar';
 import { RightInspector } from '../components/layout/RightInspector';
@@ -32,8 +33,45 @@ export function TradingCockpit() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [panels, setPanels] = useState({ left: true, right: true, bottom: true });
 
+  // ─── Live ───
+  const [liveBar, setLiveBar] = useState<Candle | null>(null);
+  const [livePrice, setLivePrice] = useState<number | null>(null);
+  const [marketStatus, setMarketStatus] = useState<MarketStatus>('OFFLINE');
+  const liveRef = useRef<LiveClient | null>(null);
+  const currentRef = useRef({ symbol, tf });
+  currentRef.current = { symbol, tf };
+
   useEffect(() => localStorage.setItem('cockpit.symbol', symbol), [symbol]);
   useEffect(() => localStorage.setItem('cockpit.tf', tf), [tf]);
+
+  // Conexión live única (se monta una vez). Los handlers filtran al stream actual.
+  useEffect(() => {
+    const client = new LiveClient();
+    liveRef.current = client;
+    client.connect({
+      onPrice: (sym, price) => {
+        if (sym === currentRef.current.symbol) setLivePrice(price);
+      },
+      onLiveUpdate: (c) => {
+        if (c.symbol === currentRef.current.symbol && c.tf === currentRef.current.tf) setLiveBar(c);
+      },
+      onClosed: (c) => {
+        if (c.symbol === currentRef.current.symbol && c.tf === currentRef.current.tf) setLiveBar(c);
+      },
+      onStatus: (s) => setMarketStatus(s),
+    });
+    return () => {
+      client.disconnect();
+      liveRef.current = null;
+    };
+  }, []);
+
+  // Cambiar de stream al cambiar símbolo/timeframe (resetea la vela viva).
+  useEffect(() => {
+    setLiveBar(null);
+    setLivePrice(null);
+    liveRef.current?.setStream(symbol, tf);
+  }, [symbol, tf]);
 
   // Carga fresca al cambiar símbolo/timeframe.
   useEffect(() => {
@@ -98,7 +136,7 @@ export function TradingCockpit() {
             {loadingMore ? 'Cargando…' : '◄ Cargar más historial'}
           </button>
         )}
-        <CandleChart candles={candles} viewKey={viewKey} onHover={setHover} />
+        <CandleChart candles={candles} viewKey={viewKey} liveBar={liveBar} onHover={setHover} />
       </div>
     );
   }
@@ -117,6 +155,8 @@ export function TradingCockpit() {
           status={status}
           count={candles.length}
           hover={hover}
+          marketStatus={marketStatus}
+          livePrice={livePrice}
           leftOpen={panels.left}
           rightOpen={panels.right}
           bottomOpen={panels.bottom}

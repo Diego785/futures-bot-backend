@@ -2,6 +2,8 @@ import { SymbolSelector } from './SymbolSelector';
 import { TimeframeSelector } from './TimeframeSelector';
 import { CrosshairInfo } from './CrosshairInfo';
 import type { Candle, Timeframe } from '../../features/candles/candles.types';
+import type { MarketStatus } from '../../lib/liveClient';
+import { formatPrice } from '../../lib/price-format';
 
 interface Props {
   symbol: string;
@@ -11,6 +13,8 @@ interface Props {
   status: string;
   count: number;
   hover: Candle | null;
+  marketStatus: MarketStatus;
+  livePrice: number | null;
   leftOpen: boolean;
   rightOpen: boolean;
   bottomOpen: boolean;
@@ -28,6 +32,8 @@ export function ChartToolbar({
   status,
   count,
   hover,
+  marketStatus,
+  livePrice,
   leftOpen,
   rightOpen,
   bottomOpen,
@@ -46,6 +52,14 @@ export function ChartToolbar({
         <CrosshairInfo candle={hover} />
       </div>
       <div className="toolbar-right">
+        {livePrice != null && (
+          <span className="badge live-price" title="Último precio">
+            {formatPrice(livePrice)}
+          </span>
+        )}
+        <span className={`badge mkt mkt-${marketStatus.toLowerCase()}`} title="Estado del mercado en vivo">
+          {marketStatus}
+        </span>
         <span className="badge">{count} velas</span>
         <span className={`badge status-${status}`}>{status}</span>
         <div className="panel-toggles">
