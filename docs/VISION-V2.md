@@ -13,6 +13,20 @@ manualmente en BTC. Detecta y dibuja zonas (Order Blocks, imbalances, liquidez) 
 - **No replica LuxAlgo ni ningún indicador cerrado.** Los trata como capa de referencia.
 - **No usa ML al inicio.** "Aprender" = codificar reglas validadas, incrementalmente.
 
+## Aprendizaje: comparación, no imitación
+El bot **no** aprende copiando las entradas del usuario. Tú y el bot estudian la **misma
+estrategia** (la documentada en `SMC-SPEC-VIDEO-1.md` / `ENTRY-EDGE-SPEC.md`):
+- El bot produce una **lectura SMC propia**: OB, FVG/imbalance, liquidez, escenarios
+  long/short, invalidaciones, SL/TP lógicos y **el porqué** de lo que ve.
+- Las marcas manuales del usuario son un **dataset de comparación y validación**, no un
+  objetivo a clonar.
+- El usuario **compara** su lectura contra la del bot para aprender, validar y debatir:
+  ¿marqué el mismo OB? · ¿el bot vio un FVG que pasé por alto? · ¿mi long entra antes de
+  confirmación? · ¿el SL está técnicamente protegido? · ¿el TP apunta a liquidez? ·
+  ¿vemos la misma estructura HTF?
+
+El bot es una **segunda mente técnica consistente**, no una sombra automática del usuario.
+
 ## Por qué cambiamos (lección del v1)
 El v1 intentó decidir y ejecutar solo. Backtest brillante (PF 7.37) → gap del 68 % en vivo.
 Diagnóstico: el problema no era el código, era el enfoque (autopiloto sobre una estrategia

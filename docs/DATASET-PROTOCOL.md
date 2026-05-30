@@ -2,6 +2,12 @@
 
 > Estado: v1.0 · 2026-05-27
 > Objetivo: validar el motor SMC **sin recrear el overfitting que hundió al v1**.
+>
+> **Aclaración clave (no imitación):** las marcas manuales del usuario **no** son el
+> objetivo a copiar. El motor produce su **propia lectura SMC** desde la estrategia
+> documentada (`SMC-SPEC-VIDEO-1.md`); este dataset sirve para **comparar y validar** esa
+> lectura, no para que el bot imite las entradas del usuario. La "coincidencia" de abajo
+> es una señal de comparación para el aprendizaje del usuario, no una orden de clonar.
 
 ## Los 4 conjuntos
 | Conjunto | Uso | ¿Se toca al ajustar parámetros? |

@@ -15,10 +15,13 @@ Un copiloto que ayuda al usuario a operar SMC manualmente en BTC y a **aprender 
 - detecta y dibuja zonas (Order Blocks, imbalances, liquidez) sobre velas en tiempo real;
 - **sugiere** entradas/SL/TP solo cuando se cumplen condiciones de edge (no al toque de zona);
 - lleva un journal del desempeño (datos del broker read-only + anotaciones del usuario);
-- el usuario acepta / edita / rechaza cada sugerencia → eso alimenta el aprendizaje mutuo.
+- el usuario **compara** su lectura con la del bot y edita/rechaza cada sugerencia → así
+  aprende, valida y debate. El bot **no** copia las entradas del usuario: ambos estudian la
+  misma estrategia y el bot da una lectura SMC propia (ver `docs/VISION-V2.md`).
 
 ## Qué NO es
-Autopiloto · ejecutor de órdenes · clon del ojo del usuario · clon de LuxAlgo · sistema con ML al inicio.
+Autopiloto · ejecutor de órdenes · clon del ojo del usuario (no imita tus marcas, hace su
+propia lectura) · clon de LuxAlgo · sistema con ML al inicio.
 
 ## Lección del v1 (por qué cambiamos)
 El v1 decidía y ejecutaba solo. Backtest PF 7.37 → gap del 68 % en vivo. El problema no era el código:

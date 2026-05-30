@@ -1,8 +1,10 @@
 import type { Timeframe } from '../candles/candles.types';
 
-// Marcas manuales del usuario sobre las velas (golden dataset). OB/FVG = zonas;
-// Liquidity = nivel; TradePlan = plan de trade agrupado (Entry+SL+TP, tipo posición de
-// TradingView). NO son señales del bot.
+// Marcas manuales del usuario sobre las velas. OB/FVG = zonas; Liquidity = nivel;
+// TradePlan = plan de trade agrupado (Entry+SL+TP, tipo posición de TradingView).
+// NO son señales del bot ni un objetivo a imitar: son un dataset de COMPARACIÓN y
+// validación. El bot hará su propia lectura SMC (misma estrategia) y el usuario compara
+// la suya contra la del bot para aprender y debatir (ver docs/VISION-V2.md).
 export type ManualMarkKind = 'OB' | 'FVG' | 'Liquidity' | 'TradePlan';
 
 // Herramienta activa. Long/Short crean un TradePlan con su side.

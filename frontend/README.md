@@ -6,8 +6,9 @@ el shell definitivo de la SPA (Vite + React + TS + TradingView Lightweight Chart
 ## Estado
 - **Slice 1 — gráfica base** (actual): app shell + velas reales desde `/api/candles` +
   selector símbolo/timeframe + crosshair + tooltip OHLC + loading/error.
-- Próximos slices: navegación fina → marcas manuales → guardar marcas → capas OB/FVG del bot →
-  inspector de reglas → señales (SL/TP/BE) → journal y aprendizaje.
+- Próximos slices: navegación fina → marcas manuales → guardar marcas → capas OB/FVG del bot
+  (lectura propia, no copia de tus marcas) → inspector de reglas → señales (SL/TP/BE) →
+  journal y comparación de lecturas.
 
 ## Arquitectura
 ```
