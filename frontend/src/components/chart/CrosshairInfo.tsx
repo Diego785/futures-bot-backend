@@ -1,20 +1,21 @@
-import type { HoverOhlc } from './CandleChart';
+import type { Candle } from '../../features/candles/candles.types';
 import { formatPrice } from '../../lib/price-format';
 
 interface Props {
-  ohlc: HoverOhlc | null;
+  candle: Candle | null;
 }
 
-export function CrosshairInfo({ ohlc }: Props) {
-  if (!ohlc) {
-    return <span className="crosshair-info muted">O — H — L — C —</span>;
+export function CrosshairInfo({ candle }: Props) {
+  if (!candle) {
+    return <span className="crosshair-info muted">O — H — L — C — V —</span>;
   }
   return (
     <span className="crosshair-info">
-      <span>O {formatPrice(ohlc.o)}</span>
-      <span>H {formatPrice(ohlc.h)}</span>
-      <span>L {formatPrice(ohlc.l)}</span>
-      <span>C {formatPrice(ohlc.c)}</span>
+      <span>O {formatPrice(candle.o)}</span>
+      <span>H {formatPrice(candle.h)}</span>
+      <span>L {formatPrice(candle.l)}</span>
+      <span>C {formatPrice(candle.c)}</span>
+      <span className="muted">V {candle.v.toFixed(2)}</span>
     </span>
   );
 }

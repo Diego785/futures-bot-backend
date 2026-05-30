@@ -4,33 +4,48 @@ import { LeftSidebar } from '../components/layout/LeftSidebar';
 import { RightInspector } from '../components/layout/RightInspector';
 import { BottomPanel } from '../components/layout/BottomPanel';
 import { ChartToolbar } from '../components/chart/ChartToolbar';
-import { CandleChart, type HoverOhlc } from '../components/chart/CandleChart';
+import { CandleChart } from '../components/chart/CandleChart';
 import { fetchCandles } from '../features/candles/candles.api';
-import type { Candle, Timeframe } from '../features/candles/candles.types';
+import { TIMEFRAMES, type Candle, type Timeframe } from '../features/candles/candles.types';
 
 type Status = 'loading' | 'error' | 'ready';
+const PAGE = 500;
+
+function initialTf(): Timeframe {
+  const saved = localStorage.getItem('cockpit.tf');
+  return (TIMEFRAMES as string[]).includes(saved ?? '') ? (saved as Timeframe) : '15m';
+}
 
 /**
- * Trading Cockpit — Slice 1: gráfica base.
- * Carga velas reales desde /api/candles y las pinta. El shell ya prevé capas, inspector
- * y paneles inferiores para los slices siguientes (OB/FVG, señales, journal, aprendizaje).
+ * Trading Cockpit — Slice 2A: gráfica profesional.
+ * Velas más recientes al abrir + "cargar más historial" hacia atrás, inspector con OHLCV,
+ * paneles colapsables / focus, y persistencia de símbolo/tf. Sin OB/FVG ni señales aún.
  */
 export function TradingCockpit() {
-  const [symbol, setSymbol] = useState('BTCUSDT');
-  const [tf, setTf] = useState<Timeframe>('15m');
+  const [symbol, setSymbol] = useState(() => localStorage.getItem('cockpit.symbol') ?? 'BTCUSDT');
+  const [tf, setTf] = useState<Timeframe>(initialTf);
   const [candles, setCandles] = useState<Candle[]>([]);
   const [status, setStatus] = useState<Status>('loading');
   const [error, setError] = useState<string | null>(null);
-  const [hover, setHover] = useState<HoverOhlc | null>(null);
+  const [hover, setHover] = useState<Candle | null>(null);
+  const [hasMoreOlder, setHasMoreOlder] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [panels, setPanels] = useState({ left: true, right: true, bottom: true });
 
+  useEffect(() => localStorage.setItem('cockpit.symbol', symbol), [symbol]);
+  useEffect(() => localStorage.setItem('cockpit.tf', tf), [tf]);
+
+  // Carga fresca al cambiar símbolo/timeframe.
   useEffect(() => {
     let cancelled = false;
     setStatus('loading');
     setError(null);
-    fetchCandles(symbol, tf, 500)
+    setHover(null);
+    fetchCandles(symbol, tf, PAGE)
       .then((res) => {
         if (cancelled) return;
         setCandles(res.candles);
+        setHasMoreOlder(res.hasMoreOlder);
         setStatus('ready');
       })
       .catch((e: unknown) => {
@@ -42,6 +57,25 @@ export function TradingCockpit() {
       cancelled = true;
     };
   }, [symbol, tf]);
+
+  async function loadOlder() {
+    if (loadingMore || !hasMoreOlder || candles.length === 0) return;
+    setLoadingMore(true);
+    try {
+      const before = candles[0].openTime;
+      const res = await fetchCandles(symbol, tf, PAGE, { before });
+      if (res.candles.length > 0) {
+        setCandles((prev) => [...res.candles, ...prev]);
+      }
+      setHasMoreOlder(res.hasMoreOlder);
+    } catch {
+      // silencioso: si falla, el botón sigue disponible para reintentar
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
+  const viewKey = `${symbol}:${tf}`;
 
   let center: React.ReactNode;
   if (status === 'error') {
@@ -57,11 +91,23 @@ export function TradingCockpit() {
   } else if (candles.length === 0) {
     center = <div className="state">Sin velas para {symbol} {tf}.</div>;
   } else {
-    center = <CandleChart candles={candles} onHover={setHover} />;
+    center = (
+      <div className="chart-wrap">
+        {hasMoreOlder && (
+          <button className="load-older" onClick={loadOlder} disabled={loadingMore}>
+            {loadingMore ? 'Cargando…' : '◄ Cargar más historial'}
+          </button>
+        )}
+        <CandleChart candles={candles} viewKey={viewKey} onHover={setHover} />
+      </div>
+    );
   }
 
   return (
     <AppShell
+      leftOpen={panels.left}
+      rightOpen={panels.right}
+      bottomOpen={panels.bottom}
       topBar={
         <ChartToolbar
           symbol={symbol}
@@ -71,11 +117,23 @@ export function TradingCockpit() {
           status={status}
           count={candles.length}
           hover={hover}
+          leftOpen={panels.left}
+          rightOpen={panels.right}
+          bottomOpen={panels.bottom}
+          onToggleLeft={() => setPanels((p) => ({ ...p, left: !p.left }))}
+          onToggleRight={() => setPanels((p) => ({ ...p, right: !p.right }))}
+          onToggleBottom={() => setPanels((p) => ({ ...p, bottom: !p.bottom }))}
+          onFocus={() =>
+            setPanels((p) => {
+              const anyOpen = p.left || p.right || p.bottom;
+              return { left: !anyOpen, right: !anyOpen, bottom: !anyOpen };
+            })
+          }
         />
       }
       left={<LeftSidebar />}
       center={center}
-      right={<RightInspector symbol={symbol} tf={tf} hover={hover} />}
+      right={<RightInspector symbol={symbol} tf={tf} loaded={candles.length} hover={hover} />}
       bottom={<BottomPanel />}
     />
   );

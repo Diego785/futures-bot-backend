@@ -21,6 +21,8 @@ export interface CandlesResponse {
   symbol: string;
   tf: string;
   count: number;
-  nextCursor: number | null;
+  oldestOpenTime: number | null;
+  newestOpenTime: number | null;
+  hasMoreOlder: boolean;
   candles: Candle[];
 }

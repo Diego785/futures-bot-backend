@@ -1,8 +1,7 @@
 import { SymbolSelector } from './SymbolSelector';
 import { TimeframeSelector } from './TimeframeSelector';
 import { CrosshairInfo } from './CrosshairInfo';
-import type { HoverOhlc } from './CandleChart';
-import type { Timeframe } from '../../features/candles/candles.types';
+import type { Candle, Timeframe } from '../../features/candles/candles.types';
 
 interface Props {
   symbol: string;
@@ -11,10 +10,32 @@ interface Props {
   onTf: (tf: Timeframe) => void;
   status: string;
   count: number;
-  hover: HoverOhlc | null;
+  hover: Candle | null;
+  leftOpen: boolean;
+  rightOpen: boolean;
+  bottomOpen: boolean;
+  onToggleLeft: () => void;
+  onToggleRight: () => void;
+  onToggleBottom: () => void;
+  onFocus: () => void;
 }
 
-export function ChartToolbar({ symbol, tf, onSymbol, onTf, status, count, hover }: Props) {
+export function ChartToolbar({
+  symbol,
+  tf,
+  onSymbol,
+  onTf,
+  status,
+  count,
+  hover,
+  leftOpen,
+  rightOpen,
+  bottomOpen,
+  onToggleLeft,
+  onToggleRight,
+  onToggleBottom,
+  onFocus,
+}: Props) {
   return (
     <div className="toolbar">
       <div className="toolbar-left">
@@ -22,11 +43,40 @@ export function ChartToolbar({ symbol, tf, onSymbol, onTf, status, count, hover 
         <TimeframeSelector value={tf} onChange={onTf} />
       </div>
       <div className="toolbar-center">
-        <CrosshairInfo ohlc={hover} />
+        <CrosshairInfo candle={hover} />
       </div>
       <div className="toolbar-right">
         <span className="badge">{count} velas</span>
         <span className={`badge status-${status}`}>{status}</span>
+        <div className="panel-toggles">
+          <button
+            type="button"
+            className={leftOpen ? 'toggle active' : 'toggle'}
+            title="Panel de capas"
+            onClick={onToggleLeft}
+          >
+            ◧
+          </button>
+          <button
+            type="button"
+            className={rightOpen ? 'toggle active' : 'toggle'}
+            title="Inspector"
+            onClick={onToggleRight}
+          >
+            ◨
+          </button>
+          <button
+            type="button"
+            className={bottomOpen ? 'toggle active' : 'toggle'}
+            title="Panel inferior"
+            onClick={onToggleBottom}
+          >
+            ▭
+          </button>
+          <button type="button" className="toggle" title="Modo focus (solo gráfica)" onClick={onFocus}>
+            ⛶
+          </button>
+        </div>
       </div>
     </div>
   );

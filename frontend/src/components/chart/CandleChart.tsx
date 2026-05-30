@@ -5,35 +5,29 @@ import {
   CrosshairMode,
   type IChartApi,
   type ISeriesApi,
-  type CandlestickData,
+  type LogicalRange,
+  type Logical,
 } from 'lightweight-charts';
 import type { Candle } from '../../features/candles/candles.types';
 import { msToUtcSeconds } from '../../lib/time';
 
-export interface HoverOhlc {
-  o: number;
-  h: number;
-  l: number;
-  c: number;
-}
-
 interface Props {
   candles: Candle[];
-  onHover?: (ohlc: HoverOhlc | null) => void;
+  // Cambia con (symbol, tf): si cambió → fitContent; si no y crecieron las velas → prepend
+  // (preservar la vista desplazando el rango lógico por las velas añadidas a la izquierda).
+  viewKey: string;
+  onHover?: (candle: Candle | null) => void;
 }
 
-/**
- * Gráfica de velas (motor: TradingView Lightweight Charts). Zoom/pan/crosshair vienen
- * nativos de la librería. El chart se crea una vez; los datos se actualizan por separado.
- * Las capas de overlay (OB/FVG/señales/marcas) se montarán sobre este chart en slices futuros.
- */
-export function CandleChart({ candles, onHover }: Props) {
+export function CandleChart({ candles, viewKey, onHover }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
-  // Mantener el callback fresco sin re-crear el chart en cada render.
   const onHoverRef = useRef(onHover);
   onHoverRef.current = onHover;
+  const bySecond = useRef<Map<number, Candle>>(new Map());
+  const prevViewKey = useRef<string>('');
+  const prevLen = useRef(0);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -67,12 +61,11 @@ export function CandleChart({ candles, onHover }: Props) {
     chart.subscribeCrosshairMove((param) => {
       const cb = onHoverRef.current;
       if (!cb) return;
-      const data = param.seriesData.get(series) as CandlestickData | undefined;
-      if (!data || param.time === undefined) {
+      if (param.time === undefined) {
         cb(null);
         return;
       }
-      cb({ o: data.open, h: data.high, l: data.low, c: data.close });
+      cb(bySecond.current.get(param.time as number) ?? null);
     });
 
     return () => {
@@ -84,18 +77,37 @@ export function CandleChart({ candles, onHover }: Props) {
 
   useEffect(() => {
     const series = seriesRef.current;
-    if (!series) return;
-    series.setData(
-      candles.map((c) => ({
-        time: msToUtcSeconds(c.openTime),
-        open: c.o,
-        high: c.h,
-        low: c.l,
-        close: c.c,
-      })),
-    );
-    chartRef.current?.timeScale().fitContent();
-  }, [candles]);
+    const chart = chartRef.current;
+    if (!series || !chart) return;
+
+    const map = new Map<number, Candle>();
+    const data = candles.map((c) => {
+      const t = msToUtcSeconds(c.openTime);
+      map.set(t as number, c);
+      return { time: t, open: c.o, high: c.h, low: c.l, close: c.c };
+    });
+    bySecond.current = map;
+
+    const isFresh = viewKey !== prevViewKey.current;
+    const added = candles.length - prevLen.current;
+    let range: LogicalRange | null = null;
+    if (!isFresh && added > 0) range = chart.timeScale().getVisibleLogicalRange();
+
+    series.setData(data);
+
+    if (isFresh) {
+      chart.timeScale().fitContent();
+    } else if (range && added > 0) {
+      // Se añadieron `added` velas al inicio → desplazar el rango visible para no saltar.
+      chart.timeScale().setVisibleLogicalRange({
+        from: (range.from + added) as Logical,
+        to: (range.to + added) as Logical,
+      });
+    }
+
+    prevViewKey.current = viewKey;
+    prevLen.current = candles.length;
+  }, [candles, viewKey]);
 
   return <div ref={containerRef} className="candle-chart" />;
 }
