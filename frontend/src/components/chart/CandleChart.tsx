@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   createChart,
   ColorType,
@@ -217,6 +217,23 @@ export function CandleChart(props: Props) {
   }
   function recompute(): void { scheduleOverlayRecompute(); }
 
+  // Recompute SÍNCRONO para cambios DISCRETOS de datos (crear/borrar/editar una marca).
+  // Va por useLayoutEffect (antes del paint): la marca aparece/desaparece al instante, sin
+  // depender de que un RAF/gesto posterior la refresque. Cancela el RAF coalescente pendiente
+  // para no recalcular dos veces.
+  function recomputeImmediate(): void {
+    if (dragRef.current) return; // no pelea con un drag propio en curso
+    const next = computeGeoms();
+    const sig = geomSignature(next);
+    if (sig === lastSigRef.current) return; // p.ej. cambio de selección: geometría idéntica
+    if (overlayRafRef.current != null) {
+      cancelAnimationFrame(overlayRafRef.current);
+      overlayRafRef.current = null;
+    }
+    lastSigRef.current = sig;
+    setGeoms(next);
+  }
+
   // Loop RAF temporal para gestos del chart que NO emiten evento — sobre todo el
   // arrastre VERTICAL de la escala de precio (cambia precio→Y sin disparar
   // subscribeVisibleLogicalRangeChange; ver issue lightweight-charts #1442).
@@ -396,8 +413,10 @@ export function CandleChart(props: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [liveBar]);
 
-  useEffect(() => {
-    recompute();
+  // Cambios discretos de datos (marcas/visibilidad/selección/herramienta): recompute
+  // SÍNCRONO antes del paint, para que crear/borrar se vea de inmediato sin un click extra.
+  useLayoutEffect(() => {
+    recomputeImmediate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [marks, layerVisible, selectedId, tool]);
 
