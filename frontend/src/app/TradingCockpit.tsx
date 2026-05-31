@@ -22,6 +22,8 @@ import { fetchBotFvgs } from '../features/bot-analysis/botFvg.api';
 import type { BotFvg } from '../features/bot-analysis/botFvg.types';
 import { fetchBotObs } from '../features/bot-analysis/botOb.api';
 import type { BotOb } from '../features/bot-analysis/botOb.types';
+import { fetchBotLiquidity } from '../features/bot-analysis/botLiquidity.api';
+import type { BotLiquidity } from '../features/bot-analysis/botLiquidity.types';
 
 type Status = 'loading' | 'error' | 'ready';
 const PAGE = 500;
@@ -57,11 +59,14 @@ export function TradingCockpit() {
   // ─── Lectura automática del bot: StrictFVG (Fase 5A) ───
   const [botFvgs, setBotFvgs] = useState<BotFvg[]>([]);
   const [botObs, setBotObs] = useState<BotOb[]>([]);
+  const [botLiqs, setBotLiqs] = useState<BotLiquidity[]>([]);
   const [botFvgVisible, setBotFvgVisible] = useState(true);
   const [botObVisible, setBotObVisible] = useState(true);
+  const [botLiqVisible, setBotLiqVisible] = useState(true);
   const [selectedBotId, setSelectedBotId] = useState<string | null>(null);
   const selectedBotFvg = botFvgs.find((f) => f.id === selectedBotId) ?? null;
   const selectedBotOb = botObs.find((o) => o.id === selectedBotId) ?? null;
+  const selectedBotLiq = botLiqs.find((l) => l.id === selectedBotId) ?? null;
 
   // Selección mutuamente excluyente: marca manual XOR FVG del bot.
   function handleSelectMark(id: string | null): void {
@@ -286,6 +291,13 @@ export function TradingCockpit() {
       .catch(() => {
         if (!cancelled) setBotObs([]);
       });
+    fetchBotLiquidity(symbol, tf)
+      .then((res) => {
+        if (!cancelled) setBotLiqs(res.levels);
+      })
+      .catch(() => {
+        if (!cancelled) setBotLiqs([]);
+      });
     return () => {
       cancelled = true;
     };
@@ -359,8 +371,10 @@ export function TradingCockpit() {
           focusRequest={focusReq}
           botFvgs={botFvgs}
           botObs={botObs}
+          botLiqs={botLiqs}
           botFvgVisible={botFvgVisible}
           botObVisible={botObVisible}
+          botLiqVisible={botLiqVisible}
           selectedBotId={selectedBotId}
           onSelectBot={handleSelectBot}
         />
@@ -413,6 +427,9 @@ export function TradingCockpit() {
           botObVisible={botObVisible}
           onToggleOb={() => setBotObVisible((v) => !v)}
           botObCount={botObs.filter((o) => o.state === 'untouched' || o.state === 'touched').length}
+          botLiqVisible={botLiqVisible}
+          onToggleLiq={() => setBotLiqVisible((v) => !v)}
+          botLiqCount={botLiqs.length}
         />
       }
       center={center}
@@ -425,6 +442,7 @@ export function TradingCockpit() {
           selectedMark={selectedMark}
           selectedBotFvg={selectedBotFvg}
           selectedBotOb={selectedBotOb}
+          selectedBotLiq={selectedBotLiq}
           onUpdateMeta={handleUpdateMeta}
           onDeleteMark={handleDeleteMark}
         />

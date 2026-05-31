@@ -19,6 +19,11 @@ import {
   OB_STATE_LABELS,
   type BotOb,
 } from '../../features/bot-analysis/botOb.types';
+import {
+  LIQ_COLOR,
+  LIQ_TYPE_LABELS,
+  type BotLiquidity,
+} from '../../features/bot-analysis/botLiquidity.types';
 import { formatPrice } from '../../lib/price-format';
 import { formatUtc } from '../../lib/time';
 
@@ -38,6 +43,7 @@ interface Props {
   selectedMark: ManualMark | null;
   selectedBotFvg: BotFvg | null;
   selectedBotOb: BotOb | null;
+  selectedBotLiq: BotLiquidity | null;
   onUpdateMeta: (id: string, patch: Partial<ManualMark>) => void;
   onDeleteMark: (id: string) => void;
 }
@@ -64,6 +70,7 @@ export function RightInspector({
   selectedMark,
   selectedBotFvg,
   selectedBotOb,
+  selectedBotLiq,
   onUpdateMeta,
   onDeleteMark,
 }: Props) {
@@ -75,7 +82,27 @@ export function RightInspector({
       <div className="kv"><span>Velas cargadas</span><b>{loaded}</b></div>
       <div className="divider" />
 
-      {selectedBotOb ? (
+      {selectedBotLiq ? (
+        <div className="mark-detail">
+          <div className="kv">
+            <span>Lectura del bot</span>
+            <b style={{ color: LIQ_COLOR }}>
+              Liquidez {selectedBotLiq.side === 'buyside' ? 'buyside ▲' : 'sellside ▼'}
+            </b>
+          </div>
+          <div className="kv"><span>Tipo</span><b>{LIQ_TYPE_LABELS[selectedBotLiq.type]}</b></div>
+          <div className="kv"><span>Nivel</span><b>{formatPrice(selectedBotLiq.level)}</b></div>
+          <div className="kv"><span>Toques</span><b>{selectedBotLiq.touches}</b></div>
+          <div className="kv"><span>Estado</span><b>{selectedBotLiq.swept ? 'Barrida' : 'Activa'}</b></div>
+          <div className="kv"><span>Distancia al precio</span><b>{selectedBotLiq.distancePct}%</b></div>
+          <p className="hint">
+            Por qué: nivel donde se acumula liquidez (stops/órdenes) que el precio tiende a
+            buscar. {selectedBotLiq.type === 'equalHigh' || selectedBotLiq.type === 'equalLow'
+              ? `Igualdad de ${selectedBotLiq.side === 'buyside' ? 'máximos' : 'mínimos'} (${selectedBotLiq.touches} toques) = más fuerte.`
+              : 'Swing único.'} Lectura del bot — no es señal.
+          </p>
+        </div>
+      ) : selectedBotOb ? (
         <div className="mark-detail">
           <div className="kv">
             <span>Lectura del bot</span>

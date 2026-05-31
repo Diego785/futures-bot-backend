@@ -46,6 +46,8 @@ body {
 .bot-layer { position: absolute; inset: 0; z-index: 3; pointer-events: none; }
 .bot-zone { position: absolute; border: 1px dashed; box-sizing: border-box; border-radius: 2px; }
 .bot-zone.ob { border-style: solid; } /* OB sólido, FVG punteado: distinguibles de un vistazo */
+.bot-zone.liq { border: none; border-top: 1px dashed; height: 0; border-radius: 0; } /* liquidez = línea */
+.bot-zone.liq.selected { border-top-width: 2px; }
 .bot-zone.selected { box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.55) inset; }
 .bot-zone-label { position: absolute; right: 2px; top: -1px; font-size: 9px; font-weight: 700; background: rgba(14, 15, 20, 0.6); padding: 0 2px; border-radius: 2px; }
 .zone-mark { position: absolute; border: 1px solid; box-sizing: border-box; border-radius: 2px; }
