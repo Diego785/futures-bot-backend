@@ -94,8 +94,17 @@ export class BotAnalysisController {
     const zones = scoreConfluence(q.symbol, q.tf, fvgs, obs, liqs, lastClose);
     const candles = rows.map((c) => ({ openTime: c.openTime, high: c.high, low: c.low, close: c.close }));
     const setups = detectSetups(q.symbol, q.tf, zones, obs, candles, lastClose);
-    const plans = generateTradePlans(q.symbol, q.tf, setups, obs, liqs, lastClose);
-    return { symbol: q.symbol, tf: q.tf, count: plans.length, plans };
+    const mode = q.mode ?? 'confirmation';
+    const plans = generateTradePlans(q.symbol, q.tf, setups, obs, liqs, lastClose, mode);
+    return {
+      symbol: q.symbol,
+      tf: q.tf,
+      mode,
+      count: plans.length,
+      confirmationCount: plans.filter((p) => p.mode === 'confirmation').length,
+      riskCount: plans.filter((p) => p.mode === 'risk').length,
+      plans,
+    };
   }
 }
 

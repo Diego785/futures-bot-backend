@@ -2,6 +2,7 @@ import { Type } from 'class-transformer';
 import { IsIn, IsInt, IsOptional, Matches, Max, Min } from 'class-validator';
 
 const BOT_TIMEFRAMES = ['15m', '1h', '4h', '1d'] as const;
+const PLAN_MODES = ['confirmation', 'risk', 'both'] as const;
 
 // Query común de las capas de lectura del bot (/api/bot/fvg, /api/bot/ob).
 export class GetBotQueryDto {
@@ -18,4 +19,9 @@ export class GetBotQueryDto {
   @Min(3)
   @Max(5000)
   limit: number = 1000;
+
+  // Solo /api/bot/plans: modo de generación. confirmation (default) | risk | both.
+  @IsOptional()
+  @IsIn(PLAN_MODES)
+  mode?: (typeof PLAN_MODES)[number];
 }
