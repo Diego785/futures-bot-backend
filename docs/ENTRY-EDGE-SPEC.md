@@ -66,6 +66,12 @@ que solo nace cuando se cumplen condiciones de edge. Este documento define esa c
 > **contrato y los estados nacen completos** para no migrar después. Lo que NO se permite es
 > emitir `SignalCandidate` sin pasar por `TRIGGERED`.
 
+> **Video 2 — ciclo de vida de la sugerencia:** una `SignalCandidate` es una **orden sugerida
+> pendiente**, no una orden real. Si el precio nunca la alcanza, **expira sin P&L** (`EXPIRED`, sin
+> `resultR`) — "no se ejecutó = ni ganancia ni pérdida". El refinamiento (§12) sube la calidad de las
+> que sí se activan a costa de que más candidatas expiren. El copiloto sugiere/programa; el usuario
+> decide y ejecuta manual. Regla Cero intacta.
+
 ---
 
 ## Componentes de edge (cada uno provisional + configurable)
@@ -97,15 +103,20 @@ sweepClosesBackInside: boolean    // 'swept' = mecha barre Y cierre vuelve dentr
 
 ### 3. Trigger de confirmación en LTF
 **Por qué:** **nunca entrar al toque.** Esperar que el precio *reaccione* dentro de la zona.
-**Regla provisional:** tras `MITIGATED`, esperar confirmación en TF inferior.
+**Validación Video 2 (ver `SMC-SPEC-VIDEO-2.md`):** el video lo enseña explícitamente —
+*"entrada por riesgo"* = al toque (asumes el riesgo de que rompa, sin confirmar) vs
+*"entrada por confirmación"* = esperar que se forme un **OB nuevo / reacción** en la zona y entrar
+sobre él. Valida de forma independiente este gate y la lección del v1.
+**Regla provisional:** tras `MITIGATED`, esperar confirmación en TF inferior (o un OB nuevo en la zona).
 ```ts
-entryTriggerMode: 'ltf_choch' | 'rejection_close' | 'displacement' | 'touch'
-                                  // default 'ltf_choch'; 'touch' = legacy NO recomendado
-triggerTimeframe: Timeframe       // p.ej. '5m'/'1m' relativo al TF del setup
+entryTriggerMode: 'confirmation_ob' | 'ltf_choch' | 'rejection_close' | 'displacement' | 'touch'
+                                  // default = confirmación (p.ej. 'confirmation_ob'); 'touch' =
+                                  // "entrada por riesgo" del Video 2 = legacy NO recomendado por defecto
+triggerTimeframe: Timeframe       // p.ej. '5m' relativo al TF del setup (Video 2: piso 5m)
 triggerLookback: number
 rejectionBodyPct: number          // para 'rejection_close'
 ```
-🔴 Qué TF de trigger por TF de setup; definición exacta del CHoCH de confirmación.
+🔴 Definición exacta del "OB nuevo de confirmación" (tamaño/cierre/nº velas); CHoCH formal; TF por setup.
 
 ### 4. Premium / Discount (equilibrium 50%)
 **Por qué:** pilar de SMC hoy **ausente**. No comprar en premium, no vender en discount.
@@ -183,6 +194,20 @@ outcome?: 'TP'|'SL'|'BE'|'PARTIAL'|'OPEN'
 newsBlackoutWindows: {from:number,to:number}[]   // epoch ms UTC
 ```
 🔴 Fuente del calendario (manual al inicio).
+
+### 12. Refinamiento multi-TF del ingreso (Video 2)
+**Por qué:** Video 2 — la zona ESTRUCTURAL se marca en HTF (1H/4H), pero la ENTRADA se **afina**
+bajando a 15m/5m: un rectángulo más preciso → SL más ajustado → mejor R:R. **Trade-off explícito:**
+a más refinamiento, mejor R:R pero **menor probabilidad de fill** (el precio puede no alcanzar el
+nivel afinado). Es elección de estilo (arriesgado = no refina; conservador = refina mucho).
+**Regla provisional:** tras validar la zona en el TF del setup, derivar entrada/SL en un TF de
+refinamiento; piso 5m.
+```ts
+refineEntry: boolean              // default TRUE para señales conservadoras
+refineTimeframe: Timeframe        // p.ej. '5m'; piso 5m (Video 2)
+// El refinamiento aprieta el SL pero NO exime del buffer ATR (§9): el ruido del TF sigue contando.
+```
+🔴 TF de refinamiento por TF de setup; cómo reportar/operar el trade-off precisión↔probabilidad de fill.
 
 ---
 
