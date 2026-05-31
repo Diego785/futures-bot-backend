@@ -58,6 +58,16 @@ body {
   font-size: 11px; font-weight: 800; padding: 1px 6px; border-radius: 4px;
   background: rgba(14, 15, 20, 0.92); border: 1px solid currentColor; white-space: nowrap;
 }
+/* Setup states (Fase 5E-A): borde por estado; ARMED resalta más */
+.bot-zone.setup { border-width: 1px; border-style: dashed; }
+.bot-zone.setup.setup-watching { opacity: 0.5; }
+.bot-zone.setup.setup-mitigated { border-style: solid; }
+.bot-zone.setup.setup-armed { border-width: 2px; border-style: solid; }
+.setup-label {
+  position: absolute; right: 2px; top: 50%; transform: translateY(-50%); z-index: 5;
+  font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 3px;
+  background: rgba(14, 15, 20, 0.9); white-space: nowrap;
+}
 .bot-zone.selected { box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.55) inset; }
 .bot-zone-label { position: absolute; right: 2px; top: -1px; font-size: 9px; font-weight: 700; background: rgba(14, 15, 20, 0.6); padding: 0 2px; border-radius: 2px; }
 .zone-mark { position: absolute; border: 1px solid; box-sizing: border-box; border-radius: 2px; }

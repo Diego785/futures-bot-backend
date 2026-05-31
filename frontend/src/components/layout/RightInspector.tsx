@@ -25,6 +25,11 @@ import {
   type BotLiquidity,
 } from '../../features/bot-analysis/botLiquidity.types';
 import { CONF_DIR_COLORS, type ConfluenceZone } from '../../features/bot-analysis/botConfluence.types';
+import {
+  SETUP_DIR_COLORS,
+  SETUP_STATE_LABELS,
+  type BotSetup,
+} from '../../features/bot-analysis/botSetup.types';
 import { formatPrice } from '../../lib/price-format';
 import { formatUtc } from '../../lib/time';
 
@@ -46,6 +51,7 @@ interface Props {
   selectedBotOb: BotOb | null;
   selectedBotLiq: BotLiquidity | null;
   selectedBotConf: ConfluenceZone | null;
+  selectedBotSetup: BotSetup | null;
   onUpdateMeta: (id: string, patch: Partial<ManualMark>) => void;
   onDeleteMark: (id: string) => void;
 }
@@ -74,6 +80,7 @@ export function RightInspector({
   selectedBotOb,
   selectedBotLiq,
   selectedBotConf,
+  selectedBotSetup,
   onUpdateMeta,
   onDeleteMark,
 }: Props) {
@@ -85,7 +92,47 @@ export function RightInspector({
       <div className="kv"><span>Velas cargadas</span><b>{loaded}</b></div>
       <div className="divider" />
 
-      {selectedBotConf ? (
+      {selectedBotSetup ? (
+        <div className="mark-detail">
+          <div className="kv">
+            <span>Lectura del bot</span>
+            <b style={{ color: SETUP_DIR_COLORS[selectedBotSetup.direction] }}>
+              Setup · {selectedBotSetup.state}
+            </b>
+          </div>
+          <div className="kv">
+            <span>Contexto</span>
+            <b style={{ color: SETUP_DIR_COLORS[selectedBotSetup.direction] }}>
+              {selectedBotSetup.direction === 'bullish' ? 'posible LONG ▲' : 'posible SHORT ▼'}
+            </b>
+          </div>
+          <div className="kv"><span>Estado</span><b>{SETUP_STATE_LABELS[selectedBotSetup.state]}</b></div>
+          <div className="kv"><span>Confluencia origen</span><b>{selectedBotSetup.rating} (score {selectedBotSetup.score})</b></div>
+          <div className="kv"><span>Rango</span><b>{formatPrice(selectedBotSetup.priceLow)}–{formatPrice(selectedBotSetup.priceHigh)}</b></div>
+          <div className="kv"><span>Mitigado</span><b>{selectedBotSetup.mitigatedAtTime ? formatUtc(selectedBotSetup.mitigatedAtTime) : '—'}</b></div>
+          <div className="kv"><span>Armado</span><b>{selectedBotSetup.armedAtTime ? formatUtc(selectedBotSetup.armedAtTime) : '—'}</b></div>
+          <div className="kv"><span>Distancia al precio</span><b>{selectedBotSetup.distancePct}%</b></div>
+          <p className="hint">
+            {selectedBotSetup.state === 'WATCHING'
+              ? 'WATCHING: zona de confluencia relevante; el precio aún no ha vuelto a ella.'
+              : selectedBotSetup.state === 'MITIGATED'
+                ? 'MITIGATED: el precio entró/tocó la zona, pero aún no hay confirmación.'
+                : 'ARMED: tras mitigar, se formó un OB de confirmación en la zona (no fue solo el toque).'}
+          </p>
+          <p className="hint">
+            Falta para una posible entrada:{' '}
+            {selectedBotSetup.state === 'WATCHING'
+              ? 'que el precio regrese a la zona (mitigación).'
+              : selectedBotSetup.state === 'MITIGATED'
+                ? 'una confirmación (que se forme un OB/reacción en la zona).'
+                : 'es lo más cerca que llega esta fase. La entrada sugerida (Entry/SL/TP) llega en 5F.'}
+          </p>
+          <p className="hint">
+            La invalidaría: un cierre {selectedBotSetup.direction === 'bullish' ? 'por debajo' : 'por encima'} del
+            rango. Lectura del bot — NO es señal ni entrada.
+          </p>
+        </div>
+      ) : selectedBotConf ? (
         <div className="mark-detail">
           <div className="kv">
             <span>Lectura del bot</span>

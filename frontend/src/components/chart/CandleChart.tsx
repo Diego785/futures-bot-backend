@@ -23,6 +23,7 @@ import { FVG_COLORS, type BotFvg } from '../../features/bot-analysis/botFvg.type
 import { OB_COLORS, type BotOb } from '../../features/bot-analysis/botOb.types';
 import { LIQ_COLOR, type BotLiquidity } from '../../features/bot-analysis/botLiquidity.types';
 import { CONF_DIR_COLORS, type ConfluenceZone } from '../../features/bot-analysis/botConfluence.types';
+import { SETUP_DIR_COLORS, type BotSetup } from '../../features/bot-analysis/botSetup.types';
 import { msToUtcSeconds, tfToMs } from '../../lib/time';
 
 interface Props {
@@ -48,10 +49,12 @@ interface Props {
   botObs: BotOb[];
   botLiqs: BotLiquidity[];
   botConfluences: ConfluenceZone[];
+  botSetups: BotSetup[];
   botFvgVisible: boolean;
   botObVisible: boolean;
   botLiqVisible: boolean;
   botConfVisible: boolean;
+  botSetupVisible: boolean;
   selectedBotId: string | null;
   onSelectBot: (id: string | null) => void;
 }
@@ -65,7 +68,7 @@ interface LevelGeom { type: 'level'; id: string; kind: ManualMarkKind; y: number
 interface PlanGeom { type: 'plan'; id: string; side: 'LONG' | 'SHORT'; left: number; right: number; yEntry: number; ySL: number; yTP: number; }
 type Geom = ZoneGeom | LevelGeom | PlanGeom;
 // Geometría de una zona del bot (FVG u OB), read-only. color/label precalculados para el render.
-interface BotGeom { id: string; kind: 'fvg' | 'ob' | 'liq' | 'conf'; left: number; right: number; top: number; bottom: number; color: string; label: string; rating?: 'LOW' | 'MEDIUM' | 'HIGH'; }
+interface BotGeom { id: string; kind: 'fvg' | 'ob' | 'liq' | 'conf' | 'setup'; left: number; right: number; top: number; bottom: number; color: string; label: string; tag?: string; }
 
 interface Hit { id: string; part: 'body' | 'line' | HandlePart | PlanPart }
 type Drag =
@@ -119,7 +122,7 @@ function fmtPrice(p: number | null): string {
 
 export function CandleChart(props: Props) {
   const { candles, viewKey, liveBar, marks, tool, selectedId, layerVisible, focusRequest } = props;
-  const { botFvgs, botObs, botLiqs, botConfluences, botFvgVisible, botObVisible, botLiqVisible, botConfVisible, selectedBotId } = props;
+  const { botFvgs, botObs, botLiqs, botConfluences, botSetups, botFvgVisible, botObVisible, botLiqVisible, botConfVisible, botSetupVisible, selectedBotId } = props;
   const hostRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -223,13 +226,13 @@ export function CandleChart(props: Props) {
     const rightEdge = chart.timeScale().width(); // px: borde derecho de las velas (tras rightOffset)
     const out: BotGeom[] = [];
     // Proyecta una zona [priceLow, priceHigh] desde su origen hasta el borde derecho (ray).
-    const pushZone = (id: string, kind: 'fvg' | 'ob' | 'liq' | 'conf', timeStart: number, priceLow: number, priceHigh: number, color: string, label: string, rating?: 'LOW' | 'MEDIUM' | 'HIGH') => {
+    const pushZone = (id: string, kind: 'fvg' | 'ob' | 'liq' | 'conf' | 'setup', timeStart: number, priceLow: number, priceHigh: number, color: string, label: string, tag?: string) => {
       const x1 = msToPx(timeStart);
       if (x1 == null || x1 > rightEdge) return; // origen aún no en vista → no proyectar atrás
       const yH = series.priceToCoordinate(priceHigh);
       const yL = series.priceToCoordinate(priceLow);
       if (yH == null || yL == null) return;
-      out.push({ id, kind, left: x1, right: rightEdge, top: Math.min(yH, yL), bottom: Math.max(yH, yL), color, label, rating });
+      out.push({ id, kind, left: x1, right: rightEdge, top: Math.min(yH, yL), bottom: Math.max(yH, yL), color, label, tag });
     };
     if (s.botFvgVisible) {
       for (const f of s.botFvgs) {
@@ -257,6 +260,13 @@ export function CandleChart(props: Props) {
       for (const z of s.botConfluences) {
         const bias = z.direction === 'bullish' ? 'LONG' : 'SHORT';
         pushZone(z.id, 'conf', z.timeStart, z.priceLow, z.priceHigh, CONF_DIR_COLORS[z.direction], `★ ${bias} ctx ${z.score}`, z.rating);
+      }
+    }
+    if (s.botSetupVisible) {
+      for (const su of s.botSetups) {
+        const bias = su.direction === 'bullish' ? 'LONG' : 'SHORT';
+        // tag = estado → estilo del borde (CSS .setup-watching/mitigated/armed).
+        pushZone(su.id, 'setup', su.timeStart, su.priceLow, su.priceHigh, SETUP_DIR_COLORS[su.direction], `${bias} · ${su.state}`, su.state);
       }
     }
     return out;
@@ -544,7 +554,7 @@ export function CandleChart(props: Props) {
   useLayoutEffect(() => {
     recomputeImmediate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [marks, layerVisible, selectedId, tool, botFvgs, botObs, botLiqs, botConfluences, botFvgVisible, botObVisible, botLiqVisible, botConfVisible, selectedBotId]);
+  }, [marks, layerVisible, selectedId, tool, botFvgs, botObs, botLiqs, botConfluences, botSetups, botFvgVisible, botObVisible, botLiqVisible, botConfVisible, botSetupVisible, selectedBotId]);
 
   function setChartInteractive(on: boolean): void {
     chartRef.current?.applyOptions({ handleScroll: on, handleScale: on });
@@ -609,7 +619,7 @@ export function CandleChart(props: Props) {
     }
     // FVG del bot: solo seleccionable (read-only). No captura ni arrastra; si el usuario
     // arrastra, el chart paneará normalmente. Solo en modo Select para no estorbar al dibujar.
-    if (tool === 'Select' && (s.botFvgVisible || s.botObVisible || s.botLiqVisible || s.botConfVisible)) {
+    if (tool === 'Select' && (s.botFvgVisible || s.botObVisible || s.botLiqVisible || s.botConfVisible || s.botSetupVisible)) {
       const botId = hitTestBot(x, y);
       if (botId) {
         s.onSelectBot(botId);
@@ -739,7 +749,7 @@ export function CandleChart(props: Props) {
       onPointerUp={onPointerUp}
     >
       <div ref={containerRef} className="candle-chart" />
-      {(botFvgVisible || botObVisible || botLiqVisible || botConfVisible) && (
+      {(botFvgVisible || botObVisible || botLiqVisible || botConfVisible || botSetupVisible) && (
         <div className="bot-layer">
           {botGeoms.map((g) => {
             const selected = g.id === selectedBotId;
@@ -758,14 +768,15 @@ export function CandleChart(props: Props) {
             const h = Math.max(3, g.bottom - g.top);
             // Confluencia = marco sin relleno (deja ver el OB/FVG debajo); el resto, caja con fondo.
             const bg = g.kind === 'conf' ? 'transparent' : g.color + (selected ? '38' : '14');
-            const confRating = g.kind === 'conf' && g.rating ? ` conf-${g.rating.toLowerCase()}` : '';
+            const tagClass = g.tag ? ` ${g.kind}-${g.tag.toLowerCase()}` : '';
+            const labelClass = g.kind === 'conf' ? 'conf-label' : g.kind === 'setup' ? 'setup-label' : 'bot-zone-label';
             return (
               <div
                 key={g.id}
-                className={`bot-zone ${g.kind}${confRating}${selected ? ' selected' : ''}`}
+                className={`bot-zone ${g.kind}${tagClass}${selected ? ' selected' : ''}`}
                 style={{ left: g.left, top: g.top, width: g.right - g.left, height: h, borderColor: g.color, background: bg }}
               >
-                <span className={g.kind === 'conf' ? 'conf-label' : 'bot-zone-label'} style={{ color: g.color }}>{g.label}</span>
+                <span className={labelClass} style={{ color: g.color }}>{g.label}</span>
               </div>
             );
           })}
