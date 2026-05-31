@@ -24,6 +24,7 @@ import {
   LIQ_TYPE_LABELS,
   type BotLiquidity,
 } from '../../features/bot-analysis/botLiquidity.types';
+import { CONF_COLORS, type ConfluenceZone } from '../../features/bot-analysis/botConfluence.types';
 import { formatPrice } from '../../lib/price-format';
 import { formatUtc } from '../../lib/time';
 
@@ -44,6 +45,7 @@ interface Props {
   selectedBotFvg: BotFvg | null;
   selectedBotOb: BotOb | null;
   selectedBotLiq: BotLiquidity | null;
+  selectedBotConf: ConfluenceZone | null;
   onUpdateMeta: (id: string, patch: Partial<ManualMark>) => void;
   onDeleteMark: (id: string) => void;
 }
@@ -71,6 +73,7 @@ export function RightInspector({
   selectedBotFvg,
   selectedBotOb,
   selectedBotLiq,
+  selectedBotConf,
   onUpdateMeta,
   onDeleteMark,
 }: Props) {
@@ -82,7 +85,30 @@ export function RightInspector({
       <div className="kv"><span>Velas cargadas</span><b>{loaded}</b></div>
       <div className="divider" />
 
-      {selectedBotLiq ? (
+      {selectedBotConf ? (
+        <div className="mark-detail">
+          <div className="kv">
+            <span>Lectura del bot</span>
+            <b style={{ color: CONF_COLORS[selectedBotConf.rating] }}>
+              Confluencia {selectedBotConf.rating} ★
+            </b>
+          </div>
+          <div className="kv"><span>Score</span><b>{selectedBotConf.score}</b></div>
+          <div className="kv"><span>Dirección</span><b>{selectedBotConf.direction === 'bullish' ? 'alcista ▲' : 'bajista ▼'}</b></div>
+          <div className="kv"><span>OB</span><b>{selectedBotConf.hasOB ? `sí (+${selectedBotConf.scoreOB})` : 'no'}</b></div>
+          <div className="kv"><span>FVG</span><b>{selectedBotConf.hasFVG ? `sí (+${selectedBotConf.scoreFVG})` : 'no'}</b></div>
+          <div className="kv"><span>Liquidez cercana</span><b>{selectedBotConf.hasLiquidity ? `sí (+${selectedBotConf.scoreLiquidity})` : 'no'}</b></div>
+          <div className="kv"><span>Rango</span><b>{formatPrice(selectedBotConf.priceLow)}–{formatPrice(selectedBotConf.priceHigh)}</b></div>
+          <div className="kv"><span>Distancia al precio</span><b>{selectedBotConf.distancePct}%</b></div>
+          <p className="hint">
+            Por qué: zona que combina {[
+              selectedBotConf.hasOB ? 'OB' : null,
+              selectedBotConf.hasFVG ? 'FVG' : null,
+              selectedBotConf.hasLiquidity ? 'liquidez' : null,
+            ].filter(Boolean).join(' + ')}. Más capas alineadas = más peso. Lectura del bot — NO es señal ni entrada.
+          </p>
+        </div>
+      ) : selectedBotLiq ? (
         <div className="mark-detail">
           <div className="kv">
             <span>Lectura del bot</span>

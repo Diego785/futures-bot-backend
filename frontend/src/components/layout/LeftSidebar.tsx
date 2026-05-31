@@ -29,6 +29,9 @@ interface Props {
   botLiqVisible: boolean;
   onToggleLiq: () => void;
   botLiqCount: number;
+  botConfVisible: boolean;
+  onToggleConf: () => void;
+  botConfCount: number;
 }
 
 const FILTERS: { key: TypeFilter; label: string }[] = [
@@ -70,6 +73,9 @@ export function LeftSidebar({
   botLiqVisible,
   onToggleLiq,
   botLiqCount,
+  botConfVisible,
+  onToggleConf,
+  botConfCount,
 }: Props) {
   const counts = { OB: 0, FVG: 0, Liquidity: 0, TradePlan: 0 } as Record<ManualMarkKind, number>;
   for (const m of marks) counts[m.kind] += 1;
@@ -105,6 +111,12 @@ export function LeftSidebar({
           <label>
             <input type="checkbox" checked={botLiqVisible} onChange={onToggleLiq} />{' '}
             <span style={{ color: '#fbbf24' }}>Bot Liquidez</span> <span className="muted">({botLiqCount})</span>
+          </label>
+        </li>
+        <li className="layer-item">
+          <label>
+            <input type="checkbox" checked={botConfVisible} onChange={onToggleConf} />{' '}
+            <span style={{ color: '#f1f5f9' }}>★ Confluencia</span> <span className="muted">({botConfCount})</span>
           </label>
         </li>
         {['Señales', 'Planes bot'].map((l) => (

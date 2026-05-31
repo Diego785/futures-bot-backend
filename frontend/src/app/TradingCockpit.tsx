@@ -24,6 +24,8 @@ import { fetchBotObs } from '../features/bot-analysis/botOb.api';
 import type { BotOb } from '../features/bot-analysis/botOb.types';
 import { fetchBotLiquidity } from '../features/bot-analysis/botLiquidity.api';
 import type { BotLiquidity } from '../features/bot-analysis/botLiquidity.types';
+import { fetchBotConfluence } from '../features/bot-analysis/botConfluence.api';
+import type { ConfluenceZone } from '../features/bot-analysis/botConfluence.types';
 
 type Status = 'loading' | 'error' | 'ready';
 const PAGE = 500;
@@ -60,13 +62,16 @@ export function TradingCockpit() {
   const [botFvgs, setBotFvgs] = useState<BotFvg[]>([]);
   const [botObs, setBotObs] = useState<BotOb[]>([]);
   const [botLiqs, setBotLiqs] = useState<BotLiquidity[]>([]);
+  const [botConfluences, setBotConfluences] = useState<ConfluenceZone[]>([]);
   const [botFvgVisible, setBotFvgVisible] = useState(true);
   const [botObVisible, setBotObVisible] = useState(true);
   const [botLiqVisible, setBotLiqVisible] = useState(true);
+  const [botConfVisible, setBotConfVisible] = useState(true);
   const [selectedBotId, setSelectedBotId] = useState<string | null>(null);
   const selectedBotFvg = botFvgs.find((f) => f.id === selectedBotId) ?? null;
   const selectedBotOb = botObs.find((o) => o.id === selectedBotId) ?? null;
   const selectedBotLiq = botLiqs.find((l) => l.id === selectedBotId) ?? null;
+  const selectedBotConf = botConfluences.find((z) => z.id === selectedBotId) ?? null;
 
   // Selección mutuamente excluyente: marca manual XOR FVG del bot.
   function handleSelectMark(id: string | null): void {
@@ -298,6 +303,13 @@ export function TradingCockpit() {
       .catch(() => {
         if (!cancelled) setBotLiqs([]);
       });
+    fetchBotConfluence(symbol, tf)
+      .then((res) => {
+        if (!cancelled) setBotConfluences(res.zones);
+      })
+      .catch(() => {
+        if (!cancelled) setBotConfluences([]);
+      });
     return () => {
       cancelled = true;
     };
@@ -372,9 +384,11 @@ export function TradingCockpit() {
           botFvgs={botFvgs}
           botObs={botObs}
           botLiqs={botLiqs}
+          botConfluences={botConfluences}
           botFvgVisible={botFvgVisible}
           botObVisible={botObVisible}
           botLiqVisible={botLiqVisible}
+          botConfVisible={botConfVisible}
           selectedBotId={selectedBotId}
           onSelectBot={handleSelectBot}
         />
@@ -430,6 +444,9 @@ export function TradingCockpit() {
           botLiqVisible={botLiqVisible}
           onToggleLiq={() => setBotLiqVisible((v) => !v)}
           botLiqCount={botLiqs.length}
+          botConfVisible={botConfVisible}
+          onToggleConf={() => setBotConfVisible((v) => !v)}
+          botConfCount={botConfluences.length}
         />
       }
       center={center}
@@ -443,6 +460,7 @@ export function TradingCockpit() {
           selectedBotFvg={selectedBotFvg}
           selectedBotOb={selectedBotOb}
           selectedBotLiq={selectedBotLiq}
+          selectedBotConf={selectedBotConf}
           onUpdateMeta={handleUpdateMeta}
           onDeleteMark={handleDeleteMark}
         />

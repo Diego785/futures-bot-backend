@@ -22,6 +22,7 @@ import type { NewMarkInput } from '../../features/manual-marks/marks.util';
 import { FVG_COLORS, type BotFvg } from '../../features/bot-analysis/botFvg.types';
 import { OB_COLORS, type BotOb } from '../../features/bot-analysis/botOb.types';
 import { LIQ_COLOR, type BotLiquidity } from '../../features/bot-analysis/botLiquidity.types';
+import { CONF_COLORS, type ConfluenceZone } from '../../features/bot-analysis/botConfluence.types';
 import { msToUtcSeconds, tfToMs } from '../../lib/time';
 
 interface Props {
@@ -46,9 +47,11 @@ interface Props {
   botFvgs: BotFvg[];
   botObs: BotOb[];
   botLiqs: BotLiquidity[];
+  botConfluences: ConfluenceZone[];
   botFvgVisible: boolean;
   botObVisible: boolean;
   botLiqVisible: boolean;
+  botConfVisible: boolean;
   selectedBotId: string | null;
   onSelectBot: (id: string | null) => void;
 }
@@ -62,7 +65,7 @@ interface LevelGeom { type: 'level'; id: string; kind: ManualMarkKind; y: number
 interface PlanGeom { type: 'plan'; id: string; side: 'LONG' | 'SHORT'; left: number; right: number; yEntry: number; ySL: number; yTP: number; }
 type Geom = ZoneGeom | LevelGeom | PlanGeom;
 // Geometría de una zona del bot (FVG u OB), read-only. color/label precalculados para el render.
-interface BotGeom { id: string; kind: 'fvg' | 'ob' | 'liq'; left: number; right: number; top: number; bottom: number; color: string; label: string; }
+interface BotGeom { id: string; kind: 'fvg' | 'ob' | 'liq' | 'conf'; left: number; right: number; top: number; bottom: number; color: string; label: string; }
 
 interface Hit { id: string; part: 'body' | 'line' | HandlePart | PlanPart }
 type Drag =
@@ -116,7 +119,7 @@ function fmtPrice(p: number | null): string {
 
 export function CandleChart(props: Props) {
   const { candles, viewKey, liveBar, marks, tool, selectedId, layerVisible, focusRequest } = props;
-  const { botFvgs, botObs, botLiqs, botFvgVisible, botObVisible, botLiqVisible, selectedBotId } = props;
+  const { botFvgs, botObs, botLiqs, botConfluences, botFvgVisible, botObVisible, botLiqVisible, botConfVisible, selectedBotId } = props;
   const hostRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -220,7 +223,7 @@ export function CandleChart(props: Props) {
     const rightEdge = chart.timeScale().width(); // px: borde derecho de las velas (tras rightOffset)
     const out: BotGeom[] = [];
     // Proyecta una zona [priceLow, priceHigh] desde su origen hasta el borde derecho (ray).
-    const pushZone = (id: string, kind: 'fvg' | 'ob' | 'liq', timeStart: number, priceLow: number, priceHigh: number, color: string, label: string) => {
+    const pushZone = (id: string, kind: 'fvg' | 'ob' | 'liq' | 'conf', timeStart: number, priceLow: number, priceHigh: number, color: string, label: string) => {
       const x1 = msToPx(timeStart);
       if (x1 == null || x1 > rightEdge) return; // origen aún no en vista → no proyectar atrás
       const yH = series.priceToCoordinate(priceHigh);
@@ -246,6 +249,12 @@ export function CandleChart(props: Props) {
         const eq = l.type === 'equalHigh' || l.type === 'equalLow' ? ` ×${l.touches}` : '';
         // Nivel = línea: priceLow === priceHigh === level → top === bottom.
         pushZone(l.id, 'liq', l.timeStart, l.level, l.level, LIQ_COLOR, `${short}${eq}`);
+      }
+    }
+    if (s.botConfVisible) {
+      // Al final → se dibuja ENCIMA (marco que resalta la zona base).
+      for (const z of s.botConfluences) {
+        pushZone(z.id, 'conf', z.timeStart, z.priceLow, z.priceHigh, CONF_COLORS[z.rating], `★ ${z.rating} ${z.score}`);
       }
     }
     return out;
@@ -533,7 +542,7 @@ export function CandleChart(props: Props) {
   useLayoutEffect(() => {
     recomputeImmediate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [marks, layerVisible, selectedId, tool, botFvgs, botObs, botLiqs, botFvgVisible, botObVisible, botLiqVisible, selectedBotId]);
+  }, [marks, layerVisible, selectedId, tool, botFvgs, botObs, botLiqs, botConfluences, botFvgVisible, botObVisible, botLiqVisible, botConfVisible, selectedBotId]);
 
   function setChartInteractive(on: boolean): void {
     chartRef.current?.applyOptions({ handleScroll: on, handleScale: on });
@@ -598,7 +607,7 @@ export function CandleChart(props: Props) {
     }
     // FVG del bot: solo seleccionable (read-only). No captura ni arrastra; si el usuario
     // arrastra, el chart paneará normalmente. Solo en modo Select para no estorbar al dibujar.
-    if (tool === 'Select' && (s.botFvgVisible || s.botObVisible || s.botLiqVisible)) {
+    if (tool === 'Select' && (s.botFvgVisible || s.botObVisible || s.botLiqVisible || s.botConfVisible)) {
       const botId = hitTestBot(x, y);
       if (botId) {
         s.onSelectBot(botId);
@@ -728,7 +737,7 @@ export function CandleChart(props: Props) {
       onPointerUp={onPointerUp}
     >
       <div ref={containerRef} className="candle-chart" />
-      {(botFvgVisible || botObVisible || botLiqVisible) && (
+      {(botFvgVisible || botObVisible || botLiqVisible || botConfVisible) && (
         <div className="bot-layer">
           {botGeoms.map((g) => {
             const selected = g.id === selectedBotId;
@@ -745,11 +754,13 @@ export function CandleChart(props: Props) {
               );
             }
             const h = Math.max(3, g.bottom - g.top);
+            // Confluencia = marco sin relleno (deja ver el OB/FVG debajo); el resto, caja con fondo.
+            const bg = g.kind === 'conf' ? 'transparent' : g.color + (selected ? '38' : '14');
             return (
               <div
                 key={g.id}
                 className={`bot-zone ${g.kind}${selected ? ' selected' : ''}`}
-                style={{ left: g.left, top: g.top, width: g.right - g.left, height: h, borderColor: g.color, background: g.color + (selected ? '38' : '14') }}
+                style={{ left: g.left, top: g.top, width: g.right - g.left, height: h, borderColor: g.color, background: bg }}
               >
                 <span className="bot-zone-label" style={{ color: g.color }}>{g.label}</span>
               </div>
