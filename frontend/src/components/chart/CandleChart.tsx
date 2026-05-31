@@ -202,23 +202,25 @@ export function CandleChart(props: Props) {
     return out;
   }
 
-  // Geometría de los FVG del bot. Solo gaps ACTIVOS (no filled), extendidos hacia la derecha
-  // hasta la última vela (el gap sin mitigar sigue vigente hasta hoy).
+  // Geometría de los FVG del bot. Solo gaps ACTIVOS (no filled). Se proyectan hacia la derecha
+  // hasta el BORDE del área de gráfico (timeScale().width(), que incluye el espacio futuro del
+  // rightOffset), no hasta la última vela: un FVG sin mitigar sigue vigente hacia el futuro,
+  // como un "ray" a la derecha. Esto es solo render; la detección causal no cambia.
   function computeBotGeoms(): BotFvgGeom[] {
     const chart = chartRef.current;
     const series = seriesRef.current;
     const s = stateRef.current;
     if (!chart || !series || !s.botLayerVisible || s.candles.length === 0) return [];
-    const lastMs = s.candles[s.candles.length - 1].openTime;
+    const rightEdge = chart.timeScale().width(); // px: borde derecho de las velas (tras rightOffset)
     const out: BotFvgGeom[] = [];
     for (const f of s.botFvgs) {
       if (f.state === 'filled') continue;
       const x1 = msToPx(f.timeStart);
-      const x2 = msToPx(Math.max(f.timeEnd, lastMs));
+      if (x1 == null || x1 > rightEdge) continue; // origen aún no en vista → no proyectar atrás
       const yH = series.priceToCoordinate(f.gapHigh);
       const yL = series.priceToCoordinate(f.gapLow);
-      if (x1 == null || x2 == null || yH == null || yL == null) continue;
-      out.push({ id: f.id, left: Math.min(x1, x2), right: Math.max(x1, x2), top: Math.min(yH, yL), bottom: Math.max(yH, yL), direction: f.direction, state: f.state });
+      if (yH == null || yL == null) continue;
+      out.push({ id: f.id, left: x1, right: rightEdge, top: Math.min(yH, yL), bottom: Math.max(yH, yL), direction: f.direction, state: f.state });
     }
     return out;
   }
