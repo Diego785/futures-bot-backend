@@ -6,6 +6,7 @@ import { detectOrderBlocks } from './ob.detector';
 import { detectLiquidity } from './liquidity.detector';
 import { scoreConfluence } from './confluence.scorer';
 import { detectSetups } from './setup.detector';
+import { generateTradePlans } from './trade-plan.generator';
 
 /**
  * Lectura automática del bot (Fase 5A/5B). Read-only sobre las velas locales: NO llama al
@@ -80,6 +81,21 @@ export class BotAnalysisController {
     const candles = rows.map((c) => ({ openTime: c.openTime, high: c.high, low: c.low, close: c.close }));
     const setups = detectSetups(q.symbol, q.tf, zones, obs, candles, lastClose);
     return { symbol: q.symbol, tf: q.tf, count: setups.length, setups };
+  }
+
+  // Trade Plans candidatos (Fase 5F-A): solo desde setups ARMED. SUGERENCIA, no orden (Regla Cero).
+  @Get('plans')
+  async plans(@Query() q: GetBotQueryDto) {
+    const rows = await this.closedCandles(q.symbol, q.tf, q.limit);
+    const lastClose = rows.length ? rows[rows.length - 1].close : 0;
+    const fvgs = detectStrictFvgs(q.symbol, q.tf, rows.map((c) => ({ openTime: c.openTime, high: c.high, low: c.low })));
+    const obs = detectOrderBlocks(q.symbol, q.tf, rows.map((c) => ({ openTime: c.openTime, open: c.open, high: c.high, low: c.low, close: c.close })));
+    const liqs = detectLiquidity(q.symbol, q.tf, rows.map((c) => ({ openTime: c.openTime, high: c.high, low: c.low, close: c.close })));
+    const zones = scoreConfluence(q.symbol, q.tf, fvgs, obs, liqs, lastClose);
+    const candles = rows.map((c) => ({ openTime: c.openTime, high: c.high, low: c.low, close: c.close }));
+    const setups = detectSetups(q.symbol, q.tf, zones, obs, candles, lastClose);
+    const plans = generateTradePlans(q.symbol, q.tf, setups, obs, liqs, lastClose);
+    return { symbol: q.symbol, tf: q.tf, count: plans.length, plans };
   }
 }
 
