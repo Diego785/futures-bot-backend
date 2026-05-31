@@ -18,6 +18,8 @@ import {
   patchMarkRemote,
   deleteMarkRemote,
 } from '../features/manual-marks/marks.api';
+import { fetchBotFvgs } from '../features/bot-analysis/botFvg.api';
+import type { BotFvg } from '../features/bot-analysis/botFvg.types';
 
 type Status = 'loading' | 'error' | 'ready';
 const PAGE = 500;
@@ -49,8 +51,24 @@ export function TradingCockpit() {
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('ALL');
   // Petición de centrar la gráfica en una marca (al hacer click en la lista del workspace).
   const [focusReq, setFocusReq] = useState<{ id: string; nonce: number } | null>(null);
-  function handleSelectFromList(id: string): void {
+
+  // ─── Lectura automática del bot: StrictFVG (Fase 5A) ───
+  const [botFvgs, setBotFvgs] = useState<BotFvg[]>([]);
+  const [botVisible, setBotVisible] = useState(true);
+  const [selectedBotId, setSelectedBotId] = useState<string | null>(null);
+  const selectedBotFvg = botFvgs.find((f) => f.id === selectedBotId) ?? null;
+
+  // Selección mutuamente excluyente: marca manual XOR FVG del bot.
+  function handleSelectMark(id: string | null): void {
     select(id);
+    if (id) setSelectedBotId(null);
+  }
+  function handleSelectBot(id: string | null): void {
+    setSelectedBotId(id);
+    if (id) select(null);
+  }
+  function handleSelectFromList(id: string): void {
+    handleSelectMark(id);
     setFocusReq((p) => ({ id, nonce: (p?.nonce ?? 0) + 1 }));
   }
 
@@ -245,6 +263,22 @@ export function TradingCockpit() {
     };
   }, [symbol, tf, reset]);
 
+  // Cargar los FVGs del bot al cambiar símbolo/tf (lectura read-only del backend).
+  useEffect(() => {
+    let cancelled = false;
+    setSelectedBotId(null);
+    fetchBotFvgs(symbol, tf)
+      .then((res) => {
+        if (!cancelled) setBotFvgs(res.fvgs);
+      })
+      .catch(() => {
+        if (!cancelled) setBotFvgs([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [symbol, tf]);
+
   // Limpia los timers de PATCH pendientes al desmontar.
   useEffect(() => {
     const timers = patchTimers.current;
@@ -307,10 +341,14 @@ export function TradingCockpit() {
           tf={tf}
           onHover={setHover}
           onCreateMark={handleCreateMark}
-          onSelectMark={select}
+          onSelectMark={handleSelectMark}
           onUpdateMark={handleUpdateMark}
           onDeleteMark={handleDeleteMark}
           focusRequest={focusReq}
+          botFvgs={botFvgs}
+          botLayerVisible={botVisible}
+          selectedBotId={selectedBotId}
+          onSelectBot={handleSelectBot}
         />
       </div>
     );
@@ -355,6 +393,9 @@ export function TradingCockpit() {
           onSelectMark={handleSelectFromList}
           typeFilter={typeFilter}
           onTypeFilter={setTypeFilter}
+          botVisible={botVisible}
+          onToggleBot={() => setBotVisible((v) => !v)}
+          botFvgCount={botFvgs.filter((f) => f.state !== 'filled').length}
         />
       }
       center={center}
@@ -365,6 +406,7 @@ export function TradingCockpit() {
           loaded={candles.length}
           hover={hover}
           selectedMark={selectedMark}
+          selectedBotFvg={selectedBotFvg}
           onUpdateMeta={handleUpdateMeta}
           onDeleteMark={handleDeleteMark}
         />

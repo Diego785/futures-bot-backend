@@ -42,6 +42,11 @@ body {
 
 /* Marcas manuales: la capa es solo visual; el hit-test se hace en JS sobre la gráfica. */
 .marks-layer { position: absolute; inset: 0; z-index: 4; pointer-events: none; }
+/* Capa de lectura del bot (Fase 5A): debajo de las marcas manuales, read-only */
+.bot-layer { position: absolute; inset: 0; z-index: 3; pointer-events: none; }
+.bot-fvg { position: absolute; border: 1px dashed; box-sizing: border-box; border-radius: 2px; }
+.bot-fvg.selected { box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.55) inset; }
+.bot-fvg-label { position: absolute; right: 2px; top: -1px; font-size: 9px; font-weight: 700; background: rgba(14, 15, 20, 0.6); padding: 0 2px; border-radius: 2px; }
 .zone-mark { position: absolute; border: 1px solid; box-sizing: border-box; border-radius: 2px; }
 .zone-mark.selected { box-shadow: 0 0 0 1px rgba(255,255,255,0.5) inset; }
 .fvg-mid { position: absolute; left: 0; right: 0; top: 50%; border-top: 1px dashed; opacity: 0.7; }

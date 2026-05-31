@@ -20,6 +20,9 @@ interface Props {
   onSelectMark: (id: string) => void;
   typeFilter: TypeFilter;
   onTypeFilter: (f: TypeFilter) => void;
+  botVisible: boolean;
+  onToggleBot: () => void;
+  botFvgCount: number;
 }
 
 const FILTERS: { key: TypeFilter; label: string }[] = [
@@ -52,6 +55,9 @@ export function LeftSidebar({
   onSelectMark,
   typeFilter,
   onTypeFilter,
+  botVisible,
+  onToggleBot,
+  botFvgCount,
 }: Props) {
   const counts = { OB: 0, FVG: 0, Liquidity: 0, TradePlan: 0 } as Record<ManualMarkKind, number>;
   for (const m of marks) counts[m.kind] += 1;
@@ -64,10 +70,26 @@ export function LeftSidebar({
     <div className="panel">
       <h3 className="panel-title">
         Workspace
-        <label className="layer-toggle" title="Mostrar/ocultar la capa de marcas">
-          <input type="checkbox" checked={marksVisible} onChange={onToggleMarks} /> capa
+        <label className="layer-toggle" title="Mostrar/ocultar mis marcas">
+          <input type="checkbox" checked={marksVisible} onChange={onToggleMarks} /> mis marcas
         </label>
       </h3>
+
+      {/* Capas del bot (lectura automática, read-only). Más capas en próximos slices. */}
+      <ul className="layer-list">
+        <li className="layer-item">
+          <label>
+            <input type="checkbox" checked={botVisible} onChange={onToggleBot} />{' '}
+            <span style={{ color: '#22d3ee' }}>Bot FVG</span> <span className="muted">({botFvgCount})</span>
+          </label>
+        </li>
+        {['Bot OB', 'Liquidez', 'Señales', 'Planes bot'].map((l) => (
+          <li key={l} className="layer-item disabled">
+            <input type="checkbox" disabled /> <span>{l}</span>
+          </li>
+        ))}
+      </ul>
+      <div className="divider" />
 
       <div className="ws-summary">
         <span>OB {counts.OB}</span>

@@ -9,6 +9,11 @@ import {
   STATUS_COLORS,
   type ManualMark,
 } from '../../features/manual-marks/manualMarks.types';
+import {
+  FVG_COLORS,
+  FVG_STATE_LABELS,
+  type BotFvg,
+} from '../../features/bot-analysis/botFvg.types';
 import { formatPrice } from '../../lib/price-format';
 import { formatUtc } from '../../lib/time';
 
@@ -26,6 +31,7 @@ interface Props {
   loaded: number;
   hover: Candle | null;
   selectedMark: ManualMark | null;
+  selectedBotFvg: BotFvg | null;
   onUpdateMeta: (id: string, patch: Partial<ManualMark>) => void;
   onDeleteMark: (id: string) => void;
 }
@@ -50,6 +56,7 @@ export function RightInspector({
   loaded,
   hover,
   selectedMark,
+  selectedBotFvg,
   onUpdateMeta,
   onDeleteMark,
 }: Props) {
@@ -61,7 +68,27 @@ export function RightInspector({
       <div className="kv"><span>Velas cargadas</span><b>{loaded}</b></div>
       <div className="divider" />
 
-      {selectedMark ? (
+      {selectedBotFvg ? (
+        <div className="mark-detail">
+          <div className="kv">
+            <span>Lectura del bot</span>
+            <b style={{ color: FVG_COLORS[selectedBotFvg.direction] }}>
+              FVG {selectedBotFvg.direction === 'bullish' ? 'alcista ▲' : 'bajista ▼'}
+            </b>
+          </div>
+          <div className="kv"><span>Estado</span><b>{FVG_STATE_LABELS[selectedBotFvg.state]} ({Math.round(selectedBotFvg.fillRatio * 100)}%)</b></div>
+          <div className="kv"><span>Gap</span><b>{formatPrice(selectedBotFvg.gapLow)}–{formatPrice(selectedBotFvg.gapHigh)}</b></div>
+          <div className="kv"><span>Tamaño gap</span><b>{formatPrice(selectedBotFvg.gapHigh - selectedBotFvg.gapLow)}</b></div>
+          <p className="hint">
+            Por qué: 3 velas consecutivas; la 2ª (desplazamiento) deja un hueco entre la 1ª y la
+            3ª que el precio no recorrió.
+          </p>
+          <div className="kv"><span>Vela 1</span><b>{formatUtc(selectedBotFvg.candle1Time)}</b></div>
+          <div className="kv"><span>Vela 2 (despl.)</span><b>{formatUtc(selectedBotFvg.candle2Time)}</b></div>
+          <div className="kv"><span>Vela 3</span><b>{formatUtc(selectedBotFvg.candle3Time)}</b></div>
+          <p className="hint">Lectura automática del bot — no es señal. Compárala con tu análisis.</p>
+        </div>
+      ) : selectedMark ? (
         <div className="mark-detail">
           <div className="kv">
             <span>Marca</span>
