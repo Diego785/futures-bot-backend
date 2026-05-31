@@ -24,6 +24,7 @@ import { OB_COLORS, type BotOb } from '../../features/bot-analysis/botOb.types';
 import { LIQ_COLOR, type BotLiquidity } from '../../features/bot-analysis/botLiquidity.types';
 import { CONF_DIR_COLORS, type ConfluenceZone } from '../../features/bot-analysis/botConfluence.types';
 import { SETUP_DIR_COLORS, type BotSetup } from '../../features/bot-analysis/botSetup.types';
+import { PLAN_SIDE_COLORS, type BotTradePlan } from '../../features/bot-analysis/botTradePlan.types';
 import { msToUtcSeconds, tfToMs } from '../../lib/time';
 
 interface Props {
@@ -50,11 +51,13 @@ interface Props {
   botLiqs: BotLiquidity[];
   botConfluences: ConfluenceZone[];
   botSetups: BotSetup[];
+  botPlans: BotTradePlan[];
   botFvgVisible: boolean;
   botObVisible: boolean;
   botLiqVisible: boolean;
   botConfVisible: boolean;
   botSetupVisible: boolean;
+  botPlanVisible: boolean;
   selectedBotId: string | null;
   onSelectBot: (id: string | null) => void;
 }
@@ -69,6 +72,8 @@ interface PlanGeom { type: 'plan'; id: string; side: 'LONG' | 'SHORT'; left: num
 type Geom = ZoneGeom | LevelGeom | PlanGeom;
 // Geometría de una zona del bot (FVG u OB), read-only. color/label precalculados para el render.
 interface BotGeom { id: string; kind: 'fvg' | 'ob' | 'liq' | 'conf' | 'setup'; left: number; right: number; top: number; bottom: number; color: string; label: string; tag?: string; }
+// Plan del bot: 3 niveles (entry/sl/tp) → render tipo posición (read-only).
+interface BotPlanGeom { id: string; side: 'LONG' | 'SHORT'; left: number; right: number; yEntry: number; ySL: number; yTP: number; label: string; minRrMet: boolean; }
 
 interface Hit { id: string; part: 'body' | 'line' | HandlePart | PlanPart }
 type Drag =
@@ -122,7 +127,7 @@ function fmtPrice(p: number | null): string {
 
 export function CandleChart(props: Props) {
   const { candles, viewKey, liveBar, marks, tool, selectedId, layerVisible, focusRequest } = props;
-  const { botFvgs, botObs, botLiqs, botConfluences, botSetups, botFvgVisible, botObVisible, botLiqVisible, botConfVisible, botSetupVisible, selectedBotId } = props;
+  const { botFvgs, botObs, botLiqs, botConfluences, botSetups, botPlans, botFvgVisible, botObVisible, botLiqVisible, botConfVisible, botSetupVisible, botPlanVisible, selectedBotId } = props;
   const hostRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -138,6 +143,7 @@ export function CandleChart(props: Props) {
   const emptyDown = useRef<{ x: number; y: number } | null>(null);
   const geomsRef = useRef<Geom[]>([]);
   const botGeomsRef = useRef<BotGeom[]>([]);
+  const botPlanGeomsRef = useRef<BotPlanGeom[]>([]);
   // Sincronización de overlays con el transform del chart (Slice 3A.1-c).
   const overlayRafRef = useRef<number | null>(null); // recompute coalescente (1/frame)
   const gestureRafRef = useRef<number | null>(null); // loop RAF mientras dura un gesto
@@ -148,6 +154,8 @@ export function CandleChart(props: Props) {
   geomsRef.current = geoms;
   const [botGeoms, setBotGeoms] = useState<BotGeom[]>([]);
   botGeomsRef.current = botGeoms;
+  const [botPlanGeoms, setBotPlanGeoms] = useState<BotPlanGeom[]>([]);
+  botPlanGeomsRef.current = botPlanGeoms;
   const [draft, setDraft] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
   const [hoverPart, setHoverPart] = useState<Hit['part'] | null>(null);
 
@@ -272,6 +280,26 @@ export function CandleChart(props: Props) {
     return out;
   }
 
+  // Geometría de los planes del bot (3 niveles). Se proyectan a la derecha (ray).
+  function computeBotPlanGeoms(): BotPlanGeom[] {
+    const chart = chartRef.current;
+    const series = seriesRef.current;
+    const s = stateRef.current;
+    if (!chart || !series || !s.botPlanVisible || s.candles.length === 0) return [];
+    const rightEdge = chart.timeScale().width();
+    const out: BotPlanGeom[] = [];
+    for (const p of s.botPlans) {
+      const x1 = msToPx(p.timeStart);
+      if (x1 == null || x1 > rightEdge) continue;
+      const yE = series.priceToCoordinate(p.entry);
+      const yS = series.priceToCoordinate(p.stopLoss);
+      const yT = series.priceToCoordinate(p.takeProfit);
+      if (yE == null || yS == null || yT == null) continue;
+      out.push({ id: p.id, side: p.side, left: x1, right: rightEdge, yEntry: yE, ySL: yS, yTP: yT, label: `BOT ${p.side} · R:R ${p.rr}`, minRrMet: p.minRrMet });
+    }
+    return out;
+  }
+
   // Firma en píxeles enteros: si no cambia, la geometría visible es idéntica.
   function geomSignature(gs: Geom[]): string {
     let s = '';
@@ -287,8 +315,13 @@ export function CandleChart(props: Props) {
     for (const g of gs) s += `${g.id}:${Math.round(g.left)},${Math.round(g.top)},${Math.round(g.right)},${Math.round(g.bottom)};`;
     return s;
   }
-  function combinedSignature(manual: Geom[], bot: BotGeom[]): string {
-    return geomSignature(manual) + '#' + botSignature(bot);
+  function planSignature(gs: BotPlanGeom[]): string {
+    let s = '';
+    for (const g of gs) s += `${g.id}:${Math.round(g.left)},${Math.round(g.yEntry)},${Math.round(g.ySL)},${Math.round(g.yTP)};`;
+    return s;
+  }
+  function combinedSignature(manual: Geom[], bot: BotGeom[], plans: BotPlanGeom[]): string {
+    return geomSignature(manual) + '#' + botSignature(bot) + '#' + planSignature(plans);
   }
 
   // Recalcula la geometría YA. Diff-guard: si en píxeles enteros nada cambió no hace
@@ -297,11 +330,13 @@ export function CandleChart(props: Props) {
     if (dragRef.current) return; // durante un drag propio, onPointerMove fija la geometría
     const next = computeGeoms();
     const nextBot = computeBotGeoms();
-    const sig = combinedSignature(next, nextBot);
+    const nextPlans = computeBotPlanGeoms();
+    const sig = combinedSignature(next, nextBot, nextPlans);
     if (sig === lastSigRef.current) return;
     lastSigRef.current = sig;
     setGeoms(next);
     setBotGeoms(nextBot);
+    setBotPlanGeoms(nextPlans);
   }
   // Coalescente: a lo sumo un recompute por frame (para eventos sueltos).
   function scheduleOverlayRecompute(): void {
@@ -321,7 +356,8 @@ export function CandleChart(props: Props) {
     if (dragRef.current) return; // no pelea con un drag propio en curso
     const next = computeGeoms();
     const nextBot = computeBotGeoms();
-    const sig = combinedSignature(next, nextBot);
+    const nextPlans = computeBotPlanGeoms();
+    const sig = combinedSignature(next, nextBot, nextPlans);
     if (sig === lastSigRef.current) return; // p.ej. cambio de selección: geometría idéntica
     if (overlayRafRef.current != null) {
       cancelAnimationFrame(overlayRafRef.current);
@@ -330,6 +366,7 @@ export function CandleChart(props: Props) {
     lastSigRef.current = sig;
     setGeoms(next);
     setBotGeoms(nextBot);
+    setBotPlanGeoms(nextPlans);
   }
 
   // Loop RAF temporal para gestos del chart que NO emiten evento — sobre todo el
@@ -363,6 +400,14 @@ export function CandleChart(props: Props) {
         const bottom = Math.max(g.bottom, g.top + 4);
         if (y >= g.top && y <= bottom) return g.id;
       }
+    }
+    const plans = botPlanGeomsRef.current;
+    for (let i = plans.length - 1; i >= 0; i--) {
+      const g = plans[i];
+      if (x < g.left || x > g.right) continue;
+      const top = Math.min(g.yEntry, g.ySL, g.yTP);
+      const bottom = Math.max(g.yEntry, g.ySL, g.yTP);
+      if (y >= top && y <= bottom) return g.id;
     }
     return null;
   }
@@ -554,7 +599,7 @@ export function CandleChart(props: Props) {
   useLayoutEffect(() => {
     recomputeImmediate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [marks, layerVisible, selectedId, tool, botFvgs, botObs, botLiqs, botConfluences, botSetups, botFvgVisible, botObVisible, botLiqVisible, botConfVisible, botSetupVisible, selectedBotId]);
+  }, [marks, layerVisible, selectedId, tool, botFvgs, botObs, botLiqs, botConfluences, botSetups, botPlans, botFvgVisible, botObVisible, botLiqVisible, botConfVisible, botSetupVisible, botPlanVisible, selectedBotId]);
 
   function setChartInteractive(on: boolean): void {
     chartRef.current?.applyOptions({ handleScroll: on, handleScale: on });
@@ -619,7 +664,7 @@ export function CandleChart(props: Props) {
     }
     // FVG del bot: solo seleccionable (read-only). No captura ni arrastra; si el usuario
     // arrastra, el chart paneará normalmente. Solo en modo Select para no estorbar al dibujar.
-    if (tool === 'Select' && (s.botFvgVisible || s.botObVisible || s.botLiqVisible || s.botConfVisible || s.botSetupVisible)) {
+    if (tool === 'Select' && (s.botFvgVisible || s.botObVisible || s.botLiqVisible || s.botConfVisible || s.botSetupVisible || s.botPlanVisible)) {
       const botId = hitTestBot(x, y);
       if (botId) {
         s.onSelectBot(botId);
@@ -749,7 +794,7 @@ export function CandleChart(props: Props) {
       onPointerUp={onPointerUp}
     >
       <div ref={containerRef} className="candle-chart" />
-      {(botFvgVisible || botObVisible || botLiqVisible || botConfVisible || botSetupVisible) && (
+      {(botFvgVisible || botObVisible || botLiqVisible || botConfVisible || botSetupVisible || botPlanVisible) && (
         <div className="bot-layer">
           {botGeoms.map((g) => {
             const selected = g.id === selectedBotId;
@@ -778,6 +823,22 @@ export function CandleChart(props: Props) {
               >
                 <span className={labelClass} style={{ color: g.color }}>{g.label}</span>
               </div>
+            );
+          })}
+          {botPlanGeoms.map((g) => {
+            const sel = g.id === selectedBotId;
+            const color = PLAN_SIDE_COLORS[g.side];
+            const w = g.right - g.left;
+            return (
+              <Fragment key={g.id}>
+                <div className="bot-plan-reward" style={{ left: g.left, top: Math.min(g.yEntry, g.yTP), width: w, height: Math.abs(g.yTP - g.yEntry) }} />
+                <div className="bot-plan-risk" style={{ left: g.left, top: Math.min(g.yEntry, g.ySL), width: w, height: Math.abs(g.ySL - g.yEntry) }} />
+                <div className="bot-plan-line tp" style={{ left: g.left, top: g.yTP, width: w }} />
+                <div className="bot-plan-line sl" style={{ left: g.left, top: g.ySL, width: w }} />
+                <div className={`bot-plan-line entry${sel ? ' selected' : ''}`} style={{ left: g.left, top: g.yEntry, width: w, borderColor: color }}>
+                  <span className="bot-plan-label" style={{ color }}>{g.label}{g.minRrMet ? '' : ' ⚠'}</span>
+                </div>
+              </Fragment>
             );
           })}
         </div>

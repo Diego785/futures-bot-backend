@@ -30,6 +30,7 @@ import {
   SETUP_STATE_LABELS,
   type BotSetup,
 } from '../../features/bot-analysis/botSetup.types';
+import { PLAN_SIDE_COLORS, type BotTradePlan } from '../../features/bot-analysis/botTradePlan.types';
 import { formatPrice } from '../../lib/price-format';
 import { formatUtc } from '../../lib/time';
 
@@ -52,6 +53,7 @@ interface Props {
   selectedBotLiq: BotLiquidity | null;
   selectedBotConf: ConfluenceZone | null;
   selectedBotSetup: BotSetup | null;
+  selectedBotPlan: BotTradePlan | null;
   onUpdateMeta: (id: string, patch: Partial<ManualMark>) => void;
   onDeleteMark: (id: string) => void;
 }
@@ -81,6 +83,7 @@ export function RightInspector({
   selectedBotLiq,
   selectedBotConf,
   selectedBotSetup,
+  selectedBotPlan,
   onUpdateMeta,
   onDeleteMark,
 }: Props) {
@@ -92,7 +95,33 @@ export function RightInspector({
       <div className="kv"><span>Velas cargadas</span><b>{loaded}</b></div>
       <div className="divider" />
 
-      {selectedBotSetup ? (
+      {selectedBotPlan ? (
+        <div className="mark-detail">
+          <div className="kv">
+            <span>Lectura del bot</span>
+            <b style={{ color: PLAN_SIDE_COLORS[selectedBotPlan.side] }}>
+              Plan {selectedBotPlan.side} (candidato)
+            </b>
+          </div>
+          <div className="kv"><span>Entry</span><b>{formatPrice(selectedBotPlan.entry)}</b></div>
+          <div className="kv"><span>Stop Loss</span><b style={{ color: '#ef5350' }}>{formatPrice(selectedBotPlan.stopLoss)}</b></div>
+          <div className="kv"><span>Take Profit</span><b style={{ color: '#22c55e' }}>{formatPrice(selectedBotPlan.takeProfit)}</b></div>
+          <div className="kv"><span>R:R</span><b>{selectedBotPlan.rr}{selectedBotPlan.minRrMet ? '' : ' ⚠ <2'}</b></div>
+          <div className="kv"><span>TP en</span><b>{selectedBotPlan.tpSource === 'liquidity' ? 'liquidez opuesta' : 'R:R objetivo (sin liquidez)'}</b></div>
+          <div className="kv"><span>Confluencia</span><b>{selectedBotPlan.confluenceRating} (score {selectedBotPlan.score})</b></div>
+          <div className="kv"><span>Distancia al precio</span><b>{selectedBotPlan.distancePct}%</b></div>
+          <p className="hint">
+            Por qué {selectedBotPlan.side}: setup ARMED de contexto
+            {selectedBotPlan.side === 'LONG' ? ' alcista' : ' bajista'} (por confirmación, no al toque).
+            Entry = mid del OB de confirmación; SL {selectedBotPlan.side === 'LONG' ? 'debajo' : 'encima'} del
+            OB; TP = {selectedBotPlan.tpSource === 'liquidity' ? 'liquidez opuesta más cercana' : 'objetivo R:R (no había liquidez clara)'}.
+          </p>
+          <p className="hint">
+            La invalidaría: un cierre {selectedBotPlan.side === 'LONG' ? 'por debajo' : 'por encima'} del SL.
+            ⚠ Candidato del bot — NO es orden ni ejecuta (Regla Cero). Compáralo con tu lectura y decide tú.
+          </p>
+        </div>
+      ) : selectedBotSetup ? (
         <div className="mark-detail">
           <div className="kv">
             <span>Lectura del bot</span>

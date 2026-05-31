@@ -35,6 +35,9 @@ interface Props {
   botSetupVisible: boolean;
   onToggleSetup: () => void;
   botSetupCount: number;
+  botPlanVisible: boolean;
+  onTogglePlan: () => void;
+  botPlanCount: number;
 }
 
 const FILTERS: { key: TypeFilter; label: string }[] = [
@@ -82,6 +85,9 @@ export function LeftSidebar({
   botSetupVisible,
   onToggleSetup,
   botSetupCount,
+  botPlanVisible,
+  onTogglePlan,
+  botPlanCount,
 }: Props) {
   const counts = { OB: 0, FVG: 0, Liquidity: 0, TradePlan: 0 } as Record<ManualMarkKind, number>;
   for (const m of marks) counts[m.kind] += 1;
@@ -131,11 +137,12 @@ export function LeftSidebar({
             <span style={{ color: '#e2e8f0' }}>Setups</span> <span className="muted">({botSetupCount})</span>
           </label>
         </li>
-        {['Planes bot'].map((l) => (
-          <li key={l} className="layer-item disabled">
-            <input type="checkbox" disabled /> <span>{l}</span>
-          </li>
-        ))}
+        <li className="layer-item">
+          <label>
+            <input type="checkbox" checked={botPlanVisible} onChange={onTogglePlan} />{' '}
+            <span style={{ color: '#e2e8f0' }}>Planes bot</span> <span className="muted">({botPlanCount})</span>
+          </label>
+        </li>
       </ul>
       <div className="divider" />
 

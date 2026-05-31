@@ -28,6 +28,8 @@ import { fetchBotConfluence } from '../features/bot-analysis/botConfluence.api';
 import type { ConfluenceZone } from '../features/bot-analysis/botConfluence.types';
 import { fetchBotSetups } from '../features/bot-analysis/botSetup.api';
 import type { BotSetup } from '../features/bot-analysis/botSetup.types';
+import { fetchBotPlans } from '../features/bot-analysis/botTradePlan.api';
+import type { BotTradePlan } from '../features/bot-analysis/botTradePlan.types';
 
 type Status = 'loading' | 'error' | 'ready';
 const PAGE = 500;
@@ -66,17 +68,20 @@ export function TradingCockpit() {
   const [botLiqs, setBotLiqs] = useState<BotLiquidity[]>([]);
   const [botConfluences, setBotConfluences] = useState<ConfluenceZone[]>([]);
   const [botSetups, setBotSetups] = useState<BotSetup[]>([]);
+  const [botPlans, setBotPlans] = useState<BotTradePlan[]>([]);
   const [botFvgVisible, setBotFvgVisible] = useState(true);
   const [botObVisible, setBotObVisible] = useState(true);
   const [botLiqVisible, setBotLiqVisible] = useState(true);
   const [botConfVisible, setBotConfVisible] = useState(true);
   const [botSetupVisible, setBotSetupVisible] = useState(true);
+  const [botPlanVisible, setBotPlanVisible] = useState(true);
   const [selectedBotId, setSelectedBotId] = useState<string | null>(null);
   const selectedBotFvg = botFvgs.find((f) => f.id === selectedBotId) ?? null;
   const selectedBotOb = botObs.find((o) => o.id === selectedBotId) ?? null;
   const selectedBotLiq = botLiqs.find((l) => l.id === selectedBotId) ?? null;
   const selectedBotConf = botConfluences.find((z) => z.id === selectedBotId) ?? null;
   const selectedBotSetup = botSetups.find((su) => su.id === selectedBotId) ?? null;
+  const selectedBotPlan = botPlans.find((pl) => pl.id === selectedBotId) ?? null;
 
   // Selección mutuamente excluyente: marca manual XOR FVG del bot.
   function handleSelectMark(id: string | null): void {
@@ -322,6 +327,13 @@ export function TradingCockpit() {
       .catch(() => {
         if (!cancelled) setBotSetups([]);
       });
+    fetchBotPlans(symbol, tf)
+      .then((res) => {
+        if (!cancelled) setBotPlans(res.plans);
+      })
+      .catch(() => {
+        if (!cancelled) setBotPlans([]);
+      });
     return () => {
       cancelled = true;
     };
@@ -398,11 +410,13 @@ export function TradingCockpit() {
           botLiqs={botLiqs}
           botConfluences={botConfluences}
           botSetups={botSetups}
+          botPlans={botPlans}
           botFvgVisible={botFvgVisible}
           botObVisible={botObVisible}
           botLiqVisible={botLiqVisible}
           botConfVisible={botConfVisible}
           botSetupVisible={botSetupVisible}
+          botPlanVisible={botPlanVisible}
           selectedBotId={selectedBotId}
           onSelectBot={handleSelectBot}
         />
@@ -464,6 +478,9 @@ export function TradingCockpit() {
           botSetupVisible={botSetupVisible}
           onToggleSetup={() => setBotSetupVisible((v) => !v)}
           botSetupCount={botSetups.length}
+          botPlanVisible={botPlanVisible}
+          onTogglePlan={() => setBotPlanVisible((v) => !v)}
+          botPlanCount={botPlans.length}
         />
       }
       center={center}
@@ -479,6 +496,7 @@ export function TradingCockpit() {
           selectedBotLiq={selectedBotLiq}
           selectedBotConf={selectedBotConf}
           selectedBotSetup={selectedBotSetup}
+          selectedBotPlan={selectedBotPlan}
           onUpdateMeta={handleUpdateMeta}
           onDeleteMark={handleDeleteMark}
         />
