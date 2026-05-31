@@ -76,11 +76,23 @@ body {
 .bot-plan-line.sl { border-top: 1px dashed #ef5350; }
 .bot-plan-line.entry { border-top: 1px solid; }
 .bot-plan-line.entry.selected { border-top-width: 2px; }
+.bot-plan-line.entry.risk { border-top-style: dashed; } /* entrada por riesgo = entry punteado */
 .bot-plan-label {
   position: absolute; right: 2px; top: -16px; z-index: 6;
   font-size: 10px; font-weight: 800; padding: 1px 5px; border-radius: 3px;
   background: rgba(14, 15, 20, 0.92); border: 1px solid currentColor; white-space: nowrap;
 }
+
+/* Lista de planes del bot (panel inferior, 5F-B) */
+.plans-header { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 6px; font-size: 12px; }
+.plans-table { display: flex; flex-direction: column; overflow-y: auto; font-size: 12px; }
+.plans-row {
+  display: grid; grid-template-columns: 52px 56px 1fr 1fr 1fr 56px 52px 84px; gap: 6px;
+  padding: 3px 6px; border-radius: 4px; cursor: pointer; align-items: center; white-space: nowrap;
+}
+.plans-row.head { color: var(--muted); font-size: 10px; text-transform: uppercase; cursor: default; position: sticky; top: 0; background: var(--panel-2); }
+.plans-row:not(.head):hover { background: var(--panel-2); }
+.plans-row.selected { background: #1d2740; }
 .bot-zone.selected { box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.55) inset; }
 .bot-zone-label { position: absolute; right: 2px; top: -1px; font-size: 9px; font-weight: 700; background: rgba(14, 15, 20, 0.6); padding: 0 2px; border-radius: 2px; }
 .zone-mark { position: absolute; border: 1px solid; box-sizing: border-box; border-radius: 2px; }

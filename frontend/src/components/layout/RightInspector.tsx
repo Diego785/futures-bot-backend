@@ -30,7 +30,12 @@ import {
   SETUP_STATE_LABELS,
   type BotSetup,
 } from '../../features/bot-analysis/botSetup.types';
-import { PLAN_SIDE_COLORS, type BotTradePlan } from '../../features/bot-analysis/botTradePlan.types';
+import {
+  PLAN_SIDE_COLORS,
+  OPERABILITY_LABELS,
+  OPERABILITY_COLORS,
+  type BotTradePlan,
+} from '../../features/bot-analysis/botTradePlan.types';
 import { formatPrice } from '../../lib/price-format';
 import { formatUtc } from '../../lib/time';
 
@@ -103,6 +108,13 @@ export function RightInspector({
               Plan {selectedBotPlan.side} (candidato)
             </b>
           </div>
+          <div className="kv"><span>Modo</span><b>{selectedBotPlan.mode === 'risk' ? 'Riesgo (al toque)' : 'Confirmación'}</b></div>
+          <div className="kv">
+            <span>Operabilidad</span>
+            <b style={{ color: OPERABILITY_COLORS[selectedBotPlan.operability] }}>
+              {OPERABILITY_LABELS[selectedBotPlan.operability]} ({selectedBotPlan.entryDistancePct}% al Entry)
+            </b>
+          </div>
           <div className="kv"><span>Entry</span><b>{formatPrice(selectedBotPlan.entry)}</b></div>
           <div className="kv"><span>Stop Loss</span><b style={{ color: '#ef5350' }}>{formatPrice(selectedBotPlan.stopLoss)}</b></div>
           <div className="kv"><span>Take Profit</span><b style={{ color: '#22c55e' }}>{formatPrice(selectedBotPlan.takeProfit)}</b></div>
@@ -115,6 +127,15 @@ export function RightInspector({
             {selectedBotPlan.side === 'LONG' ? ' alcista' : ' bajista'} (por confirmación, no al toque).
             Entry = mid del OB de confirmación; SL {selectedBotPlan.side === 'LONG' ? 'debajo' : 'encima'} del
             OB; TP = {selectedBotPlan.tpSource === 'liquidity' ? 'liquidez opuesta más cercana' : 'objetivo R:R (no había liquidez clara)'}.
+          </p>
+          <p className="hint">
+            Para operar ahora:{' '}
+            {selectedBotPlan.operability === 'NEAR'
+              ? 'el precio está cerca del Entry.'
+              : selectedBotPlan.operability === 'FAR'
+                ? 'el precio está algo lejos del Entry; espera aproximación.'
+                : `el precio está lejos (${selectedBotPlan.entryDistancePct}%): es contexto estructural, no entrada inmediata.`}
+            {selectedBotPlan.mode === 'risk' ? ' Además es modo riesgo (sin confirmación): más agresivo.' : ''}
           </p>
           <p className="hint">
             La invalidaría: un cierre {selectedBotPlan.side === 'LONG' ? 'por debajo' : 'por encima'} del SL.

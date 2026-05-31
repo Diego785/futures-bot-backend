@@ -57,7 +57,8 @@ interface Props {
   botLiqVisible: boolean;
   botConfVisible: boolean;
   botSetupVisible: boolean;
-  botPlanVisible: boolean;
+  botPlanConfVisible: boolean;
+  botPlanRiskVisible: boolean;
   selectedBotId: string | null;
   onSelectBot: (id: string | null) => void;
 }
@@ -73,7 +74,7 @@ type Geom = ZoneGeom | LevelGeom | PlanGeom;
 // Geometría de una zona del bot (FVG u OB), read-only. color/label precalculados para el render.
 interface BotGeom { id: string; kind: 'fvg' | 'ob' | 'liq' | 'conf' | 'setup'; left: number; right: number; top: number; bottom: number; color: string; label: string; tag?: string; }
 // Plan del bot: 3 niveles (entry/sl/tp) → render tipo posición (read-only).
-interface BotPlanGeom { id: string; side: 'LONG' | 'SHORT'; left: number; right: number; yEntry: number; ySL: number; yTP: number; label: string; minRrMet: boolean; }
+interface BotPlanGeom { id: string; side: 'LONG' | 'SHORT'; mode: 'confirmation' | 'risk'; left: number; right: number; yEntry: number; ySL: number; yTP: number; label: string; minRrMet: boolean; }
 
 interface Hit { id: string; part: 'body' | 'line' | HandlePart | PlanPart }
 type Drag =
@@ -127,7 +128,7 @@ function fmtPrice(p: number | null): string {
 
 export function CandleChart(props: Props) {
   const { candles, viewKey, liveBar, marks, tool, selectedId, layerVisible, focusRequest } = props;
-  const { botFvgs, botObs, botLiqs, botConfluences, botSetups, botPlans, botFvgVisible, botObVisible, botLiqVisible, botConfVisible, botSetupVisible, botPlanVisible, selectedBotId } = props;
+  const { botFvgs, botObs, botLiqs, botConfluences, botSetups, botPlans, botFvgVisible, botObVisible, botLiqVisible, botConfVisible, botSetupVisible, botPlanConfVisible, botPlanRiskVisible, selectedBotId } = props;
   const hostRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -285,17 +286,19 @@ export function CandleChart(props: Props) {
     const chart = chartRef.current;
     const series = seriesRef.current;
     const s = stateRef.current;
-    if (!chart || !series || !s.botPlanVisible || s.candles.length === 0) return [];
+    if (!chart || !series || s.candles.length === 0) return [];
     const rightEdge = chart.timeScale().width();
     const out: BotPlanGeom[] = [];
     for (const p of s.botPlans) {
+      const modeOn = p.mode === 'risk' ? s.botPlanRiskVisible : s.botPlanConfVisible;
+      if (!modeOn && p.id !== s.selectedBotId) continue; // el seleccionado siempre se dibuja (lo eliges en la lista)
       const x1 = msToPx(p.timeStart);
       if (x1 == null || x1 > rightEdge) continue;
       const yE = series.priceToCoordinate(p.entry);
       const yS = series.priceToCoordinate(p.stopLoss);
       const yT = series.priceToCoordinate(p.takeProfit);
       if (yE == null || yS == null || yT == null) continue;
-      out.push({ id: p.id, side: p.side, left: x1, right: rightEdge, yEntry: yE, ySL: yS, yTP: yT, label: `BOT ${p.side} · R:R ${p.rr}`, minRrMet: p.minRrMet });
+      out.push({ id: p.id, side: p.side, mode: p.mode, left: x1, right: rightEdge, yEntry: yE, ySL: yS, yTP: yT, label: `BOT ${p.mode === 'risk' ? 'RISK ' : ''}${p.side} · R:R ${p.rr}`, minRrMet: p.minRrMet });
     }
     return out;
   }
@@ -578,10 +581,15 @@ export function CandleChart(props: Props) {
     const chart = chartRef.current;
     const cs = stateRef.current.candles;
     if (!chart || cs.length === 0) return;
+    // Centra una marca manual o un plan del bot (al elegirlo en la lista).
     const m = stateRef.current.marks.find((x) => x.id === focusRequest.id);
-    if (!m) return;
-    // Centro temporal de la marca; niveles (Liquidity) abarcan todo el ancho → no se centran.
-    const t = m.timeStart != null ? (m.timeEnd != null ? (m.timeStart + m.timeEnd) / 2 : m.timeStart) : null;
+    let t: number | null = null;
+    if (m) {
+      t = m.timeStart != null ? (m.timeEnd != null ? (m.timeStart + m.timeEnd) / 2 : m.timeStart) : null;
+    } else {
+      const pl = stateRef.current.botPlans.find((x) => x.id === focusRequest.id);
+      if (pl) t = pl.timeStart;
+    }
     if (t == null) return;
     const lastMs = cs[cs.length - 1].openTime;
     const logical = (cs.length - 1) + (t - lastMs) / tfToMs(stateRef.current.tf);
@@ -599,7 +607,7 @@ export function CandleChart(props: Props) {
   useLayoutEffect(() => {
     recomputeImmediate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [marks, layerVisible, selectedId, tool, botFvgs, botObs, botLiqs, botConfluences, botSetups, botPlans, botFvgVisible, botObVisible, botLiqVisible, botConfVisible, botSetupVisible, botPlanVisible, selectedBotId]);
+  }, [marks, layerVisible, selectedId, tool, botFvgs, botObs, botLiqs, botConfluences, botSetups, botPlans, botFvgVisible, botObVisible, botLiqVisible, botConfVisible, botSetupVisible, botPlanConfVisible, botPlanRiskVisible, selectedBotId]);
 
   function setChartInteractive(on: boolean): void {
     chartRef.current?.applyOptions({ handleScroll: on, handleScale: on });
@@ -664,7 +672,7 @@ export function CandleChart(props: Props) {
     }
     // FVG del bot: solo seleccionable (read-only). No captura ni arrastra; si el usuario
     // arrastra, el chart paneará normalmente. Solo en modo Select para no estorbar al dibujar.
-    if (tool === 'Select' && (s.botFvgVisible || s.botObVisible || s.botLiqVisible || s.botConfVisible || s.botSetupVisible || s.botPlanVisible)) {
+    if (tool === 'Select' && (s.botFvgVisible || s.botObVisible || s.botLiqVisible || s.botConfVisible || s.botSetupVisible || s.botPlanConfVisible || s.botPlanRiskVisible)) {
       const botId = hitTestBot(x, y);
       if (botId) {
         s.onSelectBot(botId);
@@ -794,8 +802,7 @@ export function CandleChart(props: Props) {
       onPointerUp={onPointerUp}
     >
       <div ref={containerRef} className="candle-chart" />
-      {(botFvgVisible || botObVisible || botLiqVisible || botConfVisible || botSetupVisible || botPlanVisible) && (
-        <div className="bot-layer">
+      <div className="bot-layer">
           {botGeoms.map((g) => {
             const selected = g.id === selectedBotId;
             if (g.kind === 'liq') {
@@ -825,24 +832,26 @@ export function CandleChart(props: Props) {
               </div>
             );
           })}
-          {botPlanGeoms.map((g) => {
-            const sel = g.id === selectedBotId;
-            const color = PLAN_SIDE_COLORS[g.side];
-            const w = g.right - g.left;
-            return (
-              <Fragment key={g.id}>
-                <div className="bot-plan-reward" style={{ left: g.left, top: Math.min(g.yEntry, g.yTP), width: w, height: Math.abs(g.yTP - g.yEntry) }} />
-                <div className="bot-plan-risk" style={{ left: g.left, top: Math.min(g.yEntry, g.ySL), width: w, height: Math.abs(g.ySL - g.yEntry) }} />
-                <div className="bot-plan-line tp" style={{ left: g.left, top: g.yTP, width: w }} />
-                <div className="bot-plan-line sl" style={{ left: g.left, top: g.ySL, width: w }} />
-                <div className={`bot-plan-line entry${sel ? ' selected' : ''}`} style={{ left: g.left, top: g.yEntry, width: w, borderColor: color }}>
-                  <span className="bot-plan-label" style={{ color }}>{g.label}{g.minRrMet ? '' : ' ⚠'}</span>
+          {[...botPlanGeoms]
+            .sort((a, b) => (a.id === selectedBotId ? 1 : 0) - (b.id === selectedBotId ? 1 : 0))
+            .map((g) => {
+              const sel = g.id === selectedBotId;
+              const color = PLAN_SIDE_COLORS[g.side];
+              const w = g.right - g.left;
+              // Atenúa los no seleccionados y solo etiqueta el seleccionado → evita el solapamiento.
+              return (
+                <div key={g.id} style={{ opacity: sel ? 1 : 0.28 }}>
+                  <div className="bot-plan-reward" style={{ left: g.left, top: Math.min(g.yEntry, g.yTP), width: w, height: Math.abs(g.yTP - g.yEntry) }} />
+                  <div className="bot-plan-risk" style={{ left: g.left, top: Math.min(g.yEntry, g.ySL), width: w, height: Math.abs(g.ySL - g.yEntry) }} />
+                  <div className="bot-plan-line tp" style={{ left: g.left, top: g.yTP, width: w }} />
+                  <div className="bot-plan-line sl" style={{ left: g.left, top: g.ySL, width: w }} />
+                  <div className={`bot-plan-line entry${g.mode === 'risk' ? ' risk' : ''}${sel ? ' selected' : ''}`} style={{ left: g.left, top: g.yEntry, width: w, borderColor: color }}>
+                    {sel && <span className="bot-plan-label" style={{ color }}>{g.label}{g.minRrMet ? '' : ' ⚠'}</span>}
+                  </div>
                 </div>
-              </Fragment>
-            );
-          })}
+              );
+            })}
         </div>
-      )}
       {layerVisible && (
         <div className="marks-layer">
           {geoms.map((g) => {

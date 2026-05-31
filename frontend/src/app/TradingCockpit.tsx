@@ -74,7 +74,8 @@ export function TradingCockpit() {
   const [botLiqVisible, setBotLiqVisible] = useState(true);
   const [botConfVisible, setBotConfVisible] = useState(true);
   const [botSetupVisible, setBotSetupVisible] = useState(true);
-  const [botPlanVisible, setBotPlanVisible] = useState(true);
+  const [botPlanConfVisible, setBotPlanConfVisible] = useState(true);
+  const [botPlanRiskVisible, setBotPlanRiskVisible] = useState(false); // byRisk apagado por defecto
   const [selectedBotId, setSelectedBotId] = useState<string | null>(null);
   const selectedBotFvg = botFvgs.find((f) => f.id === selectedBotId) ?? null;
   const selectedBotOb = botObs.find((o) => o.id === selectedBotId) ?? null;
@@ -94,6 +95,11 @@ export function TradingCockpit() {
   }
   function handleSelectFromList(id: string): void {
     handleSelectMark(id);
+    setFocusReq((p) => ({ id, nonce: (p?.nonce ?? 0) + 1 }));
+  }
+  // Desde la lista de planes (panel inferior): selecciona el plan del bot y centra la gráfica.
+  function handleSelectPlan(id: string): void {
+    handleSelectBot(id);
     setFocusReq((p) => ({ id, nonce: (p?.nonce ?? 0) + 1 }));
   }
 
@@ -416,7 +422,8 @@ export function TradingCockpit() {
           botLiqVisible={botLiqVisible}
           botConfVisible={botConfVisible}
           botSetupVisible={botSetupVisible}
-          botPlanVisible={botPlanVisible}
+          botPlanConfVisible={botPlanConfVisible}
+          botPlanRiskVisible={botPlanRiskVisible}
           selectedBotId={selectedBotId}
           onSelectBot={handleSelectBot}
         />
@@ -478,9 +485,12 @@ export function TradingCockpit() {
           botSetupVisible={botSetupVisible}
           onToggleSetup={() => setBotSetupVisible((v) => !v)}
           botSetupCount={botSetups.length}
-          botPlanVisible={botPlanVisible}
-          onTogglePlan={() => setBotPlanVisible((v) => !v)}
-          botPlanCount={botPlans.length}
+          botPlanConfVisible={botPlanConfVisible}
+          onTogglePlanConf={() => setBotPlanConfVisible((v) => !v)}
+          botPlanConfCount={botPlans.filter((p) => p.mode === 'confirmation').length}
+          botPlanRiskVisible={botPlanRiskVisible}
+          onTogglePlanRisk={() => setBotPlanRiskVisible((v) => !v)}
+          botPlanRiskCount={botPlans.filter((p) => p.mode === 'risk').length}
         />
       }
       center={center}
@@ -501,7 +511,15 @@ export function TradingCockpit() {
           onDeleteMark={handleDeleteMark}
         />
       }
-      bottom={<BottomPanel />}
+      bottom={
+        <BottomPanel
+          plans={botPlans}
+          selectedId={selectedBotId}
+          onSelect={handleSelectPlan}
+          confCount={botPlans.filter((p) => p.mode === 'confirmation').length}
+          riskCount={botPlans.filter((p) => p.mode === 'risk').length}
+        />
+      }
     />
   );
 }
