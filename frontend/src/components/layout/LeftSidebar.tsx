@@ -20,9 +20,12 @@ interface Props {
   onSelectMark: (id: string) => void;
   typeFilter: TypeFilter;
   onTypeFilter: (f: TypeFilter) => void;
-  botVisible: boolean;
-  onToggleBot: () => void;
+  botFvgVisible: boolean;
+  onToggleFvg: () => void;
   botFvgCount: number;
+  botObVisible: boolean;
+  onToggleOb: () => void;
+  botObCount: number;
 }
 
 const FILTERS: { key: TypeFilter; label: string }[] = [
@@ -55,9 +58,12 @@ export function LeftSidebar({
   onSelectMark,
   typeFilter,
   onTypeFilter,
-  botVisible,
-  onToggleBot,
+  botFvgVisible,
+  onToggleFvg,
   botFvgCount,
+  botObVisible,
+  onToggleOb,
+  botObCount,
 }: Props) {
   const counts = { OB: 0, FVG: 0, Liquidity: 0, TradePlan: 0 } as Record<ManualMarkKind, number>;
   for (const m of marks) counts[m.kind] += 1;
@@ -79,11 +85,17 @@ export function LeftSidebar({
       <ul className="layer-list">
         <li className="layer-item">
           <label>
-            <input type="checkbox" checked={botVisible} onChange={onToggleBot} />{' '}
+            <input type="checkbox" checked={botFvgVisible} onChange={onToggleFvg} />{' '}
             <span style={{ color: '#22d3ee' }}>Bot FVG</span> <span className="muted">({botFvgCount})</span>
           </label>
         </li>
-        {['Bot OB', 'Liquidez', 'Señales', 'Planes bot'].map((l) => (
+        <li className="layer-item">
+          <label>
+            <input type="checkbox" checked={botObVisible} onChange={onToggleOb} />{' '}
+            <span style={{ color: '#34d399' }}>Bot OB</span> <span className="muted">({botObCount})</span>
+          </label>
+        </li>
+        {['Liquidez', 'Señales', 'Planes bot'].map((l) => (
           <li key={l} className="layer-item disabled">
             <input type="checkbox" disabled /> <span>{l}</span>
           </li>

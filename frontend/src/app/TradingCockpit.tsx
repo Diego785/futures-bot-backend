@@ -20,6 +20,8 @@ import {
 } from '../features/manual-marks/marks.api';
 import { fetchBotFvgs } from '../features/bot-analysis/botFvg.api';
 import type { BotFvg } from '../features/bot-analysis/botFvg.types';
+import { fetchBotObs } from '../features/bot-analysis/botOb.api';
+import type { BotOb } from '../features/bot-analysis/botOb.types';
 
 type Status = 'loading' | 'error' | 'ready';
 const PAGE = 500;
@@ -54,9 +56,12 @@ export function TradingCockpit() {
 
   // ─── Lectura automática del bot: StrictFVG (Fase 5A) ───
   const [botFvgs, setBotFvgs] = useState<BotFvg[]>([]);
-  const [botVisible, setBotVisible] = useState(true);
+  const [botObs, setBotObs] = useState<BotOb[]>([]);
+  const [botFvgVisible, setBotFvgVisible] = useState(true);
+  const [botObVisible, setBotObVisible] = useState(true);
   const [selectedBotId, setSelectedBotId] = useState<string | null>(null);
   const selectedBotFvg = botFvgs.find((f) => f.id === selectedBotId) ?? null;
+  const selectedBotOb = botObs.find((o) => o.id === selectedBotId) ?? null;
 
   // Selección mutuamente excluyente: marca manual XOR FVG del bot.
   function handleSelectMark(id: string | null): void {
@@ -274,6 +279,13 @@ export function TradingCockpit() {
       .catch(() => {
         if (!cancelled) setBotFvgs([]);
       });
+    fetchBotObs(symbol, tf)
+      .then((res) => {
+        if (!cancelled) setBotObs(res.obs);
+      })
+      .catch(() => {
+        if (!cancelled) setBotObs([]);
+      });
     return () => {
       cancelled = true;
     };
@@ -346,7 +358,9 @@ export function TradingCockpit() {
           onDeleteMark={handleDeleteMark}
           focusRequest={focusReq}
           botFvgs={botFvgs}
-          botLayerVisible={botVisible}
+          botObs={botObs}
+          botFvgVisible={botFvgVisible}
+          botObVisible={botObVisible}
           selectedBotId={selectedBotId}
           onSelectBot={handleSelectBot}
         />
@@ -393,9 +407,12 @@ export function TradingCockpit() {
           onSelectMark={handleSelectFromList}
           typeFilter={typeFilter}
           onTypeFilter={setTypeFilter}
-          botVisible={botVisible}
-          onToggleBot={() => setBotVisible((v) => !v)}
+          botFvgVisible={botFvgVisible}
+          onToggleFvg={() => setBotFvgVisible((v) => !v)}
           botFvgCount={botFvgs.filter((f) => f.state !== 'filled').length}
+          botObVisible={botObVisible}
+          onToggleOb={() => setBotObVisible((v) => !v)}
+          botObCount={botObs.filter((o) => o.state === 'untouched' || o.state === 'touched').length}
         />
       }
       center={center}
@@ -407,6 +424,7 @@ export function TradingCockpit() {
           hover={hover}
           selectedMark={selectedMark}
           selectedBotFvg={selectedBotFvg}
+          selectedBotOb={selectedBotOb}
           onUpdateMeta={handleUpdateMeta}
           onDeleteMark={handleDeleteMark}
         />

@@ -20,6 +20,7 @@ import {
 } from '../../features/manual-marks/manualMarks.types';
 import type { NewMarkInput } from '../../features/manual-marks/marks.util';
 import { FVG_COLORS, type BotFvg } from '../../features/bot-analysis/botFvg.types';
+import { OB_COLORS, type BotOb } from '../../features/bot-analysis/botOb.types';
 import { msToUtcSeconds, tfToMs } from '../../lib/time';
 
 interface Props {
@@ -40,9 +41,11 @@ interface Props {
   // Petición de centrar la vista en una marca (desde la lista del workspace). nonce re-dispara
   // aunque sea la misma marca.
   focusRequest?: { id: string; nonce: number } | null;
-  // Capa de lectura automática del bot (Fase 5A): FVGs read-only, solo seleccionables.
+  // Capas de lectura automática del bot (5A FVG, 5B OB): read-only, solo seleccionables.
   botFvgs: BotFvg[];
-  botLayerVisible: boolean;
+  botObs: BotOb[];
+  botFvgVisible: boolean;
+  botObVisible: boolean;
   selectedBotId: string | null;
   onSelectBot: (id: string | null) => void;
 }
@@ -55,8 +58,8 @@ interface ZoneGeom { type: 'zone'; id: string; kind: ManualMarkKind; left: numbe
 interface LevelGeom { type: 'level'; id: string; kind: ManualMarkKind; y: number; }
 interface PlanGeom { type: 'plan'; id: string; side: 'LONG' | 'SHORT'; left: number; right: number; yEntry: number; ySL: number; yTP: number; }
 type Geom = ZoneGeom | LevelGeom | PlanGeom;
-// Geometría de un FVG del bot (read-only). direction da el color; state la opacidad.
-interface BotFvgGeom { id: string; left: number; right: number; top: number; bottom: number; direction: 'bullish' | 'bearish'; state: string; }
+// Geometría de una zona del bot (FVG u OB), read-only. color/label precalculados para el render.
+interface BotGeom { id: string; kind: 'fvg' | 'ob'; left: number; right: number; top: number; bottom: number; color: string; label: string; }
 
 interface Hit { id: string; part: 'body' | 'line' | HandlePart | PlanPart }
 type Drag =
@@ -110,7 +113,7 @@ function fmtPrice(p: number | null): string {
 
 export function CandleChart(props: Props) {
   const { candles, viewKey, liveBar, marks, tool, selectedId, layerVisible, focusRequest } = props;
-  const { botFvgs, botLayerVisible, selectedBotId } = props;
+  const { botFvgs, botObs, botFvgVisible, botObVisible, selectedBotId } = props;
   const hostRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -125,7 +128,7 @@ export function CandleChart(props: Props) {
   const dragRef = useRef<Drag | null>(null);
   const emptyDown = useRef<{ x: number; y: number } | null>(null);
   const geomsRef = useRef<Geom[]>([]);
-  const botGeomsRef = useRef<BotFvgGeom[]>([]);
+  const botGeomsRef = useRef<BotGeom[]>([]);
   // Sincronización de overlays con el transform del chart (Slice 3A.1-c).
   const overlayRafRef = useRef<number | null>(null); // recompute coalescente (1/frame)
   const gestureRafRef = useRef<number | null>(null); // loop RAF mientras dura un gesto
@@ -134,7 +137,7 @@ export function CandleChart(props: Props) {
 
   const [geoms, setGeoms] = useState<Geom[]>([]);
   geomsRef.current = geoms;
-  const [botGeoms, setBotGeoms] = useState<BotFvgGeom[]>([]);
+  const [botGeoms, setBotGeoms] = useState<BotGeom[]>([]);
   botGeomsRef.current = botGeoms;
   const [draft, setDraft] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
   const [hoverPart, setHoverPart] = useState<Hit['part'] | null>(null);
@@ -206,21 +209,33 @@ export function CandleChart(props: Props) {
   // hasta el BORDE del área de gráfico (timeScale().width(), que incluye el espacio futuro del
   // rightOffset), no hasta la última vela: un FVG sin mitigar sigue vigente hacia el futuro,
   // como un "ray" a la derecha. Esto es solo render; la detección causal no cambia.
-  function computeBotGeoms(): BotFvgGeom[] {
+  function computeBotGeoms(): BotGeom[] {
     const chart = chartRef.current;
     const series = seriesRef.current;
     const s = stateRef.current;
-    if (!chart || !series || !s.botLayerVisible || s.candles.length === 0) return [];
+    if (!chart || !series || s.candles.length === 0) return [];
     const rightEdge = chart.timeScale().width(); // px: borde derecho de las velas (tras rightOffset)
-    const out: BotFvgGeom[] = [];
-    for (const f of s.botFvgs) {
-      if (f.state === 'filled') continue;
-      const x1 = msToPx(f.timeStart);
-      if (x1 == null || x1 > rightEdge) continue; // origen aún no en vista → no proyectar atrás
-      const yH = series.priceToCoordinate(f.gapHigh);
-      const yL = series.priceToCoordinate(f.gapLow);
-      if (yH == null || yL == null) continue;
-      out.push({ id: f.id, left: x1, right: rightEdge, top: Math.min(yH, yL), bottom: Math.max(yH, yL), direction: f.direction, state: f.state });
+    const out: BotGeom[] = [];
+    // Proyecta una zona [priceLow, priceHigh] desde su origen hasta el borde derecho (ray).
+    const pushZone = (id: string, kind: 'fvg' | 'ob', timeStart: number, priceLow: number, priceHigh: number, color: string, label: string) => {
+      const x1 = msToPx(timeStart);
+      if (x1 == null || x1 > rightEdge) return; // origen aún no en vista → no proyectar atrás
+      const yH = series.priceToCoordinate(priceHigh);
+      const yL = series.priceToCoordinate(priceLow);
+      if (yH == null || yL == null) return;
+      out.push({ id, kind, left: x1, right: rightEdge, top: Math.min(yH, yL), bottom: Math.max(yH, yL), color, label });
+    };
+    if (s.botFvgVisible) {
+      for (const f of s.botFvgs) {
+        if (f.state === 'filled') continue; // solo gaps activos
+        pushZone(f.id, 'fvg', f.timeStart, f.gapLow, f.gapHigh, FVG_COLORS[f.direction], `FVG ${f.direction === 'bullish' ? '▲' : '▼'}`);
+      }
+    }
+    if (s.botObVisible) {
+      for (const o of s.botObs) {
+        if (o.state === 'mitigated' || o.state === 'invalidated') continue; // solo OB activos
+        pushZone(o.id, 'ob', o.timeStart, o.obLow, o.obHigh, OB_COLORS[o.direction], `OB ${o.direction === 'bullish' ? '▲' : '▼'}`);
+      }
     }
     return out;
   }
@@ -235,12 +250,12 @@ export function CandleChart(props: Props) {
     }
     return s;
   }
-  function botSignature(gs: BotFvgGeom[]): string {
+  function botSignature(gs: BotGeom[]): string {
     let s = '';
     for (const g of gs) s += `${g.id}:${Math.round(g.left)},${Math.round(g.top)},${Math.round(g.right)},${Math.round(g.bottom)};`;
     return s;
   }
-  function combinedSignature(manual: Geom[], bot: BotFvgGeom[]): string {
+  function combinedSignature(manual: Geom[], bot: BotGeom[]): string {
     return geomSignature(manual) + '#' + botSignature(bot);
   }
 
@@ -502,7 +517,7 @@ export function CandleChart(props: Props) {
   useLayoutEffect(() => {
     recomputeImmediate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [marks, layerVisible, selectedId, tool, botFvgs, botLayerVisible, selectedBotId]);
+  }, [marks, layerVisible, selectedId, tool, botFvgs, botObs, botFvgVisible, botObVisible, selectedBotId]);
 
   function setChartInteractive(on: boolean): void {
     chartRef.current?.applyOptions({ handleScroll: on, handleScale: on });
@@ -567,7 +582,7 @@ export function CandleChart(props: Props) {
     }
     // FVG del bot: solo seleccionable (read-only). No captura ni arrastra; si el usuario
     // arrastra, el chart paneará normalmente. Solo en modo Select para no estorbar al dibujar.
-    if (tool === 'Select' && s.botLayerVisible) {
+    if (tool === 'Select' && (s.botFvgVisible || s.botObVisible)) {
       const botId = hitTestBot(x, y);
       if (botId) {
         s.onSelectBot(botId);
@@ -697,19 +712,18 @@ export function CandleChart(props: Props) {
       onPointerUp={onPointerUp}
     >
       <div ref={containerRef} className="candle-chart" />
-      {botLayerVisible && (
+      {(botFvgVisible || botObVisible) && (
         <div className="bot-layer">
           {botGeoms.map((g) => {
             const selected = g.id === selectedBotId;
-            const color = FVG_COLORS[g.direction];
             const h = Math.max(3, g.bottom - g.top);
             return (
               <div
                 key={g.id}
-                className={`bot-fvg${selected ? ' selected' : ''}`}
-                style={{ left: g.left, top: g.top, width: g.right - g.left, height: h, borderColor: color, background: color + (selected ? '38' : '14') }}
+                className={`bot-zone ${g.kind}${selected ? ' selected' : ''}`}
+                style={{ left: g.left, top: g.top, width: g.right - g.left, height: h, borderColor: g.color, background: g.color + (selected ? '38' : '14') }}
               >
-                <span className="bot-fvg-label" style={{ color }}>FVG {g.direction === 'bullish' ? '▲' : '▼'}</span>
+                <span className="bot-zone-label" style={{ color: g.color }}>{g.label}</span>
               </div>
             );
           })}

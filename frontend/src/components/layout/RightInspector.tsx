@@ -14,6 +14,11 @@ import {
   FVG_STATE_LABELS,
   type BotFvg,
 } from '../../features/bot-analysis/botFvg.types';
+import {
+  OB_COLORS,
+  OB_STATE_LABELS,
+  type BotOb,
+} from '../../features/bot-analysis/botOb.types';
 import { formatPrice } from '../../lib/price-format';
 import { formatUtc } from '../../lib/time';
 
@@ -32,6 +37,7 @@ interface Props {
   hover: Candle | null;
   selectedMark: ManualMark | null;
   selectedBotFvg: BotFvg | null;
+  selectedBotOb: BotOb | null;
   onUpdateMeta: (id: string, patch: Partial<ManualMark>) => void;
   onDeleteMark: (id: string) => void;
 }
@@ -57,6 +63,7 @@ export function RightInspector({
   hover,
   selectedMark,
   selectedBotFvg,
+  selectedBotOb,
   onUpdateMeta,
   onDeleteMark,
 }: Props) {
@@ -68,7 +75,27 @@ export function RightInspector({
       <div className="kv"><span>Velas cargadas</span><b>{loaded}</b></div>
       <div className="divider" />
 
-      {selectedBotFvg ? (
+      {selectedBotOb ? (
+        <div className="mark-detail">
+          <div className="kv">
+            <span>Lectura del bot</span>
+            <b style={{ color: OB_COLORS[selectedBotOb.direction] }}>
+              OB {selectedBotOb.direction === 'bullish' ? 'alcista ▲' : 'bajista ▼'}
+            </b>
+          </div>
+          <div className="kv"><span>Estado</span><b>{OB_STATE_LABELS[selectedBotOb.state]}</b></div>
+          <div className="kv"><span>Rango</span><b>{formatPrice(selectedBotOb.obLow)}–{formatPrice(selectedBotOb.obHigh)}</b></div>
+          <div className="kv"><span>Fuerza</span><b>{selectedBotOb.strength}× media</b></div>
+          <div className="kv"><span>Rompió estructura</span><b>{selectedBotOb.brokeStructure ? 'Sí' : 'No'}</b></div>
+          <div className="kv"><span>Dejó imbalance</span><b>{selectedBotOb.leftImbalance ? 'Sí' : 'No'}</b></div>
+          <div className="kv"><span>Vela origen</span><b>{formatUtc(selectedBotOb.originTime)}</b></div>
+          <div className="kv"><span>Confirmado</span><b>{formatUtc(selectedBotOb.confirmedAtTime)}</b></div>
+          <p className="hint">
+            Por qué: última vela contraria antes de un impulso fuerte (la zona donde "quedaron"
+            órdenes). Lectura automática del bot — no es señal. Compárala con tu análisis.
+          </p>
+        </div>
+      ) : selectedBotFvg ? (
         <div className="mark-detail">
           <div className="kv">
             <span>Lectura del bot</span>
