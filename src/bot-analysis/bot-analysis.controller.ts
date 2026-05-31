@@ -3,6 +3,7 @@ import { CandleRepository } from '../market-data/candle.repository';
 import { GetBotQueryDto } from './dto/get-bot-query.dto';
 import { detectStrictFvgs } from './fvg.detector';
 import { detectOrderBlocks } from './ob.detector';
+import { detectLiquidity } from './liquidity.detector';
 
 /**
  * Lectura automática del bot (Fase 5A/5B). Read-only sobre las velas locales: NO llama al
@@ -42,4 +43,17 @@ export class BotAnalysisController {
     const obs = detectOrderBlocks(q.symbol, q.tf, closed);
     return { symbol: q.symbol, tf: q.tf, count: obs.length, obs };
   }
+
+  @Get('liquidity')
+  async liquidity(@Query() q: GetBotQueryDto) {
+    const closed = (await this.closedCandles(q.symbol, q.tf, q.limit)).map((c) => ({
+      openTime: c.openTime,
+      high: c.high,
+      low: c.low,
+      close: c.close,
+    }));
+    const levels = detectLiquidity(q.symbol, q.tf, closed);
+    return { symbol: q.symbol, tf: q.tf, count: levels.length, levels };
+  }
 }
+
