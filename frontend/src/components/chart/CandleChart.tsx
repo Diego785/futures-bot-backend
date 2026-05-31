@@ -22,7 +22,7 @@ import type { NewMarkInput } from '../../features/manual-marks/marks.util';
 import { FVG_COLORS, type BotFvg } from '../../features/bot-analysis/botFvg.types';
 import { OB_COLORS, type BotOb } from '../../features/bot-analysis/botOb.types';
 import { LIQ_COLOR, type BotLiquidity } from '../../features/bot-analysis/botLiquidity.types';
-import { CONF_COLORS, type ConfluenceZone } from '../../features/bot-analysis/botConfluence.types';
+import { CONF_DIR_COLORS, type ConfluenceZone } from '../../features/bot-analysis/botConfluence.types';
 import { msToUtcSeconds, tfToMs } from '../../lib/time';
 
 interface Props {
@@ -65,7 +65,7 @@ interface LevelGeom { type: 'level'; id: string; kind: ManualMarkKind; y: number
 interface PlanGeom { type: 'plan'; id: string; side: 'LONG' | 'SHORT'; left: number; right: number; yEntry: number; ySL: number; yTP: number; }
 type Geom = ZoneGeom | LevelGeom | PlanGeom;
 // Geometría de una zona del bot (FVG u OB), read-only. color/label precalculados para el render.
-interface BotGeom { id: string; kind: 'fvg' | 'ob' | 'liq' | 'conf'; left: number; right: number; top: number; bottom: number; color: string; label: string; }
+interface BotGeom { id: string; kind: 'fvg' | 'ob' | 'liq' | 'conf'; left: number; right: number; top: number; bottom: number; color: string; label: string; rating?: 'LOW' | 'MEDIUM' | 'HIGH'; }
 
 interface Hit { id: string; part: 'body' | 'line' | HandlePart | PlanPart }
 type Drag =
@@ -223,13 +223,13 @@ export function CandleChart(props: Props) {
     const rightEdge = chart.timeScale().width(); // px: borde derecho de las velas (tras rightOffset)
     const out: BotGeom[] = [];
     // Proyecta una zona [priceLow, priceHigh] desde su origen hasta el borde derecho (ray).
-    const pushZone = (id: string, kind: 'fvg' | 'ob' | 'liq' | 'conf', timeStart: number, priceLow: number, priceHigh: number, color: string, label: string) => {
+    const pushZone = (id: string, kind: 'fvg' | 'ob' | 'liq' | 'conf', timeStart: number, priceLow: number, priceHigh: number, color: string, label: string, rating?: 'LOW' | 'MEDIUM' | 'HIGH') => {
       const x1 = msToPx(timeStart);
       if (x1 == null || x1 > rightEdge) return; // origen aún no en vista → no proyectar atrás
       const yH = series.priceToCoordinate(priceHigh);
       const yL = series.priceToCoordinate(priceLow);
       if (yH == null || yL == null) return;
-      out.push({ id, kind, left: x1, right: rightEdge, top: Math.min(yH, yL), bottom: Math.max(yH, yL), color, label });
+      out.push({ id, kind, left: x1, right: rightEdge, top: Math.min(yH, yL), bottom: Math.max(yH, yL), color, label, rating });
     };
     if (s.botFvgVisible) {
       for (const f of s.botFvgs) {
@@ -252,9 +252,11 @@ export function CandleChart(props: Props) {
       }
     }
     if (s.botConfVisible) {
-      // Al final → se dibuja ENCIMA (marco que resalta la zona base).
+      // Al final → se dibuja ENCIMA (marco que resalta la zona base). Color por DIRECCIÓN
+      // (sesgo operativo), grosor por rating, label con LONG/SHORT ctx.
       for (const z of s.botConfluences) {
-        pushZone(z.id, 'conf', z.timeStart, z.priceLow, z.priceHigh, CONF_COLORS[z.rating], `★ ${z.rating} ${z.score}`);
+        const bias = z.direction === 'bullish' ? 'LONG' : 'SHORT';
+        pushZone(z.id, 'conf', z.timeStart, z.priceLow, z.priceHigh, CONF_DIR_COLORS[z.direction], `★ ${bias} ctx ${z.score}`, z.rating);
       }
     }
     return out;
@@ -756,13 +758,14 @@ export function CandleChart(props: Props) {
             const h = Math.max(3, g.bottom - g.top);
             // Confluencia = marco sin relleno (deja ver el OB/FVG debajo); el resto, caja con fondo.
             const bg = g.kind === 'conf' ? 'transparent' : g.color + (selected ? '38' : '14');
+            const confRating = g.kind === 'conf' && g.rating ? ` conf-${g.rating.toLowerCase()}` : '';
             return (
               <div
                 key={g.id}
-                className={`bot-zone ${g.kind}${selected ? ' selected' : ''}`}
+                className={`bot-zone ${g.kind}${confRating}${selected ? ' selected' : ''}`}
                 style={{ left: g.left, top: g.top, width: g.right - g.left, height: h, borderColor: g.color, background: bg }}
               >
-                <span className="bot-zone-label" style={{ color: g.color }}>{g.label}</span>
+                <span className={g.kind === 'conf' ? 'conf-label' : 'bot-zone-label'} style={{ color: g.color }}>{g.label}</span>
               </div>
             );
           })}

@@ -29,10 +29,9 @@ export interface BotConfluenceResponse {
   zones: ConfluenceZone[];
 }
 
-// La confluencia se dibuja como MARCO (borde grueso, sin relleno) sobre las zonas base.
-// Escala blanco→gris por rating, que no colisiona con ningún color de capa.
-export const CONF_COLORS: Record<ConfluenceRating, string> = {
-  HIGH: '#ffffff',
-  MEDIUM: '#cbd5e1',
-  LOW: '#64748b',
+// Color por DIRECCIÓN = sesgo operativo (long=verde, short=rojo). El rating se expresa por
+// grosor/intensidad del marco, no por color (ver CSS .conf-high/medium/low).
+export const CONF_DIR_COLORS: Record<'bullish' | 'bearish', string> = {
+  bullish: '#22c55e',
+  bearish: '#ef4444',
 };
