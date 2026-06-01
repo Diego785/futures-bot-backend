@@ -219,6 +219,11 @@ refineTimeframe: Timeframe        // p.ej. '5m'; piso 5m (Video 2)
   criterios de EDGE (peso alto): `sweptLiquidityBeforeZone`, `htfAligned`, `inCorrectPremiumDiscount`,
   `inducementSwept`, `inKillzone` — que deben pesar **más** que los geométricos.
 - `SMC-SPEC §9` (3 entradas) y `§10` (SL/TP/BE) **solo se calculan en estado `TRIGGERED`**.
+- **Breaker Block (Video 3, ver `SMC-SPEC-VIDEO-3.md`):** un OB roto con fuerza es un POI más, con la
+  **función invertida**. Es elegible como zona de un Setup, PERO **no alimenta `SignalCandidate` por
+  defecto**: el propio video lo marca de bajo edge en cripto, así que entra como **capa de estudio**.
+  Un Setup `INVALIDATED` (OB roto) puede **derivar** un nuevo POI `BreakerBlock` del lado contrario
+  (no revive el Setup; nace una Zone nueva). Habilitarlo como entrada exige medir expectancy antes.
 
 ## Lo que este documento NO hace (gate)
 

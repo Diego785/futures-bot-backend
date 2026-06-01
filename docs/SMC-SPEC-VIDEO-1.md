@@ -164,7 +164,14 @@ invalidationByCloseBeyond: boolean               // requiere cierre, no solo mec
 zoneMaxAgeBars: number | null                    // caducidad por antigüedad; null = sin caducidad
 ```
 
+**Breaker Block (Video 3 — ver `SMC-SPEC-VIDEO-3.md`):** un OB `INVALIDATED` por ruptura **con
+fuerza** NO se descarta — gana una "segunda vida" como **Breaker Block**: un POI con la **función
+invertida** (OB de compra roto → POI de venta, y viceversa), con `originObId`. Se invalida (consume)
+si el precio lo re-rompe en contra. **Hoy es capa de ESTUDIO, no entrada** (el propio video advierte
+bajo edge en cripto). No confundir con `INVALIDATED`-y-descartado: el BB es una zona derivada nueva.
+
 🔴 Defaults de los umbrales; ¿la mitigación parcial reduce el score de confluencia (§7)?
+🔴 "Roto con fuerza" para promover OB→BB; vigencia/consumo del BB; cuántos mostrar (anti-ruido).
 
 ## 9. Entradas (3 candidatos)
 **Video:** entrada alta (más riesgo, más probable), **central (preferida)**, baja (menos riesgo,

@@ -52,6 +52,7 @@ adverse selection). v2 mueve la decisión al humano y usa el software como ojos 
 - `docs/API-CONTRACT.md` — modelo canónico de vela, tipos Zone/Setup/SignalCandidate, REST + WS
 - `docs/SMC-SPEC-VIDEO-1.md` — cómo se DIBUJAN las zonas (provisional, con 🔴)
 - `docs/SMC-SPEC-VIDEO-2.md` — "la entrada": riesgo vs confirmación, refinamiento multi-TF (provisional)
+- `docs/SMC-SPEC-VIDEO-3.md` — **Breaker Block** (OB roto = POI con función invertida); capa de estudio (provisional, 🔴 bajo edge en cripto)
 - `docs/ENTRY-EDGE-SPEC.md` — **dónde vive el edge**: zona ≠ entrada, máquina de estados de señal
 - `docs/DATASET-PROTOCOL.md` — anti-overfitting (calibración/held-out/out-of-time/cuarentena)
 - `docs/NO-REPAINT-RULES.md` — causalidad (lookahead=0, vela por vela)
