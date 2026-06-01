@@ -1,8 +1,11 @@
 // Generador de Trade Plans candidatos del bot (Fase 5F-A/5F-B). Función pura, testeable.
 // NO ejecuta, NO es orden: propuesta visual para ESTUDIAR (Regla Cero).
 // Modo CONFIRMACIÓN (default): solo setups ARMED, entry en el OB de confirmación (no al toque).
-// Modo RIESGO (opcional): setups WATCHING/MITIGATED, entry en la zona de confluencia (al toque,
-//   sin esperar confirmación) — más agresivo, etiquetado 'risk'. byRisk NUNCA es default.
+// Modo RIESGO (opcional): setups WATCHING/MITIGATED, entry en la ZONA MADRE OB de la confluencia
+//   (al toque, sin esperar confirmación) — más agresivo, etiquetado 'risk'. Riesgo ≠ entrar desde
+//   cualquier zona: SOLO nace si la confluencia tiene OB (POI válido); si no, no se genera plan.
+//   Entry = mid del OB, no de la confluencia completa (que puede ensancharse con el FVG). byRisk
+//   NUNCA es default.
 // Operabilidad: NEAR/FAR/STRUCTURAL según la distancia del Entry al precio actual (anti-ruido).
 // Mismo timeframe (refinamiento 15m/5m = fase posterior). Defaults provisionales 🔴.
 
@@ -130,7 +133,10 @@ export function generateTradePlans(
       const p = buildPlan(symbol, tf, side, 'confirmation', ob.obLow, ob.obHigh, s.armedAtTime ?? s.timeStart, s, liqs, lastClose, params);
       if (p) out.push(p);
     } else if ((s.state === 'WATCHING' || s.state === 'MITIGATED') && wantRisk) {
-      const p = buildPlan(symbol, tf, side, 'risk', s.priceLow, s.priceHigh, s.timeStart, s, liqs, lastClose, params);
+      // Riesgo agresivo, PERO sobre un POI/OB válido: si la confluencia no tiene OB (zona madre),
+      // no es una entrada SMC — no se genera plan (evita "entradas" desde confluencias vacías).
+      if (!s.hasOB || s.obZoneLow == null || s.obZoneHigh == null) continue;
+      const p = buildPlan(symbol, tf, side, 'risk', s.obZoneLow, s.obZoneHigh, s.timeStart, s, liqs, lastClose, params);
       if (p) out.push(p);
     }
   }

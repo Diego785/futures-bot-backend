@@ -9,8 +9,11 @@ const setup = (
   confObId: string | null,
   low = 100,
   high = 102,
+  hasOB = true,
+  obZoneLow: number | null = low,
+  obZoneHigh: number | null = high,
 ): BotSetup =>
-  ({ id: 's1', state, direction: dir, confirmationObId: confObId, priceLow: low, priceHigh: high, rating: 'HIGH', score: 90, timeStart: 10, armedAtTime: 20 } as unknown as BotSetup);
+  ({ id: 's1', state, direction: dir, confirmationObId: confObId, priceLow: low, priceHigh: high, hasOB, obZoneLow, obZoneHigh, rating: 'HIGH', score: 90, timeStart: 10, armedAtTime: 20 } as unknown as BotSetup);
 const ob = (id: string, low: number, high: number): BotOb => ({ id, obLow: low, obHigh: high } as unknown as BotOb);
 const liq = (side: 'buyside' | 'sellside', level: number): BotLiquidity => ({ side, level } as unknown as BotLiquidity);
 
@@ -50,11 +53,17 @@ describe('generateTradePlans', () => {
     expect(p.operability).toBe('STRUCTURAL'); // ~22% de distancia
   });
 
-  it('RIESGO: un setup MITIGATED genera plan desde la zona de confluencia (al toque), mode risk', () => {
-    const [p] = generateTradePlans('BTCUSDT', '15m', [setup('MITIGATED', 'bullish', null)], [], [liq('buyside', 110)], 101, 'risk');
+  it('RIESGO: un setup MITIGATED con OB genera plan desde la zona madre OB (al toque), mode risk', () => {
+    // Confluencia [100,102] pero la sub-zona OB es [100,101] → entry = mid del OB, no de la confluencia.
+    const [p] = generateTradePlans('BTCUSDT', '15m', [setup('MITIGATED', 'bullish', null, 100, 102, true, 100, 101)], [], [liq('buyside', 110)], 101, 'risk');
     expect(p.mode).toBe('risk');
     expect(p.side).toBe('LONG');
-    expect(p.entry).toBe(101); // mid de la zona [100,102]
+    expect(p.entry).toBe(100.5); // mid del OB [100,101], NO 101 (mid de la confluencia completa)
+  });
+
+  it('RIESGO: un setup MITIGATED SIN OB no genera plan (no es entrada SMC válida)', () => {
+    const plans = generateTradePlans('BTCUSDT', '15m', [setup('MITIGATED', 'bullish', null, 100, 102, false, null, null)], [], [liq('buyside', 110)], 101, 'risk');
+    expect(plans).toHaveLength(0);
   });
 
   it('BOTH: ARMED → confirmación y WATCHING/MITIGATED → riesgo', () => {

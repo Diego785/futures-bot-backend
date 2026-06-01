@@ -18,6 +18,9 @@ export interface BotSetup {
   mitigatedAtTime: number | null;
   armedAtTime: number | null;
   confirmationObId: string | null;
+  hasOB: boolean; // la confluencia origen contiene un OB (POI / zona madre)
+  obZoneLow: number | null; // sub-zona OB dentro de la confluencia (null si no hay OB)
+  obZoneHigh: number | null;
   distancePct: number;
 }
 

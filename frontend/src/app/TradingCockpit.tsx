@@ -130,6 +130,17 @@ export function TradingCockpit() {
     handleSelectBot(id);
     setFocusReq((p) => ({ id, nonce: (p?.nonce ?? 0) + 1 }));
   }
+  // 5F-B.2: al APAGAR una capa del bot, si el elemento seleccionado pertenece a ella, limpiar la
+  // selección — así el inspector vuelve a vacío y ningún overlay queda "flotando" por estar
+  // seleccionado. Encender una capa nunca limpia (solo el caso visible→oculto con selección propia).
+  function toggleBotLayer(
+    isVisible: boolean,
+    setVisible: React.Dispatch<React.SetStateAction<boolean>>,
+    ownsSelection: boolean,
+  ): void {
+    if (isVisible && ownsSelection) setSelectedBotId(null);
+    setVisible((v) => !v);
+  }
 
   // ─── Persistencia (Slice 3B) ───
   // El estado local (historial) es la verdad para render; la API es efecto colateral. PATCH con
@@ -499,25 +510,25 @@ export function TradingCockpit() {
           typeFilter={typeFilter}
           onTypeFilter={setTypeFilter}
           botFvgVisible={botFvgVisible}
-          onToggleFvg={() => setBotFvgVisible((v) => !v)}
+          onToggleFvg={() => toggleBotLayer(botFvgVisible, setBotFvgVisible, !!selectedBotFvg)}
           botFvgCount={botFvgs.filter((f) => f.state !== 'filled').length}
           botObVisible={botObVisible}
-          onToggleOb={() => setBotObVisible((v) => !v)}
+          onToggleOb={() => toggleBotLayer(botObVisible, setBotObVisible, !!selectedBotOb)}
           botObCount={botObs.filter((o) => o.state === 'untouched' || o.state === 'touched').length}
           botLiqVisible={botLiqVisible}
-          onToggleLiq={() => setBotLiqVisible((v) => !v)}
+          onToggleLiq={() => toggleBotLayer(botLiqVisible, setBotLiqVisible, !!selectedBotLiq)}
           botLiqCount={botLiqs.length}
           botConfVisible={botConfVisible}
-          onToggleConf={() => setBotConfVisible((v) => !v)}
+          onToggleConf={() => toggleBotLayer(botConfVisible, setBotConfVisible, !!selectedBotConf)}
           botConfCount={botConfluences.length}
           botSetupVisible={botSetupVisible}
-          onToggleSetup={() => setBotSetupVisible((v) => !v)}
+          onToggleSetup={() => toggleBotLayer(botSetupVisible, setBotSetupVisible, !!selectedBotSetup)}
           botSetupCount={botSetups.length}
           botPlanConfVisible={botPlanConfVisible}
-          onTogglePlanConf={() => setBotPlanConfVisible((v) => !v)}
+          onTogglePlanConf={() => toggleBotLayer(botPlanConfVisible, setBotPlanConfVisible, selectedBotPlan?.mode === 'confirmation')}
           botPlanConfCount={botPlans.filter((p) => p.mode === 'confirmation').length}
           botPlanRiskVisible={botPlanRiskVisible}
-          onTogglePlanRisk={() => setBotPlanRiskVisible((v) => !v)}
+          onTogglePlanRisk={() => toggleBotLayer(botPlanRiskVisible, setBotPlanRiskVisible, selectedBotPlan?.mode === 'risk')}
           botPlanRiskCount={botPlans.filter((p) => p.mode === 'risk').length}
           showAllPlans={showAllPlans}
           onToggleShowAllPlans={() => setShowAllPlans((v) => !v)}

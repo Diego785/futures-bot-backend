@@ -108,7 +108,7 @@ export function RightInspector({
               Plan {selectedBotPlan.side} (candidato)
             </b>
           </div>
-          <div className="kv"><span>Modo</span><b>{selectedBotPlan.mode === 'risk' ? 'Riesgo (al toque)' : 'Confirmación'}</b></div>
+          <div className="kv"><span>Modo</span><b>{selectedBotPlan.mode === 'risk' ? 'Riesgo (al toque del OB)' : 'Confirmación'}</b></div>
           <div className="kv">
             <span>Operabilidad</span>
             <b style={{ color: OPERABILITY_COLORS[selectedBotPlan.operability] }}>
@@ -122,12 +122,28 @@ export function RightInspector({
           <div className="kv"><span>TP en</span><b>{selectedBotPlan.tpSource === 'liquidity' ? 'liquidez opuesta' : 'R:R objetivo (sin liquidez)'}</b></div>
           <div className="kv"><span>Confluencia</span><b>{selectedBotPlan.confluenceRating} (score {selectedBotPlan.score})</b></div>
           <div className="kv"><span>Distancia al precio</span><b>{selectedBotPlan.distancePct}%</b></div>
-          <p className="hint">
-            Por qué {selectedBotPlan.side}: setup ARMED de contexto
-            {selectedBotPlan.side === 'LONG' ? ' alcista' : ' bajista'} (por confirmación, no al toque).
-            Entry = mid del OB de confirmación; SL {selectedBotPlan.side === 'LONG' ? 'debajo' : 'encima'} del
-            OB; TP = {selectedBotPlan.tpSource === 'liquidity' ? 'liquidez opuesta más cercana' : 'objetivo R:R (no había liquidez clara)'}.
-          </p>
+          {selectedBotPlan.mode === 'risk' ? (
+            <>
+              <p className="hint">
+                Por qué {selectedBotPlan.side}: entrada por <b>riesgo</b> sobre la zona madre (OB) de
+                una confluencia{selectedBotPlan.side === 'LONG' ? ' alcista' : ' bajista'} — al toque del
+                OB ({formatPrice(selectedBotPlan.obLow)}–{formatPrice(selectedBotPlan.obHigh)}), sin
+                esperar confirmación nueva. Entry = mid del OB; SL {selectedBotPlan.side === 'LONG' ? 'debajo' : 'encima'} del
+                OB; TP = {selectedBotPlan.tpSource === 'liquidity' ? 'liquidez opuesta más cercana' : 'objetivo R:R'}.
+              </p>
+              <p className="warn">
+                ⚠ Modo riesgo: más agresivo, sin OB de confirmación. Confirmación no requerida — el edge
+                es menor que en una entrada por confirmación.
+              </p>
+            </>
+          ) : (
+            <p className="hint">
+              Por qué {selectedBotPlan.side}: setup ARMED de contexto
+              {selectedBotPlan.side === 'LONG' ? ' alcista' : ' bajista'} (por confirmación, no al toque).
+              Entry = mid del OB de confirmación; SL {selectedBotPlan.side === 'LONG' ? 'debajo' : 'encima'} del
+              OB; TP = {selectedBotPlan.tpSource === 'liquidity' ? 'liquidez opuesta más cercana' : 'objetivo R:R (no había liquidez clara)'}.
+            </p>
+          )}
           <p className="hint">
             Para operar ahora:{' '}
             {selectedBotPlan.operability === 'NEAR'

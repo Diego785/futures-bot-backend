@@ -38,6 +38,12 @@ export interface BotSetup {
   mitigatedAtTime: number | null;
   armedAtTime: number | null;
   confirmationObId: string | null;
+  // Sub-zona OB ("zona madre"): unión de los OB que componen la confluencia origen (misma
+  // dirección). Es el POI real de la confluencia. La entrada por riesgo nace de AQUÍ, no de la
+  // confluencia completa (que puede ensancharse con el FVG). null si la confluencia no tiene OB.
+  hasOB: boolean;
+  obZoneLow: number | null;
+  obZoneHigh: number | null;
   distancePct: number;
 }
 
@@ -96,6 +102,14 @@ export function detectSetups(
       }
     }
 
+    // Zona madre OB: los OB que componen la confluencia (mismo sentido). Unión de sus rangos.
+    const obComponents = z.hasOB
+      ? obs.filter((o) => (z.componentIds ?? []).includes(o.id) && o.direction === dir)
+      : [];
+    const hasOB = obComponents.length > 0;
+    const obZoneLow = hasOB ? Math.min(...obComponents.map((o) => o.obLow)) : null;
+    const obZoneHigh = hasOB ? Math.max(...obComponents.map((o) => o.obHigh)) : null;
+
     const edgeDist = lastClose < lo ? lo - lastClose : lastClose > hi ? lastClose - hi : 0;
     out.push({
       id: `setup_${symbol}_${tf}_${dir === 'bullish' ? 'u' : 'd'}_${Math.round(lo * 100)}`,
@@ -112,6 +126,9 @@ export function detectSetups(
       mitigatedAtTime: mitigatedAt,
       armedAtTime,
       confirmationObId,
+      hasOB,
+      obZoneLow,
+      obZoneHigh,
       distancePct: Math.round((edgeDist / lastClose) * 10000) / 100,
     });
   }
