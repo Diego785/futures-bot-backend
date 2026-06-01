@@ -1,11 +1,12 @@
 // Generador de Trade Plans candidatos del bot (Fase 5F-A/5F-B). Función pura, testeable.
 // NO ejecuta, NO es orden: propuesta visual para ESTUDIAR (Regla Cero).
 // Modo CONFIRMACIÓN (default): solo setups ARMED, entry en el OB de confirmación (no al toque).
-// Modo RIESGO (opcional): setups WATCHING/MITIGATED, entry en la ZONA MADRE OB de la confluencia
-//   (al toque, sin esperar confirmación) — más agresivo, etiquetado 'risk'. Riesgo ≠ entrar desde
-//   cualquier zona: SOLO nace si la confluencia tiene OB (POI válido); si no, no se genera plan.
-//   Entry = mid del OB, no de la confluencia completa (que puede ensancharse con el FVG). byRisk
-//   NUNCA es default.
+// Modo RIESGO (capa de ESTUDIO, opcional): se genera para CUALQUIER setup con zona madre OB,
+//   INCLUIDO ARMED — confirmación y riesgo son dos lecturas del MISMO POI (al toque vs tras
+//   confirmación), no excluyentes. Entry = mid del OB madre (no de la confluencia, que se ensancha
+//   con el FVG). SOLO nace si hay OB (POI válido); sin OB no se genera. Si la zona ya fue
+//   mitigada/armada, el toque ya ocurrió → riskWorked=true (estudio histórico, NO operable ya).
+//   byRisk NUNCA es default.
 // Operabilidad: NEAR/FAR/STRUCTURAL según la distancia del Entry al precio actual (anti-ruido).
 // Mismo timeframe (refinamiento 15m/5m = fase posterior). Defaults provisionales 🔴.
 
@@ -42,6 +43,9 @@ export interface BotTradePlan {
   tf: string;
   side: PlanSide;
   mode: PlanMode;
+  // Solo 'risk': true si la zona madre ya fue mitigada/trabajada (el toque ya ocurrió → estudio
+  // histórico, no operable inmediata); false = aún no tocada (entrada viva). null en confirmación.
+  riskWorked: boolean | null;
   entry: number;
   stopLoss: number;
   takeProfit: number;
@@ -65,7 +69,7 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 function buildPlan(
   symbol: string, tf: string, side: PlanSide, mode: PlanMode,
   low: number, high: number, timeStart: number, s: BotSetup,
-  liqs: BotLiquidity[], lastClose: number, params: TradePlanParams,
+  liqs: BotLiquidity[], lastClose: number, riskWorked: boolean | null, params: TradePlanParams,
 ): BotTradePlan | null {
   const range = high - low;
   if (range <= 0) return null;
@@ -98,7 +102,7 @@ function buildPlan(
 
   return {
     id: `plan_${mode === 'confirmation' ? 'c' : 'r'}_${symbol}_${tf}_${side === 'LONG' ? 'u' : 'd'}_${Math.round(low * 100)}`,
-    symbol, tf, side, mode,
+    symbol, tf, side, mode, riskWorked,
     entry: round2(entry), stopLoss: round2(stopLoss), takeProfit: round2(takeProfit), rr,
     tpSource, minRrMet: rr >= params.minRiskReward, operability, entryDistancePct,
     obLow: low, obHigh: high,
@@ -127,16 +131,20 @@ export function generateTradePlans(
   const out: BotTradePlan[] = [];
   for (const s of setups) {
     const side: PlanSide = s.direction === 'bullish' ? 'LONG' : 'SHORT';
+    // CONFIRMACIÓN: solo ARMED, desde el OB de confirmación (la reacción formada tras mitigar).
     if (s.state === 'ARMED' && wantConf && s.confirmationObId) {
       const ob = obs.find((o) => o.id === s.confirmationObId);
-      if (!ob) continue;
-      const p = buildPlan(symbol, tf, side, 'confirmation', ob.obLow, ob.obHigh, s.armedAtTime ?? s.timeStart, s, liqs, lastClose, params);
-      if (p) out.push(p);
-    } else if ((s.state === 'WATCHING' || s.state === 'MITIGATED') && wantRisk) {
-      // Riesgo agresivo, PERO sobre un POI/OB válido: si la confluencia no tiene OB (zona madre),
-      // no es una entrada SMC — no se genera plan (evita "entradas" desde confluencias vacías).
-      if (!s.hasOB || s.obZoneLow == null || s.obZoneHigh == null) continue;
-      const p = buildPlan(symbol, tf, side, 'risk', s.obZoneLow, s.obZoneHigh, s.timeStart, s, liqs, lastClose, params);
+      if (ob) {
+        const p = buildPlan(symbol, tf, side, 'confirmation', ob.obLow, ob.obHigh, s.armedAtTime ?? s.timeStart, s, liqs, lastClose, null, params);
+        if (p) out.push(p);
+      }
+    }
+    // RIESGO (capa de ESTUDIO): cualquier setup con zona madre OB, INCLUIDO ARMED — confirmación y
+    // riesgo son dos lecturas del mismo POI. Sin OB no se genera (no es entrada SMC). Si la zona ya
+    // fue mitigada/armada, el toque ya ocurrió → riskWorked=true (histórica, no operable inmediata).
+    if (wantRisk && s.hasOB && s.obZoneLow != null && s.obZoneHigh != null) {
+      const worked = s.mitigatedAtTime != null;
+      const p = buildPlan(symbol, tf, side, 'risk', s.obZoneLow, s.obZoneHigh, s.timeStart, s, liqs, lastClose, worked, params);
       if (p) out.push(p);
     }
   }

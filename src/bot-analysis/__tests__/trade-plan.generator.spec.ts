@@ -13,7 +13,7 @@ const setup = (
   obZoneLow: number | null = low,
   obZoneHigh: number | null = high,
 ): BotSetup =>
-  ({ id: 's1', state, direction: dir, confirmationObId: confObId, priceLow: low, priceHigh: high, hasOB, obZoneLow, obZoneHigh, rating: 'HIGH', score: 90, timeStart: 10, armedAtTime: 20 } as unknown as BotSetup);
+  ({ id: 's1', state, direction: dir, confirmationObId: confObId, priceLow: low, priceHigh: high, hasOB, obZoneLow, obZoneHigh, rating: 'HIGH', score: 90, timeStart: 10, mitigatedAtTime: state === 'WATCHING' ? null : 15, armedAtTime: 20 } as unknown as BotSetup);
 const ob = (id: string, low: number, high: number): BotOb => ({ id, obLow: low, obHigh: high } as unknown as BotOb);
 const liq = (side: 'buyside' | 'sellside', level: number): BotLiquidity => ({ side, level } as unknown as BotLiquidity);
 
@@ -59,6 +59,7 @@ describe('generateTradePlans', () => {
     expect(p.mode).toBe('risk');
     expect(p.side).toBe('LONG');
     expect(p.entry).toBe(100.5); // mid del OB [100,101], NO 101 (mid de la confluencia completa)
+    expect(p.riskWorked).toBe(true); // MITIGATED → zona ya trabajada (estudio histórico)
   });
 
   it('RIESGO: un setup MITIGATED SIN OB no genera plan (no es entrada SMC válida)', () => {
@@ -66,11 +67,25 @@ describe('generateTradePlans', () => {
     expect(plans).toHaveLength(0);
   });
 
-  it('BOTH: ARMED → confirmación y WATCHING/MITIGATED → riesgo', () => {
+  it('RIESGO: un setup ARMED con OB también genera plan de riesgo (estudio), riskWorked=true', () => {
+    const [p] = generateTradePlans('BTCUSDT', '15m', [setup('ARMED', 'bullish', 'ob1', 100, 102, true, 100, 101)], [ob('ob1', 100, 102)], [liq('buyside', 110)], 101, 'risk');
+    expect(p.mode).toBe('risk');
+    expect(p.entry).toBe(100.5); // mid del OB madre [100,101]
+    expect(p.riskWorked).toBe(true); // ARMED → toque ya ocurrió
+  });
+
+  it('RIESGO: un setup WATCHING con OB da riesgo "vivo" (riskWorked=false)', () => {
+    const [p] = generateTradePlans('BTCUSDT', '15m', [setup('WATCHING', 'bullish', null, 100, 102, true, 100, 101)], [], [liq('buyside', 110)], 101, 'risk');
+    expect(p.mode).toBe('risk');
+    expect(p.riskWorked).toBe(false); // aún no mitigada → entrada por riesgo aún futura
+  });
+
+  it('BOTH: un setup ARMED con OB genera AMBOS (confirmación + riesgo, mismo POI), no excluyente', () => {
     const setups = [setup('ARMED', 'bullish', 'ob1', 100, 102), setup('MITIGATED', 'bearish', null, 120, 122)];
     const plans = generateTradePlans('BTCUSDT', '15m', setups, [ob('ob1', 100, 102)], [liq('buyside', 110), liq('sellside', 95)], 110, 'both');
-    expect(plans).toHaveLength(2);
+    expect(plans).toHaveLength(3); // ARMED→conf+risk, MITIGATED→risk
     expect(plans.filter((p) => p.mode === 'confirmation')).toHaveLength(1);
-    expect(plans.filter((p) => p.mode === 'risk')).toHaveLength(1);
+    expect(plans.filter((p) => p.mode === 'risk')).toHaveLength(2);
+    expect(plans.filter((p) => p.mode === 'risk').every((p) => p.riskWorked === true)).toBe(true);
   });
 });

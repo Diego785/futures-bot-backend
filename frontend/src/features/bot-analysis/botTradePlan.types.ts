@@ -11,6 +11,9 @@ export interface BotTradePlan {
   tf: string;
   side: PlanSide;
   mode: PlanMode;
+  // Solo 'risk' (capa de estudio): true si la zona madre ya fue mitigada/trabajada (el toque ya
+  // ocurrió → histórica, no operable inmediata); false = aún viva; null en confirmación.
+  riskWorked: boolean | null;
   entry: number;
   stopLoss: number;
   takeProfit: number;

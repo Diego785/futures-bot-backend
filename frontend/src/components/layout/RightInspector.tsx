@@ -132,8 +132,9 @@ export function RightInspector({
                 OB; TP = {selectedBotPlan.tpSource === 'liquidity' ? 'liquidez opuesta más cercana' : 'objetivo R:R'}.
               </p>
               <p className="warn">
-                ⚠ Modo riesgo: más agresivo, sin OB de confirmación. Confirmación no requerida — el edge
-                es menor que en una entrada por confirmación.
+                ⚠ Capa de ESTUDIO, no señal operable inmediata. {selectedBotPlan.riskWorked
+                  ? 'Estado: zona ya trabajada — el toque del OB ya ocurrió; sirve para comparar "¿qué habría pasado al toque vs esperando confirmación?", no es una entrada actual.'
+                  : 'Estado: zona aún no tocada — entrada por riesgo viva (al toque, sin confirmación). Más agresiva: el edge es menor que por confirmación.'}
               </p>
             </>
           ) : (
