@@ -148,5 +148,11 @@ export function generateTradePlans(
       if (p) out.push(p);
     }
   }
-  return out;
+  // Dedup: un plan de RIESGO idéntico (entry/SL/TP) a uno de CONFIRMACIÓN es EL MISMO trade — se
+  // omite el riesgo (confirmación es la lectura principal). Pasa cuando dos setups vecinos comparten
+  // un OB (zona madre de uno = OB de confirmación del otro). La comparación riesgo↔confirmación solo
+  // aporta valor si difieren.
+  const planKey = (p: BotTradePlan) => `${p.entry}|${p.stopLoss}|${p.takeProfit}`;
+  const confKeys = new Set(out.filter((p) => p.mode === 'confirmation').map(planKey));
+  return out.filter((p) => p.mode !== 'risk' || !confKeys.has(planKey(p)));
 }

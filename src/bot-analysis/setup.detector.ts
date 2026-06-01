@@ -102,9 +102,17 @@ export function detectSetups(
       }
     }
 
-    // Zona madre OB: los OB que componen la confluencia (mismo sentido). Unión de sus rangos.
+    // Zona madre OB: el POI PRE-EXISTENTE al que el precio regresa (entrada por riesgo "al toque").
+    // Solo OB componentes formados ANTES de la mitigación. Un OB posterior a mitigar es la REACCIÓN
+    // (de hecho suele ser el OB de confirmación), no la zona madre — incluirlo hacía que la entrada
+    // por riesgo coincidiera exactamente con la de confirmación. Sin mitigar aún (WATCHING): todos.
     const obComponents = z.hasOB
-      ? obs.filter((o) => (z.componentIds ?? []).includes(o.id) && o.direction === dir)
+      ? obs.filter(
+          (o) =>
+            (z.componentIds ?? []).includes(o.id) &&
+            o.direction === dir &&
+            (mitigatedAt == null || o.originTime < mitigatedAt),
+        )
       : [];
     const hasOB = obComponents.length > 0;
     const obZoneLow = hasOB ? Math.min(...obComponents.map((o) => o.obLow)) : null;

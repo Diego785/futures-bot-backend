@@ -63,4 +63,24 @@ describe('detectSetups', () => {
     expect(s.obZoneLow).toBeNull();
     expect(s.obZoneHigh).toBeNull();
   });
+
+  it('zona madre OB: un OB formado TRAS la mitigación NO es zona madre (es reacción/confirmación)', () => {
+    // El precio mitiga en t=12; el único OB componente se origina en t=13 (post-mitigación). No es
+    // el POI al que el precio regresó → no hay zona madre OB (evita que riesgo == confirmación).
+    const candles = [c(11, 106, 104, 105), c(12, 103, 101, 102.5)]; // mitiga en 12
+    const obs = [ob('obPost', 'bullish', 100.5, 101.5, 13)]; // origin 13 > mitigatedAt 12
+    const [s] = detectSetups('BTCUSDT', '15m', [zone({ hasOB: true, componentIds: ['obPost'] })], obs, candles, 104);
+    expect(s.mitigatedAtTime).toBe(12);
+    expect(s.hasOB).toBe(false);
+    expect(s.obZoneLow).toBeNull();
+  });
+
+  it('zona madre OB: un OB PRE-mitigación sí es zona madre', () => {
+    const candles = [c(11, 106, 104, 105), c(12, 103, 101, 102.5)]; // mitiga en 12
+    const obs = [ob('obPre', 'bullish', 100.2, 101, 5)]; // origin 5 < mitigatedAt 12
+    const [s] = detectSetups('BTCUSDT', '15m', [zone({ hasOB: true, componentIds: ['obPre'] })], obs, candles, 104);
+    expect(s.hasOB).toBe(true);
+    expect(s.obZoneLow).toBe(100.2);
+    expect(s.obZoneHigh).toBe(101);
+  });
 });

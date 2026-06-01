@@ -80,12 +80,21 @@ describe('generateTradePlans', () => {
     expect(p.riskWorked).toBe(false); // aún no mitigada → entrada por riesgo aún futura
   });
 
-  it('BOTH: un setup ARMED con OB genera AMBOS (confirmación + riesgo, mismo POI), no excluyente', () => {
-    const setups = [setup('ARMED', 'bullish', 'ob1', 100, 102), setup('MITIGATED', 'bearish', null, 120, 122)];
+  it('BOTH: un setup ARMED con OB genera AMBOS (confirmación + riesgo), no excluyente', () => {
+    // ARMED: OB de confirmación [100,102] (entry 101) y zona madre OB [100,101] (entry 100.5) → distintos.
+    const setups = [setup('ARMED', 'bullish', 'ob1', 100, 102, true, 100, 101), setup('MITIGATED', 'bearish', null, 120, 122)];
     const plans = generateTradePlans('BTCUSDT', '15m', setups, [ob('ob1', 100, 102)], [liq('buyside', 110), liq('sellside', 95)], 110, 'both');
-    expect(plans).toHaveLength(3); // ARMED→conf+risk, MITIGATED→risk
+    expect(plans).toHaveLength(3); // ARMED→conf+risk (distintos), MITIGATED→risk
     expect(plans.filter((p) => p.mode === 'confirmation')).toHaveLength(1);
     expect(plans.filter((p) => p.mode === 'risk')).toHaveLength(2);
     expect(plans.filter((p) => p.mode === 'risk').every((p) => p.riskWorked === true)).toBe(true);
+  });
+
+  it('dedup: un riesgo idéntico (entry/SL/TP) a una confirmación se omite (mismo trade)', () => {
+    // OB de confirmación [100,102] y zona madre OB [100,102] coinciden → conf y risk darían el mismo
+    // plan exacto → el riesgo redundante se omite (queda solo la confirmación).
+    const plans = generateTradePlans('BTCUSDT', '15m', [setup('ARMED', 'bullish', 'ob1', 100, 102, true, 100, 102)], [ob('ob1', 100, 102)], [liq('buyside', 110)], 101, 'both');
+    expect(plans.filter((p) => p.mode === 'confirmation')).toHaveLength(1);
+    expect(plans.filter((p) => p.mode === 'risk')).toHaveLength(0);
   });
 });
