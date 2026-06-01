@@ -148,6 +148,7 @@ export function CandleChart(props: Props) {
   // Sincronización de overlays con el transform del chart (Slice 3A.1-c).
   const overlayRafRef = useRef<number | null>(null); // recompute coalescente (1/frame)
   const gestureRafRef = useRef<number | null>(null); // loop RAF mientras dura un gesto
+  const gestureTailRef = useRef(0); // frames restantes de "cola de inercia" tras soltar
   const wheelStopRef = useRef<number | null>(null); // debounce para terminar el gesto de wheel
   const lastSigRef = useRef<string>(''); // firma de la última geometría (diff-guard)
 
@@ -377,18 +378,29 @@ export function CandleChart(props: Props) {
   // subscribeVisibleLogicalRangeChange; ver issue lightweight-charts #1442).
   function gestureTick(): void {
     recomputeNow();
+    if (gestureTailRef.current > 0) {
+      gestureTailRef.current -= 1;
+      if (gestureTailRef.current === 0) {
+        // Fin de la cola de inercia: para el loop y deja un recompute limpio final.
+        if (gestureRafRef.current != null) cancelAnimationFrame(gestureRafRef.current);
+        gestureRafRef.current = null;
+        lastSigRef.current = '';
+        scheduleOverlayRecompute();
+        return;
+      }
+    }
     gestureRafRef.current = requestAnimationFrame(gestureTick);
   }
   function startGestureLoop(): void {
+    gestureTailRef.current = 0; // gesto ACTIVO (pointer abajo): sin cuenta atrás
     if (gestureRafRef.current != null) return;
     gestureRafRef.current = requestAnimationFrame(gestureTick);
   }
   function endGestureLoop(): void {
+    // No cortar de golpe: deja una cola (~0.6s) para seguir la INERCIA/momentum del chart (táctil),
+    // donde el gráfico sigue moviéndose tras soltar el dedo. Sin esto, los overlays se "pegan".
     if (gestureRafRef.current == null) return;
-    cancelAnimationFrame(gestureRafRef.current);
-    gestureRafRef.current = null;
-    lastSigRef.current = ''; // fuerza un último recompute limpio al soltar
-    scheduleOverlayRecompute();
+    if (gestureTailRef.current === 0) gestureTailRef.current = 36;
   }
 
   // Hit-test de FVGs del bot (read-only): punto dentro del rect (con alto mínimo clicable).

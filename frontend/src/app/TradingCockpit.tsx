@@ -57,7 +57,7 @@ export function TradingCockpit() {
   // ─── Marcas manuales: estado con historial undo/redo (Slice 3A.1-e) ───
   const { marks, selectedId, commit, select, replace, reset, undo, redo } = useMarkHistory();
   const [tool, setTool] = useState<ManualTool>('Select');
-  const [marksVisible, setMarksVisible] = useState(true);
+  const [marksVisible, setMarksVisible] = useState(false); // gráfica limpia al abrir (5F-B.1)
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('ALL');
   // Petición de centrar la gráfica en una marca (al hacer click en la lista del workspace).
   const [focusReq, setFocusReq] = useState<{ id: string; nonce: number } | null>(null);
@@ -69,13 +69,15 @@ export function TradingCockpit() {
   const [botConfluences, setBotConfluences] = useState<ConfluenceZone[]>([]);
   const [botSetups, setBotSetups] = useState<BotSetup[]>([]);
   const [botPlans, setBotPlans] = useState<BotTradePlan[]>([]);
+  // Defaults 5F-B.1: la gráfica abre LIMPIA. Solo las 3 capas base ON; el resto OFF.
   const [botFvgVisible, setBotFvgVisible] = useState(true);
   const [botObVisible, setBotObVisible] = useState(true);
   const [botLiqVisible, setBotLiqVisible] = useState(true);
-  const [botConfVisible, setBotConfVisible] = useState(true);
-  const [botSetupVisible, setBotSetupVisible] = useState(true);
-  const [botPlanConfVisible, setBotPlanConfVisible] = useState(true);
+  const [botConfVisible, setBotConfVisible] = useState(false);
+  const [botSetupVisible, setBotSetupVisible] = useState(false);
+  const [botPlanConfVisible, setBotPlanConfVisible] = useState(false);
   const [botPlanRiskVisible, setBotPlanRiskVisible] = useState(false); // byRisk apagado por defecto
+  const [showAllPlans, setShowAllPlans] = useState(false); // off = solo el plan más cercano LONG+SHORT
   const [selectedBotId, setSelectedBotId] = useState<string | null>(null);
   const selectedBotFvg = botFvgs.find((f) => f.id === selectedBotId) ?? null;
   const selectedBotOb = botObs.find((o) => o.id === selectedBotId) ?? null;
@@ -83,6 +85,32 @@ export function TradingCockpit() {
   const selectedBotConf = botConfluences.find((z) => z.id === selectedBotId) ?? null;
   const selectedBotSetup = botSetups.find((su) => su.id === selectedBotId) ?? null;
   const selectedBotPlan = botPlans.find((pl) => pl.id === selectedBotId) ?? null;
+
+  // Planes a DIBUJAR en la gráfica (5F-B.1 parte 3). Por defecto solo el más cercano LONG y SHORT
+  // de cada modo (confirmación/riesgo), para que señales lejanas/estructurales no saturen ni
+  // dominen el chart. El seleccionado se incluye SIEMPRE (puede elegirse uno lejano desde la lista
+  // inferior). "Mostrar todos los planes" levanta el filtro. La lista inferior siempre los muestra
+  // todos. El CandleChart aplica encima la visibilidad por modo (conf/riesgo).
+  const planDist = (p: BotTradePlan): number => p.entryDistancePct ?? Number.POSITIVE_INFINITY;
+  let chartPlans: BotTradePlan[];
+  if (showAllPlans) {
+    chartPlans = botPlans;
+  } else {
+    const nearest: BotTradePlan[] = [];
+    for (const mode of ['confirmation', 'risk'] as const) {
+      for (const side of ['LONG', 'SHORT'] as const) {
+        const best = botPlans
+          .filter((p) => p.mode === mode && p.side === side)
+          .reduce<BotTradePlan | null>((b, p) => (b == null || planDist(p) < planDist(b) ? p : b), null);
+        if (best) nearest.push(best);
+      }
+    }
+    if (selectedBotId && !nearest.some((p) => p.id === selectedBotId)) {
+      const sel = botPlans.find((p) => p.id === selectedBotId);
+      if (sel) nearest.push(sel);
+    }
+    chartPlans = nearest;
+  }
 
   // Selección mutuamente excluyente: marca manual XOR FVG del bot.
   function handleSelectMark(id: string | null): void {
@@ -416,7 +444,7 @@ export function TradingCockpit() {
           botLiqs={botLiqs}
           botConfluences={botConfluences}
           botSetups={botSetups}
-          botPlans={botPlans}
+          botPlans={chartPlans}
           botFvgVisible={botFvgVisible}
           botObVisible={botObVisible}
           botLiqVisible={botLiqVisible}
@@ -491,6 +519,8 @@ export function TradingCockpit() {
           botPlanRiskVisible={botPlanRiskVisible}
           onTogglePlanRisk={() => setBotPlanRiskVisible((v) => !v)}
           botPlanRiskCount={botPlans.filter((p) => p.mode === 'risk').length}
+          showAllPlans={showAllPlans}
+          onToggleShowAllPlans={() => setShowAllPlans((v) => !v)}
         />
       }
       center={center}

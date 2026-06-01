@@ -41,6 +41,8 @@ interface Props {
   botPlanRiskVisible: boolean;
   onTogglePlanRisk: () => void;
   botPlanRiskCount: number;
+  showAllPlans: boolean;
+  onToggleShowAllPlans: () => void;
 }
 
 const FILTERS: { key: TypeFilter; label: string }[] = [
@@ -94,6 +96,8 @@ export function LeftSidebar({
   botPlanRiskVisible,
   onTogglePlanRisk,
   botPlanRiskCount,
+  showAllPlans,
+  onToggleShowAllPlans,
 }: Props) {
   const counts = { OB: 0, FVG: 0, Liquidity: 0, TradePlan: 0 } as Record<ManualMarkKind, number>;
   for (const m of marks) counts[m.kind] += 1;
@@ -153,6 +157,12 @@ export function LeftSidebar({
           <label title="Planes al toque, sin confirmación (más agresivo, opcional)">
             <input type="checkbox" checked={botPlanRiskVisible} onChange={onTogglePlanRisk} />{' '}
             <span style={{ color: '#cbd5e1' }}>Planes (riesgo)</span> <span className="muted">({botPlanRiskCount})</span>
+          </label>
+        </li>
+        <li className="layer-item layer-subitem">
+          <label title="Off: solo el plan más cercano LONG y SHORT de cada modo. On: todos los planes.">
+            <input type="checkbox" checked={showAllPlans} onChange={onToggleShowAllPlans} />{' '}
+            <span className="muted">Mostrar todos los planes</span>
           </label>
         </li>
       </ul>
