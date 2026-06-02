@@ -53,24 +53,50 @@ biasTimeframes: Timeframe[]            // top-down: contexto a considerar
 
 🔴 Defaults; ¿BOS/CHoCH formal o ruptura simple? ¿qué es "el punto clave" en cada TF?
 
-## 3. Order Block
-**Video:** estructura alcista → POI en zona baja; se marca **la última vela bajista antes del
-impulso alcista**, **incluyendo mechas** ("desde la mecha alta hasta la mecha baja"). Se descarta
-si la vela contraria adyacente la "equipara".
+## 3. Order Block — ESENCIA ESTRUCTURAL (revisado 2026-06-02)
 
-**Regla provisional `VideoSMC`** (cerrada en la ronda anterior):
-- OB = última vela de color contrario inmediatamente previa a un `Impulse` válido.
-- Rango = `[low, high]` **completo, con mechas** por defecto.
-- **Override manual** permitido, pero cada override es **señal de que la regla necesita ajuste**,
-  no muleta permanente: alimenta la calibración.
-- `Impulse` es **requisito**. Romper estructura **NO** es requisito; es **factor de calidad** (§7).
-  Dejar imbalance o coincidir con liquidez = más calidad.
-- La zona se **emite solo cuando el impulso se confirma**, guardando `originCandleTime` y
-  `confirmedAtTime` (ver `NO-REPAINT-RULES.md`).
+> **Corrección de fondo tras releer el Video 1 + calibrar contra "Order Blocks & Breaker Blocks
+> [LuxAlgo]" (Swing Lookback 10 · 3+3 · rango completo, sobre BTCUSDT Binance).** La versión
+> anterior anclaba el OB al **impulso local** (cualquier vela contraria + una vela fuerte que rompe
+> el extremo de esa vela) → marcaba **66 OBs en 4h** sin jerarquía, con fósiles de meses. El video
+> ancla a la **ESTRUCTURA**: *primero la estructura, después el OB*. El impulso/fuerza **CONFIRMA**;
+> no es el ancla. Este es el cambio que captura la esencia y, de paso, alinea con LuxAlgo (que es
+> swing-based). Decisión del usuario (2026-06-02): el modo estructural es el **principal**.
 
-**Parámetros:** los de §1 (fuerza) + `requiresStructureBreak: boolean` (default `false`) +
-`requiresImbalance: boolean` (default `false`).
-🔴 Criterio de "equiparar"; caducidad por antigüedad (ver §8).
+**Video (los 5 pasos en orden):** (1) define estructura (alcista/bajista); (2) busca el POI en el
+**swing más cercano** del lado correcto (*"la parte baja más cercana pero la más baja"* = swing
+low si alcista; swing high si bajista); (3) marca **la última vela contraria** en ese origen,
+**con mechas**; (4) **descarta si la vela vecina la "equipara"** (no hubo fuerza); (5) se enfoca en
+**POCOS**, los más cercanos, **gráfico limpio** (*"cuando opero, solo marco SL y profit"*).
+
+**Regla provisional `VideoSMC` (swing-first):**
+- **Ancla = estructura.** Detectar swings (pivotes de `swingLookback` velas). Un OB nace cuando el
+  precio **rompe un swing previo (BOS)** en el sentido de la estructura: el OB es la **última vela
+  de color contrario en el origen de esa pierna** — NO cualquier vela-antes-de-impulso.
+- **Fuerza = confirmación, no ancla.** La pierna que rompe el swing debe tener fuerza (§1). Si la
+  vela vecina **equipara** a la del OB, se descarta.
+- **Rango** = `[low, high]` completo (con mechas); opción `useCandleBody` (LuxAlgo la ofrece).
+- **Pocos y cercanos.** Mostrar `showLastN` por lado (default **3+3**, como LuxAlgo) + filtro de
+  cercanía/recencia → nunca un mapa de 60 ni fósiles. Es la esencia del "gráfico limpio".
+- **Causal**: emite al confirmarse la ruptura (`originCandleTime`/`confirmedAtTime`; sin repaint).
+- **Roto → Breaker Block** (función invertida; ver `SMC-SPEC-VIDEO-3.md`): NO se descarta.
+
+**Parámetros (calibrados a los settings reales del usuario; provisionales 🔴):**
+```ts
+obMode: 'structural' | 'impulse'   // default 'structural'; 'impulse' = lente anterior (opcional)
+swingLookback: number              // default 10  (= "Swing Lookback" de LuxAlgo)
+showLastBullish: number            // default 3
+showLastBearish: number            // default 3
+useCandleBody: boolean             // default false (rango completo con mechas)
+requireBOS: boolean                // default TRUE — romper el swing es ahora REQUISITO (antes: calidad)
+// + parámetros de fuerza de §1, ahora usados para CONFIRMAR la pierna que rompe el swing
+```
+🔴 Definición exacta de swing/BOS (mecha vs cierre); criterio de "equiparar"; cómo combinar
+recencia + cercanía para "pocos"; relación entre `swingLookback` y el TF.
+
+> **Default de visualización (decisión del usuario, 2026-06-02): la gráfica abre con SOLO la capa
+> OB.** FVG, Liquidez, Confluencia, Setups y Planes quedan **OFF** por defecto; el usuario activa lo
+> que quiera y marca el resto a mano. El OB es "de lo más importante" → es el foco del copiloto.
 
 ## 4. VideoImbalance (≠ StrictFVG)
 **Video:** desequilibrio / "imbalance" / FVG = zona dejada por el movimiento con fuerza,
