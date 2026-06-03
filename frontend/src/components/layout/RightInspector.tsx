@@ -16,7 +16,10 @@ import {
 } from '../../features/bot-analysis/botFvg.types';
 import {
   OB_COLORS,
+  OB_BREAKER_COLORS,
   OB_STATE_LABELS,
+  isBrokenOb,
+  breakerDirection,
   type BotOb,
 } from '../../features/bot-analysis/botOb.types';
 import {
@@ -260,8 +263,10 @@ export function RightInspector({
         <div className="mark-detail">
           <div className="kv">
             <span>Lectura del bot</span>
-            <b style={{ color: OB_COLORS[selectedBotOb.direction] }}>
-              OB {selectedBotOb.direction === 'bullish' ? 'alcista ▲' : 'bajista ▼'}
+            <b style={{ color: isBrokenOb(selectedBotOb.state) ? OB_BREAKER_COLORS[breakerDirection(selectedBotOb.direction)] : OB_COLORS[selectedBotOb.direction] }}>
+              {isBrokenOb(selectedBotOb.state)
+                ? `Breaker Block ${breakerDirection(selectedBotOb.direction) === 'bullish' ? '▲ soporte' : '▼ resistencia'}`
+                : `OB ${selectedBotOb.direction === 'bullish' ? 'alcista ▲' : 'bajista ▼'}`}
             </b>
           </div>
           <div className="kv"><span>Estado</span><b>{OB_STATE_LABELS[selectedBotOb.state]}</b></div>
@@ -271,10 +276,19 @@ export function RightInspector({
           <div className="kv"><span>Dejó imbalance</span><b>{selectedBotOb.leftImbalance ? 'Sí' : 'No'}</b></div>
           <div className="kv"><span>Vela origen</span><b>{formatUtc(selectedBotOb.originTime)}</b></div>
           <div className="kv"><span>Confirmado</span><b>{formatUtc(selectedBotOb.confirmedAtTime)}</b></div>
-          <p className="hint">
-            Por qué: última vela contraria antes de un impulso fuerte (la zona donde "quedaron"
-            órdenes). Lectura automática del bot — no es señal. Compárala con tu análisis.
-          </p>
+          {isBrokenOb(selectedBotOb.state) ? (
+            <p className="hint">
+              <b>Breaker Block</b>: era un OB {selectedBotOb.direction === 'bullish' ? 'de compra ▲' : 'de venta ▼'} que
+              el precio ROMPIÓ con fuerza → invierte su función (Video 3): ahora actúa como POI de{' '}
+              {breakerDirection(selectedBotOb.direction) === 'bullish' ? 'compra/soporte' : 'venta/resistencia'}.
+              Capa de ESTUDIO (bajo edge en cripto según el propio video); no es señal.
+            </p>
+          ) : (
+            <p className="hint">
+              Por qué: última vela contraria antes de un impulso que rompió estructura (BOS) — la zona donde
+              "quedaron" órdenes. Lectura automática del bot — no es señal. Compárala con tu análisis.
+            </p>
+          )}
         </div>
       ) : selectedBotFvg ? (
         <div className="mark-detail">

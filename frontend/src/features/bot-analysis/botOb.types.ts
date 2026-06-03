@@ -37,3 +37,17 @@ export const OB_STATE_LABELS: Record<ObState, string> = {
   mitigated: 'Mitigado',
   invalidated: 'Invalidado',
 };
+
+// Un OB roto (mitigated/invalidated) es un Breaker Block (Video 3): POI con función INVERTIDA.
+export function isBrokenOb(state: ObState): boolean {
+  return state === 'mitigated' || state === 'invalidated';
+}
+// Dirección invertida del breaker: un OB de COMPRA roto pasa a ser resistencia (bajista) y viceversa.
+export function breakerDirection(d: ObDirection): ObDirection {
+  return d === 'bullish' ? 'bearish' : 'bullish';
+}
+// Colores del Breaker Block, indexados por su función YA invertida (soporte alcista / resistencia bajista).
+export const OB_BREAKER_COLORS: Record<ObDirection, string> = {
+  bullish: '#22c55e', // ahora actúa como soporte
+  bearish: '#ef4444', // ahora actúa como resistencia
+};

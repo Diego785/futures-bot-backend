@@ -46,6 +46,7 @@ body {
 .bot-layer { position: absolute; inset: 0; z-index: 3; pointer-events: none; }
 .bot-zone { position: absolute; border: 1px dashed; box-sizing: border-box; border-radius: 2px; }
 .bot-zone.ob { border-style: solid; } /* OB sólido, FVG punteado: distinguibles de un vistazo */
+.bot-zone.ob.ob-breaker { border-style: dashed; opacity: 0.9; } /* Breaker Block: OB roto, función invertida */
 .bot-zone.liq { border: none; border-top: 1px dashed; height: 0; border-radius: 0; } /* liquidez = línea */
 .bot-zone.liq.selected { border-top-width: 2px; }
 .bot-zone.conf { border-width: 2px; border-style: solid; } /* confluencia = marco grueso sin relleno */

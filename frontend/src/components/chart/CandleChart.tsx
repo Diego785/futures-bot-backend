@@ -20,7 +20,7 @@ import {
 } from '../../features/manual-marks/manualMarks.types';
 import type { NewMarkInput } from '../../features/manual-marks/marks.util';
 import { FVG_COLORS, type BotFvg } from '../../features/bot-analysis/botFvg.types';
-import { OB_COLORS, type BotOb } from '../../features/bot-analysis/botOb.types';
+import { OB_COLORS, OB_BREAKER_COLORS, isBrokenOb, breakerDirection, type BotOb } from '../../features/bot-analysis/botOb.types';
 import { LIQ_COLOR, type BotLiquidity } from '../../features/bot-analysis/botLiquidity.types';
 import { CONF_DIR_COLORS, type ConfluenceZone } from '../../features/bot-analysis/botConfluence.types';
 import { SETUP_DIR_COLORS, type BotSetup } from '../../features/bot-analysis/botSetup.types';
@@ -252,8 +252,14 @@ export function CandleChart(props: Props) {
     }
     if (s.botObVisible) {
       for (const o of s.botObs) {
-        if (o.state === 'mitigated' || o.state === 'invalidated') continue; // solo OB activos
-        pushZone(o.id, 'ob', o.timeStart, o.obLow, o.obHigh, OB_COLORS[o.direction], `OB ${o.direction === 'bullish' ? '▲' : '▼'}`);
+        if (isBrokenOb(o.state)) {
+          // Breaker Block (Video 3): OB roto → POI con función INVERTIDA (compra roto → resistencia;
+          // venta roto → soporte). Se dibuja con la dirección ya invertida + estilo punteado (tag).
+          const inv = breakerDirection(o.direction);
+          pushZone(o.id, 'ob', o.timeStart, o.obLow, o.obHigh, OB_BREAKER_COLORS[inv], `BB ${inv === 'bullish' ? '▲' : '▼'}`, 'breaker');
+        } else {
+          pushZone(o.id, 'ob', o.timeStart, o.obLow, o.obHigh, OB_COLORS[o.direction], `OB ${o.direction === 'bullish' ? '▲' : '▼'}`);
+        }
       }
     }
     if (s.botLiqVisible) {

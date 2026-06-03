@@ -515,7 +515,7 @@ export function TradingCockpit() {
           botFvgCount={botFvgs.filter((f) => f.state !== 'filled').length}
           botObVisible={botObVisible}
           onToggleOb={() => toggleBotLayer(botObVisible, setBotObVisible, !!selectedBotOb)}
-          botObCount={botObs.filter((o) => o.state === 'untouched' || o.state === 'touched').length}
+          botObCount={botObs.length}
           botLiqVisible={botLiqVisible}
           onToggleLiq={() => toggleBotLayer(botLiqVisible, setBotLiqVisible, !!selectedBotLiq)}
           botLiqCount={botLiqs.length}
