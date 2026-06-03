@@ -3,6 +3,7 @@ import { IsIn, IsInt, IsOptional, Matches, Max, Min } from 'class-validator';
 
 const BOT_TIMEFRAMES = ['15m', '1h', '4h', '1d'] as const;
 const PLAN_MODES = ['confirmation', 'risk', 'both'] as const;
+const OB_MODES = ['structural', 'impulse'] as const;
 
 // Query común de las capas de lectura del bot (/api/bot/fvg, /api/bot/ob).
 export class GetBotQueryDto {
@@ -24,4 +25,9 @@ export class GetBotQueryDto {
   @IsOptional()
   @IsIn(PLAN_MODES)
   mode?: (typeof PLAN_MODES)[number];
+
+  // Solo /api/bot/ob: motor de detección. structural (default) | impulse (lente anterior, comparar).
+  @IsOptional()
+  @IsIn(OB_MODES)
+  obMode?: (typeof OB_MODES)[number];
 }

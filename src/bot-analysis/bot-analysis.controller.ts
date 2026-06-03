@@ -43,7 +43,7 @@ export class BotAnalysisController {
       low: c.low,
       close: c.close,
     }));
-    const obs = detectOrderBlocks(q.symbol, q.tf, closed);
+    const obs = detectOrderBlocks(q.symbol, q.tf, closed, q.obMode ? { obMode: q.obMode } : {});
     return { symbol: q.symbol, tf: q.tf, count: obs.length, obs };
   }
 

@@ -69,10 +69,11 @@ export function TradingCockpit() {
   const [botConfluences, setBotConfluences] = useState<ConfluenceZone[]>([]);
   const [botSetups, setBotSetups] = useState<BotSetup[]>([]);
   const [botPlans, setBotPlans] = useState<BotTradePlan[]>([]);
-  // Defaults 5F-B.1: la gráfica abre LIMPIA. Solo las 3 capas base ON; el resto OFF.
-  const [botFvgVisible, setBotFvgVisible] = useState(true);
+  // Default (2026-06-02): la gráfica abre con SOLO la capa OB (foco en el OB, esencia del Video 1).
+  // El usuario activa el resto y marca a mano lo demás. FVG y Liquidez también OFF por defecto.
+  const [botFvgVisible, setBotFvgVisible] = useState(false);
   const [botObVisible, setBotObVisible] = useState(true);
-  const [botLiqVisible, setBotLiqVisible] = useState(true);
+  const [botLiqVisible, setBotLiqVisible] = useState(false);
   const [botConfVisible, setBotConfVisible] = useState(false);
   const [botSetupVisible, setBotSetupVisible] = useState(false);
   const [botPlanConfVisible, setBotPlanConfVisible] = useState(false);
