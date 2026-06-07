@@ -37,12 +37,20 @@ adverse selection). v2 mueve la decisión al humano y usa el software como ojos 
 - **Front (futuro)**: React/Next + TradingView Lightweight Charts. Flutter → app móvil posterior.
 - **SIN**: BullMQ/Redis, DeepSeek, risk-manager, ejecución de órdenes (todo eliminado del v1).
 
-## Estado actual (2026-05-29)
+## Estado actual (2026-06-06)
 - Fase 1 Docs: COMPLETA. Ver `docs/` (lista abajo).
 - Fase 2 Demolición: COMPLETA. Esqueleto compila + smoke test verde (`/api/status` 200; endpoints v1
   → 404; arranca sin DB con `DB_ENABLED=false`).
 - Capa de entrada (`ENTRY-EDGE-SPEC.md`): especificada (provisional).
-- SIGUIENTE: Fase 3 Market Data (velas multi-TF 1D/4H/1H/15m, **persistidas** desde el día uno).
+- Market Data + lectura del bot (`src/bot-analysis/`: FVG/OB/Liquidez/Confluencia/Setups/Planes) +
+  cockpit frontend (marcado manual + workspace): COMPLETOS. OB con detector **ESTRUCTURAL** (swing-first).
+- **RUMBO 2026-06-06:** los 3 videos (OB / entradas / Breaker) sintetizados en una **estrategia mecánica
+  unificada** (`SMC-STRATEGY-MECHANICAL.md`) para **backtestear** y medir expectancy. Decisión del
+  usuario: *mecánica + backtest primero; la ejecución se decide después con la curva out-of-sample*.
+  **Regla Cero intacta** (el backtest NO ejecuta; la autonomía sería decisión futura con su propia
+  revisión de seguridad).
+- SIGUIENTE: Fase B — detectores (invalidación por **cuerpo**, **sweep/reclaim**, confirmación LTF) →
+  Fase C motor de backtest → 18 variantes → validación out-of-sample.
 
 ## Documentación (fuente de verdad — leer antes de codear)
 - `docs/VISION-V2.md` — filosofía copiloto + definición de éxito
@@ -54,6 +62,7 @@ adverse selection). v2 mueve la decisión al humano y usa el software como ojos 
 - `docs/SMC-SPEC-VIDEO-2.md` — "la entrada": riesgo vs confirmación, refinamiento multi-TF (provisional)
 - `docs/SMC-SPEC-VIDEO-3.md` — **Breaker Block** (OB roto = POI con función invertida); capa de estudio (provisional, 🔴 bajo edge en cripto)
 - `docs/ENTRY-EDGE-SPEC.md` — **dónde vive el edge**: zona ≠ entrada, máquina de estados de señal
+- `docs/SMC-STRATEGY-MECHANICAL.md` — **síntesis mecánica unificada (V1+V2+V3)**: estrategia cerrada y causal + diseño de backtest (3 ejes libres) + **criterio de autonomía pre-registrado** (provisional 🔴)
 - `docs/DATASET-PROTOCOL.md` — anti-overfitting (calibración/held-out/out-of-time/cuarentena)
 - `docs/NO-REPAINT-RULES.md` — causalidad (lookahead=0, vela por vela)
 
