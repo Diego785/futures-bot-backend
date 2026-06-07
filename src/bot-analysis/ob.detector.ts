@@ -157,15 +157,16 @@ function detectByImpulse(symbol: string, tf: string, candles: ObCandle[], p: ObP
 }
 
 // ───────────────────────── Modo STRUCTURAL (swing-first, default) ─────────────────────────
-interface Swing {
+export interface Swing {
   index: number;
   price: number;
   kind: 'high' | 'low';
 }
 
 // Pivotes: high[i] es el máximo ESTRICTO de [i-lookback, i+lookback] (low análogo). Causal: el
-// pivote en i se "conoce" en i+lookback (se exige al usarlo, no aquí).
-function detectSwings(candles: ObCandle[], lookback: number): Swing[] {
+// pivote en i se "conoce" en i+lookback (se exige al usarlo, no aquí). Exportado: lo reutiliza
+// sweep.detector (barrido de liquidez sobre swings).
+export function detectSwings(candles: ObCandle[], lookback: number): Swing[] {
   const out: Swing[] = [];
   const n = candles.length;
   for (let i = lookback; i < n - lookback; i++) {

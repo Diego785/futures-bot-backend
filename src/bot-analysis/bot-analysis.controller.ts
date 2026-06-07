@@ -3,6 +3,7 @@ import { CandleRepository } from '../market-data/candle.repository';
 import { GetBotQueryDto } from './dto/get-bot-query.dto';
 import { detectStrictFvgs } from './fvg.detector';
 import { detectOrderBlocks } from './ob.detector';
+import { detectSweeps } from './sweep.detector';
 import { detectLiquidity } from './liquidity.detector';
 import { scoreConfluence } from './confluence.scorer';
 import { detectSetups } from './setup.detector';
@@ -45,6 +46,21 @@ export class BotAnalysisController {
     }));
     const obs = detectOrderBlocks(q.symbol, q.tf, closed, q.obMode ? { obMode: q.obMode } : {});
     return { symbol: q.symbol, tf: q.tf, count: obs.length, obs };
+  }
+
+  // Sweep + reclaim (gatillo modo C de SMC-STRATEGY-MECHANICAL.md): barridos de liquidez sobre swings
+  // con reclamo POR CUERPO. Read-only, función pura para el motor de backtest. NO es señal (Regla Cero).
+  @Get('sweeps')
+  async sweeps(@Query() q: GetBotQueryDto) {
+    const closed = (await this.closedCandles(q.symbol, q.tf, q.limit)).map((c) => ({
+      openTime: c.openTime,
+      open: c.open,
+      high: c.high,
+      low: c.low,
+      close: c.close,
+    }));
+    const sweeps = detectSweeps(q.symbol, q.tf, closed);
+    return { symbol: q.symbol, tf: q.tf, count: sweeps.length, sweeps };
   }
 
   @Get('liquidity')
