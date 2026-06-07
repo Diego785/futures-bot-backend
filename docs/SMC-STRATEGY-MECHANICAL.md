@@ -56,7 +56,9 @@ del impulso que produjo el BOS; rango = high-low **con mechas**.
 - **Confluencia con FVG/imbalance** adyacente → sube el ranking (no es requisito).
 - **Invalidación por CUERPO, no por mecha** (V3): el OB vive mientras ningún **cuerpo** cierre fuera
   del borde distal. *Una mecha que perfora pero cuyo cuerpo vuelve adentro = **sweep que REFUERZA**
-  la zona, no la invalida.* ← ajuste pendiente en `computeState`.
+  la zona, no la invalida.* **Estado (Fase B.1):** `computeState` YA invalida por cuerpo (el `close`
+  debe cruzar el distal); el ajuste real fue en el frontend — un `mitigated` (mecha al distal pero
+  cuerpo DENTRO = sweep) ya **no** cuenta como Breaker; **solo `invalidated`** lo es (`isBrokenOb`).
 
 ### Capa 3 — Ranking de POIs
 `score = cercanía al precio + fuerza del impulso + confluencia FVG + alineación con sesgo +
@@ -177,7 +179,7 @@ los umbrales en **out-of-sample / out-of-time** (no in-sample):
 ## 8. Plan de fases
 
 - **A.** Esta especificación + criterio de autonomía. *(este documento)* ✅
-- **B.** Detectores: invalidación **por cuerpo**, detector **sweep/reclaim**, gatillo **confirmación LTF**.
+- **B.** Detectores: **B.1 ✅** (la invalidación por cuerpo ya estaba en `computeState`; el fix fue `isBrokenOb`: un `mitigated`=sweep ya **no** es Breaker, solo `invalidated`) → **B.2** detector sweep/reclaim → **B.3** gatillo confirmación LTF.
 - **C.** Motor de backtest (reescrito desde `legacy/`, causal, simula límite/SL/TP/BE/cancelación + costes).
 - **D.** Correr las 18 variantes in-sample → medir.
 - **E.** Validar las mejores out-of-sample / walk-forward.

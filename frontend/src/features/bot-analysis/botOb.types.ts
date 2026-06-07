@@ -38,9 +38,12 @@ export const OB_STATE_LABELS: Record<ObState, string> = {
   invalidated: 'Invalidado',
 };
 
-// Un OB roto (mitigated/invalidated) es un Breaker Block (Video 3): POI con función INVERTIDA.
+// Breaker Block (Video 3) = OB roto POR CUERPO: el precio CERRÓ más allá del extremo distal →
+// 'invalidated' → POI con función INVERTIDA. OJO: 'mitigated' (la mecha barrió hasta el distal pero
+// el cuerpo cerró DENTRO = sweep de liquidez) NO está roto — la zona aguantó y sigue activa en su
+// dirección original (ver SMC-STRATEGY-MECHANICAL.md cap. 2). Solo 'invalidated' es Breaker.
 export function isBrokenOb(state: ObState): boolean {
-  return state === 'mitigated' || state === 'invalidated';
+  return state === 'invalidated';
 }
 // Dirección invertida del breaker: un OB de COMPRA roto pasa a ser resistencia (bajista) y viceversa.
 export function breakerDirection(d: ObDirection): ObDirection {
