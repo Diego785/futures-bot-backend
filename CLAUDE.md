@@ -49,8 +49,12 @@ adverse selection). v2 mueve la decisión al humano y usa el software como ojos 
   usuario: *mecánica + backtest primero; la ejecución se decide después con la curva out-of-sample*.
   **Regla Cero intacta** (el backtest NO ejecuta; la autonomía sería decisión futura con su propia
   revisión de seguridad).
-- SIGUIENTE: Fase B — detectores (invalidación por **cuerpo**, **sweep/reclaim**, confirmación LTF) →
-  Fase C motor de backtest → 18 variantes → validación out-of-sample.
+- Fase B (detectores) ✅ y **Fase C (motor de backtest) ✅**: módulo `src/backtest/` (simulador en R +
+  métricas + signal-source 3 gatillos + CLI `npm run backtest`, lee la DB read-only). Causal, 30 tests.
+- 1ª corrida in-sample (2026-06-07): **sin edge probado** (N de 1–24 por variante = muestra insuficiente;
+  los fees aniquilan los stops micro de LTF). Hallazgos en `SMC-STRATEGY-MECHANICAL.md §8`.
+- SIGUIENTE: **datos** (backfill de años de 1h/15m, conseguir 5m) + **filtro de stop mínimo fee-aware**;
+  recién entonces re-medir las 18 variantes y pasar a validación out-of-sample. Regla Cero intacta.
 
 ## Documentación (fuente de verdad — leer antes de codear)
 - `docs/VISION-V2.md` — filosofía copiloto + definición de éxito

@@ -180,10 +180,30 @@ los umbrales en **out-of-sample / out-of-time** (no in-sample):
 
 - **A.** Esta especificación + criterio de autonomía. *(este documento)* ✅
 - **B.** Detectores: **B.1 ✅** (la invalidación por cuerpo ya estaba en `computeState`; el fix fue `isBrokenOb`: un `mitigated`=sweep ya **no** es Breaker, solo `invalidated`) → **B.2** detector sweep/reclaim → **B.3** gatillo confirmación LTF.
-- **C.** Motor de backtest (reescrito desde `legacy/`, causal, simula límite/SL/TP/BE/cancelación + costes).
-- **D.** Correr las 18 variantes in-sample → medir.
+- **C.** Motor de backtest (reescrito limpio desde `legacy/`, en R, causal) ✅. Módulo `src/backtest/`:
+  **C.1** simulador (`trade-simulator.ts`) + métricas (`metrics.ts`) — fill de límite, SL/TP, BE,
+  cancelación, costes, todo normalizado por riesgo. **C.2** `signal-source.ts` — los 3 gatillos
+  (A/B/C) single-TF desde los detectores, TP fixedR | liquidez (causal). **C.3** `runner` + CLI
+  (`npm run backtest`, lee la DB read-only). 30 tests.
+- **D.** Correr las 18 variantes in-sample → medir. **Parcial** (rejilla corrida; faltan 5m y datos).
 - **E.** Validar las mejores out-of-sample / walk-forward.
 - **F.** Decisión de autonomía con la curva out-of-time delante.
+
+### Hallazgos de la 1ª corrida in-sample (2026-06-07) — 🔴 NO concluyentes
+> Ventana corta (4h: 8.5 meses · 1h: 2.4 · 15m: 24 días; sin 5m). **N de 1 a 24 por variante → nada
+> alcanza N≥100; estadísticamente no concluye.** Aun así el motor reveló cosas reales:
+> 1. **Los fees dominan los stops ajustados.** En LTF los sweeps dan stops micro (~0.03–0.3 % del
+>    precio) y el fee taker (0.05 %/lado sobre ~$100k de nocional) vale **3–4× el riesgo** → cada
+>    trade sangra varias R (C en 1h/15m: exp ≈ −4R, maxDD ~98R). Con `fee=0` las mismas 24 ops pasan
+>    a −0.375R con avgWin +2 / avgLoss −1 (R limpia) → **se necesita un filtro de stop mínimo
+>    fee-aware** (saltar trades con riesgo < N× coste round-trip) y decidir maker vs taker por lado.
+> 2. **Espejismo de cola gorda.** La única variante "buena" (4h C liquidez +1.75R) tiene WR 16.7 %:
+>    son 2 ganadores cargando 12 trades. Es justo la trampa del v1 → descartada sin más muestra.
+> 3. **A/B casi no llenan** (fill 5–12 %): el límite en el CE del OB tras el BOS suele quedar a >1
+>    rango → `cancelBeyond` lo cancela antes del retroceso. Revisar esa distancia.
+> 4. **Conclusión honesta:** con estos datos y esta mecanización **no hay edge probado**. Eso es
+>    información (evita repetir el v1), no fracaso. Lo siguiente es **datos** (backfill de años) y un
+>    **filtro de coste**, no tunear sobre 24 trades.
 
 ## 9. Honestidad / qué esperar
 
