@@ -74,9 +74,12 @@ adverse selection). v2 mueve la decisión al humano y usa el software como ojos 
 - **Fortalecimiento HTF estricto probado → NO ayuda** (`alignBias` + CLI `--htf2`, commit pendiente): el HTF
   más estricto (1D solo / 4H+1D alineados) deja el edge igual o peor (1D mete a ETH en negativo). **El 4H ya
   era el óptimo del lever HTF.** No se cherry-pickea el 1D-en-BTC (= overfit). Lever HTF agotado.
-- SIGUIENTE (decisión del usuario), 2 caminos: (a) aceptar el edge 4H (débil/real, fuerte en BTC/XRP/SOL) y
-  diseñar el **paper-trader shadow read-only** (#7, su propia revisión de seguridad); (b) mecanizar una capa
-  SMC NUEVA (premium/discount, inducement) = dimensión distinta, no re-tuning. **Sin pasar a real** (Regla Cero).
+- **Decisión del usuario (2026-06-08): parar de tunear (evitar overfit) y pasar al PAPER-TEST (gate #7).**
+  Diseño en `docs/PAPER-TEST-SPEC.md` (shadow read-only: lee en vivo, registra lo que el candidato HARÍA,
+  NO coloca órdenes; salvaguarda estructural = no importa el write-API). Candidato CONGELADO (no re-tunear).
+  Plan P.1 (núcleo puro offline) → P.2 (cableado live) → P.3 (review) → P.4 (mini-deploy + reloj 1-3 meses).
+- SIGUIENTE: aprobar el diseño y construir **P.1** (tracker incremental + entidad `paper_trades` +
+  PaperTradingService PURO, offline-testeable, test de invarianza Regla Cero). Sin pasar a real.
 
 ## Documentación (fuente de verdad — leer antes de codear)
 - `docs/VISION-V2.md` — filosofía copiloto + definición de éxito
@@ -91,6 +94,7 @@ adverse selection). v2 mueve la decisión al humano y usa el software como ojos 
 - `docs/SMC-STRATEGY-MECHANICAL.md` — **síntesis mecánica unificada (V1+V2+V3)**: estrategia cerrada y causal + diseño de backtest (3 ejes libres) + **criterio de autonomía pre-registrado** (provisional 🔴)
 - `docs/DATASET-PROTOCOL.md` — anti-overfitting (calibración/held-out/out-of-time/cuarentena)
 - `docs/NO-REPAINT-RULES.md` — causalidad (lookahead=0, vela por vela)
+- `docs/PAPER-TEST-SPEC.md` — **forward-test en papel (criterio #7)**: shadow read-only, candidato congelado, plan P.1–P.4 (🔴 diseño)
 
 ## Concepto clave: zona ≠ entrada
 Una **Zone** (OB/FVG/liquidez) es un punto de interés dibujado. Una **entrada** es una decisión bajo
