@@ -76,3 +76,29 @@ export function biasAt(series: BiasPoint[], time: number): Bias {
   }
   return res;
 }
+
+/**
+ * Combina varias series de sesgo en UNA exigiendo UNANIMIDAD (sesgo HTF más estricto, p.ej. 4H+1D):
+ * en cada cambio de cualquier serie, el sesgo resultante es la dirección común si TODAS coinciden, si
+ * no 'neutral'. Devuelve solo los puntos donde el sesgo combinado cambia (igual contrato que biasAt).
+ */
+export function alignBias(seriesList: BiasPoint[][]): BiasPoint[] {
+  if (seriesList.length === 0) return [];
+  if (seriesList.length === 1) return seriesList[0];
+  const times = [...new Set(seriesList.flatMap((s) => s.map((p) => p.time)))].sort((a, b) => a - b);
+  const out: BiasPoint[] = [];
+  let prev: Bias = 'neutral';
+  for (const t of times) {
+    const biases = seriesList.map((s) => biasAt(s, t));
+    const merged: Bias = biases.every((b) => b === 'bullish')
+      ? 'bullish'
+      : biases.every((b) => b === 'bearish')
+        ? 'bearish'
+        : 'neutral';
+    if (merged !== prev) {
+      out.push({ time: t, bias: merged });
+      prev = merged;
+    }
+  }
+  return out;
+}

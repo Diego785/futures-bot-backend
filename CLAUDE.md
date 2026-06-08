@@ -71,9 +71,12 @@ adverse selection). v2 mueve la decisión al humano y usa el software como ojos 
   símbolos (walk-forward 12 ventanas, 2022-26): **5/5 pooled-positivo** — BTC +0.249 / XRP +0.194 / SOL +0.146
   (robustos) · BNB +0.046 / ETH +0.045 (break-even). No era "BTC con suerte". Caveat: majors correlacionados =
   no son 5 pruebas independientes. Pasó de "overfit a BTC" a "edge débil REAL, fuerte en BTC/XRP/SOL".
-- SIGUIENTE (decisión del usuario): el candidato GANÓ un **forward-test en PAPEL** (#7) sobre BTC/XRP/SOL —
-  exige diseñar el paper-trader shadow read-only (su propia revisión de seguridad). Alternativa: FORTALECERLO
-  antes (HTF 1D, premium/discount). Sigue **sin pasar a dinero real** (Regla Cero intacta).
+- **Fortalecimiento HTF estricto probado → NO ayuda** (`alignBias` + CLI `--htf2`, commit pendiente): el HTF
+  más estricto (1D solo / 4H+1D alineados) deja el edge igual o peor (1D mete a ETH en negativo). **El 4H ya
+  era el óptimo del lever HTF.** No se cherry-pickea el 1D-en-BTC (= overfit). Lever HTF agotado.
+- SIGUIENTE (decisión del usuario), 2 caminos: (a) aceptar el edge 4H (débil/real, fuerte en BTC/XRP/SOL) y
+  diseñar el **paper-trader shadow read-only** (#7, su propia revisión de seguridad); (b) mecanizar una capa
+  SMC NUEVA (premium/discount, inducement) = dimensión distinta, no re-tuning. **Sin pasar a real** (Regla Cero).
 
 ## Documentación (fuente de verdad — leer antes de codear)
 - `docs/VISION-V2.md` — filosofía copiloto + definición de éxito

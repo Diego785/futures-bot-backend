@@ -282,6 +282,23 @@ diversos, walk-forward 12 ventanas, 2022-2026 (15m a 155k velas c/u; 4h para el 
 >   GANADO el forward-test en PAPEL (#7) sobre el subconjunto fuerte (BTC/XRP/SOL), con los ojos abiertos a
 >   que el edge es modesto. Alternativa: intentar FORTALECERLO antes (HTF 1D, premium/discount). NO a real.
 
+### Fortalecimiento con HTF estricto — NO ayuda; 4H es el punto óptimo (2026-06-08)
+`alignBias` + CLI `--htf2` (exige unanimidad de dos TFs). Probado en los 5 símbolos vs base 4H
+(pooled / % ventanas / N):
+| | 4H (base) | 1D solo | 4H+1D alineado |
+|---|---|---|---|
+| BTC | +0.249 / 73 % / 54 | +0.278 / 64 % / 56 | +0.203 / 56 % / 41 |
+| ETH | +0.045 / 42 % / 103 | **−0.064** / 33 % / 126 | +0.020 / 42 % / 77 |
+| SOL | +0.146 / 67 % / 118 | +0.094 / 58 % / 133 | +0.138 / 67 % / 71 |
+| BNB | +0.046 / 50 % / 59 | +0.063 / 42 % / 71 | +0.011 / 42 % / 46 |
+| XRP | +0.194 / 58 % / 103 | +0.123 / 50 % / 118 | +0.121 / 50 % / 72 |
+> - **El HTF más estricto NO afila el edge** — igual o peor. 1D solo mete a ETH en negativo; 4H+1D recorta
+>   N sin subir calidad. **El 4H ya era el óptimo del lever HTF.**
+> - **Disciplina:** el 1D sube *marginalmente BTC* (+0.278) pero empeora los otros 4. Quedarse con 1D "porque
+>   BTC mejora" sería **cherry-picking** = overfit. Se mantiene 4H (mejor para el conjunto).
+> - **Conclusión:** el lever HTF está agotado. Quedan: (a) aceptar el edge 4H (débil/real) → paper-test;
+>   (b) mecanizar una capa NUEVA (premium/discount, inducement) = dimensión de señal distinta, no re-tuning.
+
 ## 9. Honestidad / qué esperar
 
 - El **modo A (riesgo)** probablemente pierda — es el control del experimento.

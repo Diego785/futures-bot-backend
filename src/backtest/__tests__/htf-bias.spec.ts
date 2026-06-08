@@ -1,4 +1,4 @@
-import { computeHtfBias, biasAt, type BiasPoint } from '../htf-bias';
+import { computeHtfBias, biasAt, alignBias, type BiasPoint } from '../htf-bias';
 import type { ObCandle } from '../../bot-analysis/ob.detector';
 
 const oc = (openTime: number, open: number, high: number, low: number, close: number): ObCandle => ({
@@ -39,5 +39,29 @@ describe('biasAt', () => {
     expect(biasAt(s, 15)).toBe('bullish'); // se mantiene
     expect(biasAt(s, 20)).toBe('bearish');
     expect(biasAt(s, 99)).toBe('bearish'); // último vigente
+  });
+});
+
+describe('alignBias', () => {
+  it('exige unanimidad: dirección común si todas coinciden, si no neutral', () => {
+    const a: BiasPoint[] = [
+      { time: 0, bias: 'bullish' },
+      { time: 50, bias: 'bearish' },
+    ];
+    const b: BiasPoint[] = [
+      { time: 0, bias: 'bullish' },
+      { time: 30, bias: 'bearish' },
+    ];
+    const m = alignBias([a, b]);
+    expect(biasAt(m, 0)).toBe('bullish'); // ambas alcistas
+    expect(biasAt(m, 10)).toBe('bullish');
+    expect(biasAt(m, 30)).toBe('neutral'); // a alcista, b bajista → discrepan
+    expect(biasAt(m, 49)).toBe('neutral');
+    expect(biasAt(m, 50)).toBe('bearish'); // ambas bajistas
+  });
+
+  it('una sola serie se devuelve tal cual', () => {
+    const a: BiasPoint[] = [{ time: 5, bias: 'bullish' }];
+    expect(alignBias([a])).toBe(a);
   });
 });

@@ -12,7 +12,7 @@ import { BacktestModule } from './backtest.module';
 import { CandleRepository } from '../market-data/candle.repository';
 import { runBacktest, runGrid, type BacktestReport, type RunnerCandle } from './backtest.runner';
 import { walkForward, type WalkForwardResult } from './walkforward';
-import { computeHtfBias, type BiasPoint } from './htf-bias';
+import { computeHtfBias, alignBias, type BiasPoint } from './htf-bias';
 import type { SignalConfig } from './signal-source';
 import type { SimConfig } from './trade-simulator';
 
@@ -147,13 +147,22 @@ async function main(): Promise<void> {
       maxWaitFillBars: parseInt(getArg('max-wait', '0'), 10),
     };
 
-    // Sesgo HTF (multi-TF): si --htf, carga ese TF (historia completa) y filtra gatillos a su favor.
+    // Sesgo HTF (multi-TF): --htf <tf> filtra gatillos a favor de ese TF. --htf2 <tf> añade un segundo
+    // TF y exige UNANIMIDAD (sesgo más estricto, p.ej. --htf 4h --htf2 1d). Historia HTF completa.
     const htfTf = getArg('htf', '');
+    const htfTf2 = getArg('htf2', '');
     let htfBias: BiasPoint[] = [];
     if (htfTf) {
-      const htfCandles = await loadCandles(repo, symbol, htfTf, limit);
-      htfBias = computeHtfBias(htfCandles, parseInt(getArg('swing', '10'), 10));
-      console.log(`Sesgo HTF ${htfTf}: ${htfCandles.length} velas, ${htfBias.length} cambios de estructura`);
+      const sw = parseInt(getArg('swing', '10'), 10);
+      const b1 = computeHtfBias(await loadCandles(repo, symbol, htfTf, limit), sw);
+      if (htfTf2) {
+        const b2 = computeHtfBias(await loadCandles(repo, symbol, htfTf2, limit), sw);
+        htfBias = alignBias([b1, b2]);
+        console.log(`Sesgo HTF ${htfTf}+${htfTf2} alineados: ${htfBias.length} cambios de estructura`);
+      } else {
+        htfBias = b1;
+        console.log(`Sesgo HTF ${htfTf}: ${htfBias.length} cambios de estructura`);
+      }
     }
 
     if (hasFlag('grid')) {
