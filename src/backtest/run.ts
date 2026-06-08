@@ -111,9 +111,14 @@ async function main(): Promise<void> {
       slBufferFrac: parseFloat(getArg('sl-buffer', '0.1')),
       swingLookback: parseInt(getArg('swing', '10'), 10),
       minRr: parseFloat(getArg('min-rr', '1')),
+      minStopPct: parseFloat(getArg('min-stop-pct', '0.003')), // fee-aware: salta stops micro (<0.3%)
     };
+    // Costes: por defecto maker/taker realista (entrada límite maker, SL taker). --fee fuerza tarifa única.
+    const feeArg = getArg('fee', '');
     const simConfig: Partial<SimConfig> = {
-      feeRatePerSide: parseFloat(getArg('fee', '0.0005')),
+      ...(feeArg !== ''
+        ? { feeRatePerSide: parseFloat(feeArg) }
+        : { makerFee: parseFloat(getArg('maker', '0.0002')), takerFee: parseFloat(getArg('taker', '0.0005')) }),
       slippagePerSide: parseFloat(getArg('slip', '0')),
       breakevenAtTpFraction: parseFloat(getArg('be', '0.5')),
       maxWaitFillBars: parseInt(getArg('max-wait', '0'), 10),

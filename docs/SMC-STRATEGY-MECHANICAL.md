@@ -185,25 +185,33 @@ los umbrales en **out-of-sample / out-of-time** (no in-sample):
   cancelación, costes, todo normalizado por riesgo. **C.2** `signal-source.ts` — los 3 gatillos
   (A/B/C) single-TF desde los detectores, TP fixedR | liquidez (causal). **C.3** `runner` + CLI
   (`npm run backtest`, lee la DB read-only). 30 tests.
-- **D.** Correr las 18 variantes in-sample → medir. **Parcial** (rejilla corrida; faltan 5m y datos).
-- **E.** Validar las mejores out-of-sample / walk-forward.
+- **D.** Correr las variantes in-sample → medir ✅ (rejilla 24 celdas: A/B/C × fixedR/liquidez ×
+  4h/1h/15m/5m, sobre el dataset grande).
+- **E.** Validar las mejores out-of-sample / walk-forward. *(Vistazo OOS hecho; falta walk-forward.)*
 - **F.** Decisión de autonomía con la curva out-of-time delante.
 
-### Hallazgos de la 1ª corrida in-sample (2026-06-07) — 🔴 NO concluyentes
-> Ventana corta (4h: 8.5 meses · 1h: 2.4 · 15m: 24 días; sin 5m). **N de 1 a 24 por variante → nada
-> alcanza N≥100; estadísticamente no concluye.** Aun así el motor reveló cosas reales:
-> 1. **Los fees dominan los stops ajustados.** En LTF los sweeps dan stops micro (~0.03–0.3 % del
->    precio) y el fee taker (0.05 %/lado sobre ~$100k de nocional) vale **3–4× el riesgo** → cada
->    trade sangra varias R (C en 1h/15m: exp ≈ −4R, maxDD ~98R). Con `fee=0` las mismas 24 ops pasan
->    a −0.375R con avgWin +2 / avgLoss −1 (R limpia) → **se necesita un filtro de stop mínimo
->    fee-aware** (saltar trades con riesgo < N× coste round-trip) y decidir maker vs taker por lado.
-> 2. **Espejismo de cola gorda.** La única variante "buena" (4h C liquidez +1.75R) tiene WR 16.7 %:
->    son 2 ganadores cargando 12 trades. Es justo la trampa del v1 → descartada sin más muestra.
-> 3. **A/B casi no llenan** (fill 5–12 %): el límite en el CE del OB tras el BOS suele quedar a >1
->    rango → `cancelBeyond` lo cancela antes del retroceso. Revisar esa distancia.
-> 4. **Conclusión honesta:** con estos datos y esta mecanización **no hay edge probado**. Eso es
->    información (evita repetir el v1), no fracaso. Lo siguiente es **datos** (backfill de años) y un
->    **filtro de coste**, no tunear sobre 24 trades.
+### Backfill + filtro fee-aware (CLI `npm run backfill`)
+- `src/backtest/backfill.ts`: trae velas públicas de Binance futures (read-only, Regla Cero) con
+  paginación causal y pausa por rate-limit. Dataset BTCUSDT: **4h 9.7k (2022) · 1h 30k (2023) ·
+  15m 85k (2024) · 5m 150k (2025)**.
+- **Filtro fee-aware** (`minStopPct`, default CLI 0.3 %) + **fees maker/taker** (entrada límite maker,
+  salida TP maker / SL-BE taker). Saltar stops micro donde el fee domina.
+
+### Hallazgos 2ª corrida (2026-06-07, dataset grande + filtro) — 🔴 prometedor pero N aún bajo
+> 1. **El filtro fee-aware FUNCIONÓ.** 15m C fixedR pasó de **−3.94R (maxDD 98R)** a **+0.31R (PF 2.99,
+>    maxDD 2.33R, N=37)** — quitó justo los micro-trades dominados por el fee. Validación clara.
+> 2. **Mejor candidato: 15m C fixedR** (sweep+reclaim, TP 2R): exp +0.31R, WR 48.6 %, PF 2.99, DD bajo.
+>    **Vistazo OOS:** IS 2024–25/09 (N=27) +0.298R PF 3.36 · OOS 25/09–26/06 (N=10) **+0.338R PF 2.45**
+>    → **no se cae out-of-sample** (buena señal), pero N es ridículo para concluir.
+> 3. **La hipótesis C≥B>A se cumple solo en 15m** (en 1h/4h, C fixedR es negativo). Mode A (control)
+>    sale ≈0/negativo como se predijo. **Liquidez como TP casi siempre peor que 2R fijo** (targets
+>    lejanos, DD 22–43R, WR bajo) salvo 15m C.
+> 4. **Cuello de botella = MUESTRA.** Pese a años de datos, N máx 50 (candidato N=37): `swingLookback
+>    10` + `cancelBeyond` + fill ~25 % dan ~15 trades/año. Para N≥100 hace falta **walk-forward sobre
+>    todo el histórico** y/o revisar esos parámetros (calibración disciplinada, no a ojo). El perfil es
+>    **BE-pesado** (la mayoría raspa break-even) → revisar si el BE al 50 % corta ganadores.
+> 5. **Conclusión honesta:** hay un **candidato con pulso** (15m C, sobrevive un OOS naíf) pero **NADA
+>    pasa aún el criterio de autonomía** (§7: N≥100, walk-forward, etc.). Es progreso real, no veredicto.
 
 ## 9. Honestidad / qué esperar
 

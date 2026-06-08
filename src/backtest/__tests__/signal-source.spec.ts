@@ -95,6 +95,14 @@ describe('generateIntents — modo C (sweep + reclaim)', () => {
     expect(it.id).toBe(`C_BTCUSDT_15m_${s.sweepBarTime}`);
   });
 
+  it('filtro fee-aware: minStopPct alto descarta el stop micro', () => {
+    // entry 92.5, risk 3 → risk/entry ≈ 3.24 %. minStopPct 0.05 (5 %) lo filtra; 0 lo deja.
+    const sin = generateIntents('BTCUSDT', '15m', C_SERIES, { gatillo: 'C', tpRule: 'fixedR', minStopPct: 0.05, ...LB2 });
+    expect(sin).toHaveLength(0);
+    const con = generateIntents('BTCUSDT', '15m', C_SERIES, { gatillo: 'C', tpRule: 'fixedR', minStopPct: 0, ...LB2 });
+    expect(con).toHaveLength(1);
+  });
+
   it('TP por liquidez cae a R-fijo cuando no hay nivel válido', () => {
     const intents = generateIntents('BTCUSDT', '15m', C_SERIES, { gatillo: 'C', tpRule: 'liquidity', ...LB2 });
     expect(intents).toHaveLength(1);

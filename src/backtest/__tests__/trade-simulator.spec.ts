@@ -131,6 +131,24 @@ describe('simulateTrade — costes', () => {
   });
 });
 
+describe('simulateTrade — fees maker/taker', () => {
+  it('TP paga maker en ambos lados (entrada límite + salida límite)', () => {
+    const candles = [c(1, 101, 99, 100), c(2, 125, 100, 120)];
+    const r = simulateTrade(longBase, candles, { makerFee: 0.0002, takerFee: 0.0005, slippagePerSide: 0 });
+    // netPrice = (120−100) − 100*0.0002 − 120*0.0002 = 20 − 0.044 = 19.956 → 1.9956R
+    expect(r.trade?.exitReason).toBe('TP');
+    expect(r.trade?.rMultiple).toBe(1.9956);
+  });
+
+  it('SL paga maker en la entrada y taker en la salida (stop-market)', () => {
+    const candles = [c(1, 100, 100, 95), c(2, 96, 88, 89)];
+    const r = simulateTrade(longBase, candles, { makerFee: 0.0002, takerFee: 0.0005, slippagePerSide: 0 });
+    // netPrice = (90−100) − 100*0.0002 − 90*0.0005 = −10 − 0.065 = −10.065 → −1.0065R
+    expect(r.trade?.exitReason).toBe('SL');
+    expect(r.trade?.rMultiple).toBe(-1.0065);
+  });
+});
+
 describe('simulateTrade — SHORT', () => {
   it('TP en short → +2R', () => {
     const shortBase: TradeIntent = {

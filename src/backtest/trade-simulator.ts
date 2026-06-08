@@ -53,7 +53,12 @@ export interface TradeIntent {
 }
 
 export interface SimConfig {
-  feeRatePerSide: number; // fee taker fraccional por lado (ej. 0.0005 = 0.05 %)
+  feeRatePerSide: number; // fee fraccional por lado si NO se usa maker/taker (ej. 0.0005 = 0.05 %)
+  // Fees maker/taker diferenciados (opcional): si AMBOS están definidos, la entrada (límite) paga
+  // maker, y la salida paga maker si es TP (límite) o taker si es SL/BE/maxHold/endOfData (stop-market).
+  // Más realista que una tarifa única. Si falta alguno, se usa feeRatePerSide en ambos lados.
+  makerFee?: number; // ej. 0.0002 (0.02 %)
+  takerFee?: number; // ej. 0.0005 (0.05 %)
   slippagePerSide: number; // slippage adverso en PRECIO por lado (entrada y salida)
   breakevenAtTpFraction: number; // mover SL→entrada al alcanzar esta fracción del recorrido a TP (0.5 = 50 %)
   maxWaitFillBars: number; // cancelar pendiente si no llena en N velas (0 = sin límite)
@@ -130,8 +135,15 @@ export function simulateTrade(
   }
   if (start === -1) return { intentId: intent.id, outcome: 'expired', reason: 'noData' };
 
-  // Buffer del BE en precio: compensa el coste round-trip para que un stop en BE rinda ≈ 0R.
-  const beBufferPrice = 2 * cfg.slippagePerSide + 2 * intent.entry * cfg.feeRatePerSide;
+  // Resolución de fees: maker/taker diferenciados si ambos están definidos, si no tarifa única.
+  const useMt = cfg.makerFee != null && cfg.takerFee != null;
+  const feeEntry = useMt ? (cfg.makerFee as number) : cfg.feeRatePerSide; // entrada = límite (maker)
+  const feeExitTaker = useMt ? (cfg.takerFee as number) : cfg.feeRatePerSide;
+  const feeExitMaker = useMt ? (cfg.makerFee as number) : cfg.feeRatePerSide;
+
+  // Buffer del BE en precio: compensa el coste round-trip (entrada maker + salida taker, que es el
+  // caso de un stop en BE) para que ese stop rinda ≈ 0R.
+  const beBufferPrice = 2 * cfg.slippagePerSide + intent.entry * (feeEntry + feeExitTaker);
 
   let filled = false;
   let entryFill = 0;
@@ -145,7 +157,8 @@ export function simulateTrade(
   const finishTrade = (exitLevel: number, exitTime: number, reason: ExitReason): SimResult => {
     const exitFill = exitLevel - sign * cfg.slippagePerSide; // salida adversa
     const nominalGross = ((exitLevel - intent.entry) * sign) / risk;
-    const netPrice = (exitFill - entryFill) * sign - (entryFill + exitFill) * cfg.feeRatePerSide;
+    const feeExit = reason === 'TP' ? feeExitMaker : feeExitTaker; // TP=límite maker; SL/BE/etc=stop taker
+    const netPrice = (exitFill - entryFill) * sign - entryFill * feeEntry - exitFill * feeExit;
     const netR = netPrice / risk;
     return {
       intentId: intent.id,

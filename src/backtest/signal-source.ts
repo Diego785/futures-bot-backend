@@ -34,6 +34,7 @@ export interface SignalConfig {
   slBufferFrac: number; // buffer del SL = frac × rango de la zona (default 0.1)
   cancelDistanceFrac: number; // cancelBeyond = frac × rango en la dirección adversa al fill (default 1)
   minRr: number; // descarta intents con R:R < esto (anti-degenerado, sobre todo en TP por liquidez)
+  minStopPct: number; // FEE-AWARE: descarta stops micro (riesgo < minStopPct×entry) donde el fee domina
   swingLookback: number; // pivotes para OB/sweep/liquidez (default 10)
   confirmProximityFrac: number; // modo B: la madre debe solapar o estar a ≤ frac×rango del OB de confirmación
 }
@@ -46,6 +47,7 @@ export const DEFAULT_SIGNAL_CONFIG: SignalConfig = {
   slBufferFrac: 0.1,
   cancelDistanceFrac: 1,
   minRr: 1,
+  minStopPct: 0, // 0 = sin filtro (el CLI pone un default fee-aware ~0.003)
   swingLookback: 10,
   confirmProximityFrac: 1,
 };
@@ -130,6 +132,9 @@ function buildIntent(
   const stopLoss = direction === 'LONG' ? zoneLow - buffer : zoneHigh + buffer;
   const risk = Math.abs(entry - stopLoss);
   if (risk <= 0) return null;
+  // Filtro fee-aware: descarta stops micro donde el fee domina la R. Para que el coste round-trip
+  // ≤ ~25 % del riesgo con fee 0.05 %/lado, minStopPct ≳ 8×fee ≈ 0.4 %.
+  if (cfg.minStopPct > 0 && risk < cfg.minStopPct * entry) return null;
   const takeProfit = resolveTp(direction, entry, risk, signalBarTime, signalIdx, liqs, cfg, idxOfTime);
   const rr = Math.abs(takeProfit - entry) / risk;
   if (rr < cfg.minRr) return null;
