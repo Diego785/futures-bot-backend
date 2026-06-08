@@ -249,6 +249,20 @@ mata el candidato — y eso es un ÉXITO de disciplina, no un fracaso.**
 >   demasiado ingenuo: le falta el **sesgo HTF vinculante** (el multi-TF que diferimos) que filtre los
 >   sweeps contra-tendencia; (c) barrer más símbolos para confirmar el patrón. NO seguir tuneando BTC-15m.
 
+### Revisión con sesgo HTF (`htf-bias.ts` + CLI `--htf`) — mejora real, NO suficiente (2026-06-07)
+Implementado el multi-TF de la Capa 1: el gatillo C solo dispara **a favor de la estructura HTF** (BOS
+por cuerpo en 4H). El sesgo se conoce al cierre HTF ≤ señal (causal). Resultado con `--htf 4h`:
+> - **BTC 15m:** +0.246R → **+0.279R** (PF 2.01, walk-forward 72.7 % ventanas, N=54). Mejora.
+> - **ETH 15m:** −0.043R → **+0.045R** (PF 1.09, walk-forward 41.7 % ventanas, mediana −0.038R). **Dejó de
+>   perder pero quedó en break-even**, no robusto.
+> - **Veredicto:** el sesgo HTF era la intuición correcta (ayudó a AMBOS → los sweeps contra-tendencia
+>   arrastraban), pero **NO genera un edge robusto multi-símbolo**: BTC fuerte, ETH marginal. No alcanza
+>   para autonomía (ETH falla #2 y #5). El edge real, si existe, es **débil y centrado en BTC**.
+> - **Opciones abiertas:** (a) sesgo HTF más estricto (1D, o 4H+1D alineados) a ver si afila ETH;
+>   (b) más símbolos (SOL…) para ver si el rango +0.045…+0.28R agrupa positivo (edge débil real) o
+>   straddlea cero (no-edge); (c) aceptar "edge débil BTC-céntrico" y hacer un paper-test SOLO en BTC-15m,
+>   con los ojos abiertos; (d) mecanizar otra capa SMC (premium/discount, inducement). Sigue sin pasar a real.
+
 ## 9. Honestidad / qué esperar
 
 - El **modo A (riesgo)** probablemente pierda — es el control del experimento.

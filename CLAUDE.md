@@ -63,9 +63,13 @@ adverse selection). v2 mueve la decisión al humano y usa el software como ojos 
   PF 0.91, 42% ventanas). Positivo aislado rodeado de break-even/negativo = firma del overfit, no del edge.
   El pase de walk-forward en BTC-15m era convincente y aun así engañoso — **la trampa del v1, atrapada a
   tiempo** (antes de paper-test o dinero). NO pasa a autonomía.
-- SIGUIENTE: decisión del usuario — (a) aceptar no-edge (resultado válido) o (b) **revisar la mecanización**;
-  sospechoso #1 = el gatillo C single-TF es ingenuo, le falta el **sesgo HTF vinculante** (multi-TF diferido)
-  que filtre sweeps contra-tendencia. NO seguir tuneando BTC-15m. Regla Cero intacta.
+- **Revisión sesgo HTF ✅** (`htf-bias.ts` + CLI `--htf`, commit 4c29599): el gatillo C solo dispara a favor
+  de la estructura HTF (BOS por cuerpo 4H, causal). **Mejora real pero NO suficiente:** BTC 15m +0.246→+0.279R
+  (72.7% ventanas); ETH 15m −0.043→**+0.045R** (PF 1.09, 42% ventanas) = dejó de perder pero quedó break-even.
+  El sesgo HTF era la intuición correcta (ayudó a ambos) pero el edge sigue **débil y BTC-céntrico**, no robusto.
+- SIGUIENTE (decisión del usuario): (a) sesgo HTF más estricto (1D / 4H+1D); (b) más símbolos (SOL) para ver
+  si agrupa positivo o straddlea cero; (c) aceptar edge-débil-BTC y paper-test SOLO en BTC; (d) mecanizar otra
+  capa SMC (premium/discount, inducement). Sigue **sin pasar a real** (Regla Cero intacta).
 
 ## Documentación (fuente de verdad — leer antes de codear)
 - `docs/VISION-V2.md` — filosofía copiloto + definición de éxito
