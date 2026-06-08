@@ -189,8 +189,9 @@ los umbrales en **out-of-sample / out-of-time** (no in-sample):
   4h/1h/15m/5m, sobre el dataset grande).
 - **E.** Validar las mejores out-of-sample / walk-forward ✅ (`walkforward.ts` + CLI `--wf`; calibración
   vs held-out con disciplina `DATASET-PROTOCOL`).
-- **F.** Decisión de autonomía con la curva out-of-time delante. **El único criterio que falta es #7
-  (forward-test en papel 1–3 meses); todos los históricos los cruza el candidato.**
+- **F.** Decisión de autonomía. **Prueba de robustez ✅ → el candidato NO generaliza (overfit a BTC-15m;
+  ver abajo). NO pasa a paper-test ni a autonomía.** Decisión: revisar la mecanización (sesgo HTF) o
+  aceptar no-edge. La curva bonita de BTC-15m era la trampa del v1, atrapada a tiempo.
 
 ### Backfill + filtro fee-aware (CLI `npm run backfill`)
 - `src/backtest/backfill.ts`: trae velas públicas de Binance futures (read-only, Regla Cero) con
@@ -230,7 +231,23 @@ es la palanca de N, ~triplica fills sin matar expectancy) y **validado en held-o
 >   de IS (168 %) · #8 costes incluidos. **Falta SOLO #7: forward-test en papel 1–3 meses (no atajable).**
 > - **Banderas amarillas (seguir críticos):** edge fino y BE-dependiente; N por ventana aún chico (3–21);
 >   el trimestre más reciente fue negativo; un solo símbolo/TF; el sim aproxima fills/slippage (de ahí #7).
-> - **Veredicto:** el pre-registro dice **pasar a forward-test en papel**, NO a dinero real. Disciplina v1.
+> - **Veredicto (provisional):** el pre-registro dice **pasar a forward-test en papel**, NO a dinero real.
+
+### Fase F — prueba de robustez: el candidato NO generaliza → OVERFIT (2026-06-07)
+**Antes de comprometer 1–3 meses de paper-test, robustez barata (decisión del usuario). El resultado
+mata el candidato — y eso es un ÉXITO de disciplina, no un fracaso.**
+> - **Slippage: robusto** ✓ — el edge aguanta hasta $20/lado (+0.246R → +0.162R). No es el problema.
+> - **TF: el edge es SOLO de 15m** — el mismo gatillo en BTC 5m/1h/4h **pierde** (−0.20 / −0.17 / −0.09R).
+> - **Símbolo: NO generaliza** — **ETH 15m (mismos params, N=211): −0.043R, PF 0.91, 5/12 ventanas (42%).**
+> - **Diagnóstico:** BTC-15m es un **positivo aislado** rodeado de break-even/negativo. Un edge real deja
+>   rastro en TFs/símbolos vecinos; este no. Es la **firma del overfit**, no del edge. El pase de
+>   walk-forward en BTC-15m (4 años, incl. bear) era convincente y **aun así engañoso** — justo la trampa
+>   del v1 (PF 7.37 in-sample → −68 % en vivo), atrapada esta vez ANTES de arriesgar tiempo o dinero.
+> - **Conclusión:** esta mecanización (sweep+reclaim single-TF, estos params) **NO tiene edge robusto.**
+>   NO pasa a paper-test. Es un resultado VÁLIDO (doc §9: "un backtest que no da es información"). Opciones:
+>   (a) aceptar no-edge; (b) revisar la mecanización — el sospechoso #1 es que el gatillo C single-TF es
+>   demasiado ingenuo: le falta el **sesgo HTF vinculante** (el multi-TF que diferimos) que filtre los
+>   sweeps contra-tendencia; (c) barrer más símbolos para confirmar el patrón. NO seguir tuneando BTC-15m.
 
 ## 9. Honestidad / qué esperar
 

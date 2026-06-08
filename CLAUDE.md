@@ -57,10 +57,15 @@ adverse selection). v2 mueve la decisión al humano y usa el software como ojos 
   (sweep+reclaim) · TP 2R · cancelDist 3 · swing 10 · BE 50%**. `cancelDist` 1→3 elegido en calibración y
   validado en held-out (+0.376R). Walk-forward 2022–2026 (15m a 155k velas, incluye bear 2022): **N=108,
   pooled +0.231R, 81.8% ventanas rentables.** El BE al 50% ES el mecanismo del edge (quitarlo lo derrumba).
-- **Cruza los criterios históricos de autonomía** (#1 N≥100, #2 ≥+0.20R, #4, #5 ≥70%, #6, #8). **Falta SOLO
-  #7: forward-test en PAPEL 1–3 meses.** Banderas: edge fino BE-dependiente, N/ventana chico, 1 símbolo/TF.
-- SIGUIENTE (Fase F): el pre-registro dice **pasar a forward-test en papel, NO a dinero real**. Eso exige
-  decidir la arquitectura del paper-trading (shadow read-only) — su propia revisión de seguridad. Regla Cero intacta.
+  Cruzaba los criterios históricos #1/#2/#4/#5/#6/#8 EN BTC-15m. PERO:
+- **Fase F (robustez) ✅ → el candidato NO generaliza = OVERFIT.** Slippage: robusto (aguanta $20/lado).
+  Pero el edge es SOLO de 15m (BTC 5m/1h/4h pierden) y **NO pasa a ETH-15m** (mismos params, N=211: −0.043R,
+  PF 0.91, 42% ventanas). Positivo aislado rodeado de break-even/negativo = firma del overfit, no del edge.
+  El pase de walk-forward en BTC-15m era convincente y aun así engañoso — **la trampa del v1, atrapada a
+  tiempo** (antes de paper-test o dinero). NO pasa a autonomía.
+- SIGUIENTE: decisión del usuario — (a) aceptar no-edge (resultado válido) o (b) **revisar la mecanización**;
+  sospechoso #1 = el gatillo C single-TF es ingenuo, le falta el **sesgo HTF vinculante** (multi-TF diferido)
+  que filtre sweeps contra-tendencia. NO seguir tuneando BTC-15m. Regla Cero intacta.
 
 ## Documentación (fuente de verdad — leer antes de codear)
 - `docs/VISION-V2.md` — filosofía copiloto + definición de éxito
