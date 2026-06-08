@@ -7,6 +7,7 @@
 import { generateIntents, type SignalConfig } from './signal-source';
 import { simulateAll, type SimCandle, type SimConfig } from './trade-simulator';
 import { computeMetrics, type BacktestMetrics } from './metrics';
+import type { BiasPoint } from './htf-bias';
 import type { ObCandle } from '../bot-analysis/ob.detector';
 
 // Vela del backtest: OHLC (para los detectores) + closeTime opcional (para anclar las salidas).
@@ -34,8 +35,9 @@ export function runBacktest(
   candles: RunnerCandle[],
   signalConfig: Partial<SignalConfig> = {},
   simConfig: Partial<SimConfig> = {},
+  htfBias: BiasPoint[] = [],
 ): BacktestReport {
-  const intents = generateIntents(symbol, tf, candles, signalConfig);
+  const intents = generateIntents(symbol, tf, candles, signalConfig, htfBias);
   const simCandles: SimCandle[] = candles.map((c) => ({
     openTime: c.openTime,
     high: c.high,
@@ -70,11 +72,12 @@ export function runGrid(
   tpRules: SignalConfig['tpRule'][],
   signalBase: Partial<SignalConfig> = {},
   simConfig: Partial<SimConfig> = {},
+  htfBias: BiasPoint[] = [],
 ): BacktestReport[] {
   const out: BacktestReport[] = [];
   for (const gatillo of gatillos) {
     for (const tpRule of tpRules) {
-      out.push(runBacktest(symbol, tf, candles, { ...signalBase, gatillo, tpRule }, simConfig));
+      out.push(runBacktest(symbol, tf, candles, { ...signalBase, gatillo, tpRule }, simConfig, htfBias));
     }
   }
   return out;

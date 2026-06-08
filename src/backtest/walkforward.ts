@@ -13,6 +13,7 @@
 import { runBacktest, type RunnerCandle } from './backtest.runner';
 import type { SignalConfig } from './signal-source';
 import type { SimConfig } from './trade-simulator';
+import type { BiasPoint } from './htf-bias';
 
 export interface WfWindow {
   index: number;
@@ -70,6 +71,7 @@ export function walkForward(
   nWindows: number,
   signalConfig: Partial<SignalConfig> = {},
   simConfig: Partial<SimConfig> = {},
+  htfBias: BiasPoint[] = [],
 ): WalkForwardResult {
   const n = candles.length;
   const k = Math.max(1, Math.floor(nWindows));
@@ -80,7 +82,7 @@ export function walkForward(
     const start = i * size;
     const end = i === k - 1 ? n : (i + 1) * size; // la última toma el resto
     const slice = candles.slice(start, end);
-    const r = runBacktest(symbol, tf, slice, signalConfig, simConfig);
+    const r = runBacktest(symbol, tf, slice, signalConfig, simConfig, htfBias);
     const m = r.metrics;
     windows.push({
       index: i,

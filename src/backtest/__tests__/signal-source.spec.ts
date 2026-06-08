@@ -110,4 +110,16 @@ describe('generateIntents — modo C (sweep + reclaim)', () => {
     const risk = Math.abs(it.entry - it.stopLoss);
     expect(it.takeProfit).toBeCloseTo(it.entry + 2 * risk, 6); // fallback fixedR
   });
+
+  it('filtro de sesgo HTF: el sweep LONG solo pasa si el HTF es alcista', () => {
+    // El sweep de C_SERIES es LONG (signalBarTime 5).
+    const conBull = generateIntents('BTCUSDT', '15m', C_SERIES, { gatillo: 'C', tpRule: 'fixedR', ...LB2 }, [
+      { time: 0, bias: 'bullish' },
+    ]);
+    expect(conBull).toHaveLength(1); // a favor → pasa
+    const conBear = generateIntents('BTCUSDT', '15m', C_SERIES, { gatillo: 'C', tpRule: 'fixedR', ...LB2 }, [
+      { time: 0, bias: 'bearish' },
+    ]);
+    expect(conBear).toHaveLength(0); // en contra → filtrado
+  });
 });

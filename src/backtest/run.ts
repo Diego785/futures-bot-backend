@@ -12,6 +12,7 @@ import { BacktestModule } from './backtest.module';
 import { CandleRepository } from '../market-data/candle.repository';
 import { runBacktest, runGrid, type BacktestReport, type RunnerCandle } from './backtest.runner';
 import { walkForward, type WalkForwardResult } from './walkforward';
+import { computeHtfBias, type BiasPoint } from './htf-bias';
 import type { SignalConfig } from './signal-source';
 import type { SimConfig } from './trade-simulator';
 
@@ -146,6 +147,15 @@ async function main(): Promise<void> {
       maxWaitFillBars: parseInt(getArg('max-wait', '0'), 10),
     };
 
+    // Sesgo HTF (multi-TF): si --htf, carga ese TF (historia completa) y filtra gatillos a su favor.
+    const htfTf = getArg('htf', '');
+    let htfBias: BiasPoint[] = [];
+    if (htfTf) {
+      const htfCandles = await loadCandles(repo, symbol, htfTf, limit);
+      htfBias = computeHtfBias(htfCandles, parseInt(getArg('swing', '10'), 10));
+      console.log(`Sesgo HTF ${htfTf}: ${htfCandles.length} velas, ${htfBias.length} cambios de estructura`);
+    }
+
     if (hasFlag('grid')) {
       const tfs = getArg('tfs', '4h,1h,15m').split(',').map((s) => s.trim());
       const gatillos = getArg('gatillos', 'A,B,C').split(',').map((s) => s.trim()) as SignalConfig['gatillo'][];
@@ -157,7 +167,7 @@ async function main(): Promise<void> {
           console.log(`(${tf}: sin velas, omitido)`);
           continue;
         }
-        all.push(...runGrid(symbol, tf, candles, gatillos, tps, signalBase, simConfig));
+        all.push(...runGrid(symbol, tf, candles, gatillos, tps, signalBase, simConfig, htfBias));
       }
       printGrid(all);
       return;
@@ -173,7 +183,7 @@ async function main(): Promise<void> {
       const windows = parseInt(getArg('windows', '6'), 10);
       const gatillo = getArg('gatillo', 'C') as SignalConfig['gatillo'];
       const tpRule = getArg('tp', 'fixedR') as SignalConfig['tpRule'];
-      printWalkForward(walkForward(symbol, tf, candles, windows, { ...signalBase, gatillo, tpRule }, simConfig));
+      printWalkForward(walkForward(symbol, tf, candles, windows, { ...signalBase, gatillo, tpRule }, simConfig, htfBias));
       return;
     }
 
@@ -185,7 +195,7 @@ async function main(): Promise<void> {
     }
     const gatillo = getArg('gatillo', 'C') as SignalConfig['gatillo'];
     const tpRule = getArg('tp', 'fixedR') as SignalConfig['tpRule'];
-    printReport(runBacktest(symbol, tf, candles, { ...signalBase, gatillo, tpRule }, simConfig));
+    printReport(runBacktest(symbol, tf, candles, { ...signalBase, gatillo, tpRule }, simConfig, htfBias));
   } finally {
     await app.close();
   }

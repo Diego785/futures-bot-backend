@@ -22,6 +22,7 @@ import {
 } from '../bot-analysis/ob.detector';
 import { detectSweeps } from '../bot-analysis/sweep.detector';
 import { detectLiquidity, DEFAULT_LIQ_PARAMS, type BotLiquidity } from '../bot-analysis/liquidity.detector';
+import { biasAt, type BiasPoint } from './htf-bias';
 import type { TradeDirection, TradeIntent } from './trade-simulator';
 
 export type Gatillo = 'A' | 'B' | 'C';
@@ -250,6 +251,7 @@ export function generateIntents(
   tf: string,
   candles: ObCandle[],
   config: Partial<SignalConfig> = {},
+  htfBias: BiasPoint[] = [],
 ): TradeIntent[] {
   const cfg: SignalConfig = { ...DEFAULT_SIGNAL_CONFIG, ...config };
   const idxOfTime = new Map<number, number>();
@@ -282,5 +284,15 @@ export function generateIntents(
         ? intentsA(symbol, tf, obs, liqs, cfg, idxOfTime)
         : intentsB(symbol, tf, obs, candles, liqs, cfg, idxOfTime);
   }
+
+  // Filtro de sesgo HTF (multi-TF, Capa 1): solo gatillos A FAVOR de la estructura del TF alto.
+  // Un sweep alcista (LONG) requiere sesgo HTF alcista; bajista (SHORT), bajista. Neutral → fuera.
+  if (htfBias.length > 0) {
+    intents = intents.filter((it) => {
+      const bias = biasAt(htfBias, it.signalBarTime);
+      return it.direction === 'LONG' ? bias === 'bullish' : bias === 'bearish';
+    });
+  }
+
   return intents.sort((a, b) => a.signalBarTime - b.signalBarTime);
 }
