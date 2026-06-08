@@ -67,9 +67,13 @@ adverse selection). v2 mueve la decisión al humano y usa el software como ojos 
   de la estructura HTF (BOS por cuerpo 4H, causal). **Mejora real pero NO suficiente:** BTC 15m +0.246→+0.279R
   (72.7% ventanas); ETH 15m −0.043→**+0.045R** (PF 1.09, 42% ventanas) = dejó de perder pero quedó break-even.
   El sesgo HTF era la intuición correcta (ayudó a ambos) pero el edge sigue **débil y BTC-céntrico**, no robusto.
-- SIGUIENTE (decisión del usuario): (a) sesgo HTF más estricto (1D / 4H+1D); (b) más símbolos (SOL) para ver
-  si agrupa positivo o straddlea cero; (c) aceptar edge-débil-BTC y paper-test SOLO en BTC; (d) mecanizar otra
-  capa SMC (premium/discount, inducement). Sigue **sin pasar a real** (Regla Cero intacta).
+- **Barrido multi-símbolo ✅ (2026-06-08): el edge GENERALIZA (débil).** Mismo candidato + `--htf 4h` en 5
+  símbolos (walk-forward 12 ventanas, 2022-26): **5/5 pooled-positivo** — BTC +0.249 / XRP +0.194 / SOL +0.146
+  (robustos) · BNB +0.046 / ETH +0.045 (break-even). No era "BTC con suerte". Caveat: majors correlacionados =
+  no son 5 pruebas independientes. Pasó de "overfit a BTC" a "edge débil REAL, fuerte en BTC/XRP/SOL".
+- SIGUIENTE (decisión del usuario): el candidato GANÓ un **forward-test en PAPEL** (#7) sobre BTC/XRP/SOL —
+  exige diseñar el paper-trader shadow read-only (su propia revisión de seguridad). Alternativa: FORTALECERLO
+  antes (HTF 1D, premium/discount). Sigue **sin pasar a dinero real** (Regla Cero intacta).
 
 ## Documentación (fuente de verdad — leer antes de codear)
 - `docs/VISION-V2.md` — filosofía copiloto + definición de éxito

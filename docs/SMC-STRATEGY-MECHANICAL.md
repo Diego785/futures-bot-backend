@@ -263,6 +263,25 @@ por cuerpo en 4H). El sesgo se conoce al cierre HTF ≤ señal (causal). Resulta
 >   straddlea cero (no-edge); (c) aceptar "edge débil BTC-céntrico" y hacer un paper-test SOLO en BTC-15m,
 >   con los ojos abiertos; (d) mecanizar otra capa SMC (premium/discount, inducement). Sigue sin pasar a real.
 
+### Barrido multi-símbolo (5 símbolos, candidato fijo + `--htf 4h`) — el edge GENERALIZA, débil (2026-06-08)
+Para distinguir "edge débil real" de "BTC con suerte": el MISMO candidato (sin re-tunear) en 5 símbolos
+diversos, walk-forward 12 ventanas, 2022-2026 (15m a 155k velas c/u; 4h para el sesgo).
+| símbolo | expR pooled | % ventanas | N | mediana ventana |
+|---|---|---|---|---|
+| BTC | **+0.249** | 72.7 % | 54 | +0.182 |
+| XRP | **+0.194** | 58.3 % | 103 | +0.201 |
+| SOL | **+0.146** | 66.7 % | 118 | +0.094 |
+| BNB | +0.046 | 50.0 % | 59 | +0.000 |
+| ETH | +0.045 | 41.7 % | 103 | −0.038 |
+> - **5/5 pooled-POSITIVO** → inclina a *edge débil REAL*, no a "BTC con suerte" (que daría signos mezclados).
+> - Pero **débil y desigual:** solo BTC/XRP/SOL robustos (mediana + y % decente); ETH/BNB en break-even.
+> - **Caveat:** los majors cripto están CORRELACIONADOS → no son 5 pruebas independientes sino 5 vistas
+>   del mismo régimen; evidencia más floja que mercados no correlacionados (forex/índices, no disponibles).
+>   *Mitiga:* ETH (muy correlado a BTC) rinde 5× menos → hay microestructura por símbolo, no solo régimen.
+> - **Veredicto:** el candidato pasó la última verificación histórica barata (generaliza, débilmente). Ha
+>   GANADO el forward-test en PAPEL (#7) sobre el subconjunto fuerte (BTC/XRP/SOL), con los ojos abiertos a
+>   que el edge es modesto. Alternativa: intentar FORTALECERLO antes (HTF 1D, premium/discount). NO a real.
+
 ## 9. Honestidad / qué esperar
 
 - El **modo A (riesgo)** probablemente pierda — es el control del experimento.
