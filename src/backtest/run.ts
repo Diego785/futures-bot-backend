@@ -11,6 +11,7 @@ import { NestFactory } from '@nestjs/core';
 import { BacktestModule } from './backtest.module';
 import { CandleRepository } from '../market-data/candle.repository';
 import { runBacktest, runGrid, type BacktestReport, type RunnerCandle } from './backtest.runner';
+import { walkForward, type WalkForwardResult } from './walkforward';
 import type { SignalConfig } from './signal-source';
 import type { SimConfig } from './trade-simulator';
 
@@ -86,6 +87,26 @@ function printGrid(reports: BacktestReport[]): void {
   console.log('Nota: in-sample. NO es veredicto de autonomía (ver criterio pre-registrado, doc §7).');
 }
 
+function printWalkForward(wf: WalkForwardResult): void {
+  console.log('');
+  console.log(`=== Walk-forward ${wf.tf} | gatillo ${wf.gatillo} | TP ${wf.tpRule} | ${wf.windows.length} ventanas ===`);
+  console.log('win  desde        hasta         N      expR     WR%    PF     maxDD');
+  console.log('──── ──────────── ────────────  ─────  ───────  ─────  ─────  ──────');
+  for (const w of wf.windows) {
+    console.log(
+      `${String(w.index).padEnd(4)} ${fmt(w.fromTime).padEnd(12)} ${fmt(w.toTime).padEnd(12)}  ${String(w.trades).padStart(5)}  ${signed(w.expectancyR).padStart(7)}  ${pct(w.winRate).padStart(5)}  ${pf(w.profitFactor).padStart(5)}  ${w.maxDrawdownR.toFixed(2).padStart(6)}`,
+    );
+  }
+  console.log('────');
+  console.log(`Ventanas con trades: ${wf.windowsCount} | rentables: ${wf.profitableWindows} (${pct(wf.pctProfitable)}%)`);
+  console.log(
+    `N total: ${wf.totalTrades} | expectancy pooled: ${signed(wf.pooledExpectancyR)}R | mediana ventana: ${signed(wf.medianExpectancyR)}R`,
+  );
+  console.log(`peor ventana: ${signed(wf.worstExpectancyR)}R | desviación entre ventanas: ${wf.stdExpectancyR.toFixed(3)}R`);
+  console.log('');
+  console.log('Criterio autonomía (§7): #5 ≥70 % de ventanas rentables · #1 N≥100. NO es veredicto (in-sample).');
+}
+
 async function main(): Promise<void> {
   const app = await NestFactory.createApplicationContext(BacktestModule, { logger: ['error', 'warn'] });
   try {
@@ -112,6 +133,7 @@ async function main(): Promise<void> {
       swingLookback: parseInt(getArg('swing', '10'), 10),
       minRr: parseFloat(getArg('min-rr', '1')),
       minStopPct: parseFloat(getArg('min-stop-pct', '0.003')), // fee-aware: salta stops micro (<0.3%)
+      cancelDistanceFrac: parseFloat(getArg('cancel-dist', '1')),
     };
     // Costes: por defecto maker/taker realista (entrada límite maker, SL taker). --fee fuerza tarifa única.
     const feeArg = getArg('fee', '');
@@ -138,6 +160,20 @@ async function main(): Promise<void> {
         all.push(...runGrid(symbol, tf, candles, gatillos, tps, signalBase, simConfig));
       }
       printGrid(all);
+      return;
+    }
+
+    if (hasFlag('wf')) {
+      const tf = getArg('tf', '15m');
+      const candles = await loadCandles(repo, symbol, tf, limit, from, to);
+      if (candles.length === 0) {
+        console.log(`Sin velas para ${symbol} ${tf}.`);
+        return;
+      }
+      const windows = parseInt(getArg('windows', '6'), 10);
+      const gatillo = getArg('gatillo', 'C') as SignalConfig['gatillo'];
+      const tpRule = getArg('tp', 'fixedR') as SignalConfig['tpRule'];
+      printWalkForward(walkForward(symbol, tf, candles, windows, { ...signalBase, gatillo, tpRule }, simConfig));
       return;
     }
 

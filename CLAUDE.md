@@ -53,11 +53,14 @@ adverse selection). v2 mueve la decisión al humano y usa el software como ojos 
   métricas + signal-source 3 gatillos + CLI `npm run backtest`, lee la DB read-only). Causal, 30 tests.
 - Fase D ✅: backfill de años (CLI `npm run backfill`; BTCUSDT 4h 9.7k/1h 30k/15m 85k/5m 150k) + filtro
   **fee-aware** (minStopPct) + fees **maker/taker**. Rejilla de 24 variantes re-corrida.
-- **Candidato con pulso: 15m C (sweep+reclaim) TP 2R** — el filtro lo volvió rentable (de −3.9R a +0.31R,
-  PF 2.99) y **no se cae en un OOS naíf** (IS +0.298R / OOS +0.338R). PERO N≈37 (muestra aún baja) → NADA
-  pasa el criterio de autonomía todavía. Detalle en `SMC-STRATEGY-MECHANICAL.md §8`.
-- SIGUIENTE (Fase E): **walk-forward** sobre todo el histórico + subir N (revisar `swingLookback`/
-  `cancelBeyond` con disciplina anti-overfitting) + revisar el BE al 50 % (perfil BE-pesado). Regla Cero intacta.
+- **Fase E ✅: candidato VALIDADO en histórico** (`walkforward.ts` + CLI `--wf`). Candidato: **15m · C
+  (sweep+reclaim) · TP 2R · cancelDist 3 · swing 10 · BE 50%**. `cancelDist` 1→3 elegido en calibración y
+  validado en held-out (+0.376R). Walk-forward 2022–2026 (15m a 155k velas, incluye bear 2022): **N=108,
+  pooled +0.231R, 81.8% ventanas rentables.** El BE al 50% ES el mecanismo del edge (quitarlo lo derrumba).
+- **Cruza los criterios históricos de autonomía** (#1 N≥100, #2 ≥+0.20R, #4, #5 ≥70%, #6, #8). **Falta SOLO
+  #7: forward-test en PAPEL 1–3 meses.** Banderas: edge fino BE-dependiente, N/ventana chico, 1 símbolo/TF.
+- SIGUIENTE (Fase F): el pre-registro dice **pasar a forward-test en papel, NO a dinero real**. Eso exige
+  decidir la arquitectura del paper-trading (shadow read-only) — su propia revisión de seguridad. Regla Cero intacta.
 
 ## Documentación (fuente de verdad — leer antes de codear)
 - `docs/VISION-V2.md` — filosofía copiloto + definición de éxito

@@ -187,8 +187,10 @@ los umbrales en **out-of-sample / out-of-time** (no in-sample):
   (`npm run backtest`, lee la DB read-only). 30 tests.
 - **D.** Correr las variantes in-sample → medir ✅ (rejilla 24 celdas: A/B/C × fixedR/liquidez ×
   4h/1h/15m/5m, sobre el dataset grande).
-- **E.** Validar las mejores out-of-sample / walk-forward. *(Vistazo OOS hecho; falta walk-forward.)*
-- **F.** Decisión de autonomía con la curva out-of-time delante.
+- **E.** Validar las mejores out-of-sample / walk-forward ✅ (`walkforward.ts` + CLI `--wf`; calibración
+  vs held-out con disciplina `DATASET-PROTOCOL`).
+- **F.** Decisión de autonomía con la curva out-of-time delante. **El único criterio que falta es #7
+  (forward-test en papel 1–3 meses); todos los históricos los cruza el candidato.**
 
 ### Backfill + filtro fee-aware (CLI `npm run backfill`)
 - `src/backtest/backfill.ts`: trae velas públicas de Binance futures (read-only, Regla Cero) con
@@ -212,6 +214,23 @@ los umbrales en **out-of-sample / out-of-time** (no in-sample):
 >    **BE-pesado** (la mayoría raspa break-even) → revisar si el BE al 50 % corta ganadores.
 > 5. **Conclusión honesta:** hay un **candidato con pulso** (15m C, sobrevive un OOS naíf) pero **NADA
 >    pasa aún el criterio de autonomía** (§7: N≥100, walk-forward, etc.). Es progreso real, no veredicto.
+
+### Hallazgos Fase E (2026-06-07, walk-forward + N con disciplina) — candidato VALIDADO en histórico
+**Candidato definido:** `15m · gatillo C (sweep+reclaim) · TP 2R fijo · cancelDist 3 · swingLookback 10 ·
+BE 50% · minStopPct 0.3% · fees maker/taker`. El único parámetro movido del default fue `cancelDist`
+(1→3), **elegido SOBRE CALIBRACIÓN** (hasta 2025-06; barrido `swingLookback × cancelDist`: `cancelDist`
+es la palanca de N, ~triplica fills sin matar expectancy) y **validado en held-out intocado**.
+> - **Held-out** (2025-06→2026-06, N=21): **+0.376R**, WR 52.4 %, PF 3.25 → mejor que calibración (+0.224R).
+> - **Walk-forward 2022–2026, 12 ventanas (15m extendido a 155k velas, incluye el bear de 2022):**
+>   **N=108 · pooled +0.231R · 9/11 ventanas rentables (81.8 %) · mediana +0.276R · peor −0.776R.**
+> - **El BE al 50% es el MECANISMO del edge, no un lastre:** desactivarlo derrumba +0.231R→+0.085R y baja
+>   a 63.6 % de ventanas. Corta perdedores a ~0R y deja correr los pocos TP a +2R. (Valida la Capa 5.)
+> - **Criterios de autonomía (§7) que YA cruza (in-sample/walk-forward):** #1 N≥100 (108) · #2 ≥+0.20R
+>   (+0.231) · #4 maxDD (2–5R/ventana ≈ poco con riesgo 0.5–1 %) · #5 ≥70 % ventanas (81.8) · #6 OOS≥50 %
+>   de IS (168 %) · #8 costes incluidos. **Falta SOLO #7: forward-test en papel 1–3 meses (no atajable).**
+> - **Banderas amarillas (seguir críticos):** edge fino y BE-dependiente; N por ventana aún chico (3–21);
+>   el trimestre más reciente fue negativo; un solo símbolo/TF; el sim aproxima fills/slippage (de ahí #7).
+> - **Veredicto:** el pre-registro dice **pasar a forward-test en papel**, NO a dinero real. Disciplina v1.
 
 ## 9. Honestidad / qué esperar
 
