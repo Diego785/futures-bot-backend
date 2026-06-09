@@ -95,6 +95,7 @@ adverse selection). v2 mueve la decisión al humano y usa el software como ojos 
 - `docs/DATASET-PROTOCOL.md` — anti-overfitting (calibración/held-out/out-of-time/cuarentena)
 - `docs/NO-REPAINT-RULES.md` — causalidad (lookahead=0, vela por vela)
 - `docs/PAPER-TEST-SPEC.md` — **forward-test en papel (criterio #7)**: shadow read-only, candidato congelado, plan P.1–P.4 (🔴 diseño)
+- `docs/REVIEW-BRIEF.md` — **brief para una revisión independiente** (modelo nuevo): mandato crítico + orden de lectura + dudas a pressure-testear antes del paper-test
 
 ## Concepto clave: zona ≠ entrada
 Una **Zone** (OB/FVG/liquidez) es un punto de interés dibujado. Una **entrada** es una decisión bajo
