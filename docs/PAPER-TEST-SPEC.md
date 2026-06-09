@@ -78,24 +78,52 @@ Tras 1–3 meses de operación continua:
   discusión de ejecución real (con su propia revisión de seguridad). Si live **se derrumba** vs backtest
   → el edge era ilusorio (slippage/fills reales lo matan) → NO autonomía. **Ambos desenlaces son
   válidos**; el segundo nos ahorra perder dinero (doc §9).
+- **Integridad (clave):** el registro mecánico (`paper_trades`) incluye TODA señal que el candidato
+  congelado genera, **automáticamente, SIN filtro humano**. La lectura discrecional del usuario ("yo la
+  tomaría / la saltaría") se anota APARTE (journal): dato valioso para aprender y para una posible capa
+  discrecional futura, pero **NO altera la expectancy mecánica** — si no, sería cherry-picking en vivo
+  (la auto-decepción del v1 en otra forma). Observar y anotar libre; el veredicto sigue honesto.
 
-## 5. Necesidad operativa (decisión del usuario)
+## 5. Observabilidad — el dashboard (CLARIDAD TOTAL, requisito del usuario)
 
-El forward-test exige el **v2 app corriendo 24/7** con `MARKET_DATA_LIVE=true` (ingest de 15m+4h de los
-3 símbolos) + Postgres, durante 1–3 meses. v2 aún no está desplegado (`CLAUDE.md` §Despliegue) → esto
-fuerza un **mini-deploy read-only** (backups de DB/.env, credenciales del exchange read-only, IP
-whitelist — checklist en `SAFETY-V2.md`). **Dónde corre (máquina del usuario vs server) es una decisión
-a tomar antes de P.4.** Si se cae (como pasó hoy con la DB), el reloj del forward-test se pausa, no se
-invalida (los datos persisten).
+No es un test de caja negra: el usuario debe **VER en todo momento qué hace el bot**, en el mismo
+dashboard (frontend + TradingView Lightweight Charts ya existente), para comprobar fácil y eficazmente si
+somos rentables — sin esperar 3 meses confiando a ciegas. Dos capas sobre la gráfica:
 
-## 6. Plan de build (slices, cada uno validado y aprobado)
+- **Capa de ANÁLISIS (qué VE el bot)** — zonas SMC: OB, FVG, liquidez, sweeps, sesgo HTF 4H vigente. Ya
+  construida en gran parte (`/api/bot/*` + cockpit). Es DETERMINISTA y causal desde las velas guardadas →
+  el dashboard la **RE-DERIVA a demanda** para cualquier momento (sin snapshots = sin bloat; se guardan
+  velas + paper-trades + notas, y se reconstruye el resto).
+- **Capa PAPER (qué HARÍA el bot)** — NUEVA: cada señal disparada del candidato dibujada como posición
+  (entry/SL/TP marcados, R:R) con su estado en vivo (PENDIENTE→LLENADA→GANADA/PERDIDA/BE) y el **PORQUÉ
+  causal** (qué swing barrió, el reclaim, la dirección del sesgo 4H en ese instante). Panel de señales /
+  posiciones abiertas + **historial detallado** de cada trade cerrado con su R.
 
-- **P.1 — núcleo PURO (offline, testeable):** tracker incremental de paper-position (derivado del
-  simulador) + entidad `paper_trades` + `PaperTradingService` que, alimentado con velas, reproduce el
-  resultado del backtest. Test de invarianza Regla Cero (no toca write-API). Sin red.
-- **P.2 — cableado live:** suscripción al stream de velas cerradas (market-data) + persistencia.
-- **P.3 — review:** endpoint/CLI read-only para ver paper-trades + métricas live-forward acumuladas.
-- **P.4 — arranque:** mini-deploy + inicio del reloj de 1–3 meses.
+**Tiempo real:** los eventos paper (señal nueva, fill, cierre) se empujan por el WS existente (`/ws`) → la
+gráfica se actualiza sola. **Journal:** el usuario anota su propia lectura por señal (de acuerdo / en
+desacuerdo / notas), SEPARADO del registro mecánico (ver §4 integridad).
 
-> Cada slice se construye, valida (build/tests) y se entrega para revisión, igual que el backtest.
-> P.1–P.3 son offline/read-only (Regla Cero triv'mente intacta). P.4 es la decisión operativa.
+Esta capa **es el producto copiloto** en sí (VISION-V2: el bot da su lectura, tú la comparas) — útil
+AUNQUE este candidato falle el paper-test.
+
+## 6. Necesidad operativa
+
+El bot opera **INTERNAMENTE en el servidor** (24/7, `MARKET_DATA_LIVE=true`, ingest de 15m+4h de los 3
+símbolos + Postgres); el dashboard/frontend es la ventana de análisis. El servidor hoy corre el **v1
+(canary)** → desplegar v2 ahí exige cuidado: **coexistir** (puerto distinto) o **cortar** a v2 *con
+backups* (DB/.env) + checklist `SAFETY-V2.md` (credenciales read-only, IP whitelist). Decisión a tomar
+antes de P.4; NO se toca el v1 sin visto bueno. Si el bot se cae (como la DB hoy), el reloj se **pausa**,
+no se invalida (datos persisten).
+
+## 7. Plan de build (slices, cada uno validado y aprobado)
+
+- **P.1 — núcleo PURO (offline):** `PaperEngine` incremental (vela a vela, derivado del simulador, sin
+  red/DB) que reproduce EXACTO el backtest + test de invarianza Regla Cero (ningún archivo del módulo
+  referencia el write-API). El punto de partida.
+- **P.2 — persistencia + cableado live:** entidad `paper_trades` (migración) + suscripción al stream de
+  velas cerradas (market-data) + eventos paper por WS. Read-only.
+- **P.3 — dashboard de observabilidad:** endpoints `/api/paper/*` + capa frontend (posiciones con
+  entry/SL/TP en la gráfica, panel de señales/abiertas, historial, el PORQUÉ causal, journal) + live por WS.
+- **P.4 — deploy + arranque:** v2 en el servidor (coexistencia/cutover con backups) + reloj de 1–3 meses.
+
+> P.1–P.3 son offline/read-only (Regla Cero estructuralmente intacta). P.4 es la decisión operativa.
