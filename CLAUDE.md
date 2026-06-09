@@ -82,6 +82,7 @@ adverse selection). v2 mueve la decisión al humano y usa el software como ojos 
   PaperTradingService PURO, offline-testeable, test de invarianza Regla Cero). Sin pasar a real.
 
 ## Documentación (fuente de verdad — leer antes de codear)
+- `docs/PRODUCT-VISION.md` — **EL NORTE**: objetivo final (bot rentable y autónomo) + qué debe poder VER el usuario (dashboard en vivo + historial/reportes + replay visual de backtests). El "para qué" innegociable
 - `docs/VISION-V2.md` — filosofía copiloto + definición de éxito
 - `docs/SAFETY-V2.md` — Regla Cero, API read-only, checklist pre-demolición
 - `docs/INVENTORY-V1.md` — qué se conservó/eliminó/archivó

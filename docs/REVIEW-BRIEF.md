@@ -31,7 +31,10 @@ los **documentos y el código**, que son la fuente de verdad.
 ## 2. Orden de lectura (fuente de verdad = docs + código, NO esta decisión)
 
 1. **`CLAUDE.md`** — estado actual + reglas del proyecto (Regla Cero, stack, módulos). Ya auto-cargado.
-2. **`docs/VISION-V2.md`** + **`docs/SAFETY-V2.md`** — filosofía copiloto + seguridad/Regla Cero.
+2. **`docs/PRODUCT-VISION.md`** ⭐ — el **NORTE**: el objetivo final (bot **rentable** y **autónomo**) y lo
+   que el usuario debe poder **VER** (dashboard en vivo + historial/reportes + **replay visual de cada
+   backtest** sobre la gráfica). El "para qué" que no se negocia. Luego **`docs/VISION-V2.md`** (filosofía
+   copiloto / origen) + **`docs/SAFETY-V2.md`** (Regla Cero, seguridad).
 3. **`docs/SMC-STRATEGY-MECHANICAL.md`** ⭐ — **el documento central**: la estrategia mecánica completa,
    los 3 gatillos, los parámetros fijos vs libres, el criterio de autonomía PRE-REGISTRADO (§7), y
    **todos los hallazgos del backtest** (§8: corridas, overfit, sesgo HTF, barrido multi-símbolo). Léelo
