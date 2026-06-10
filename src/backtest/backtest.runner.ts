@@ -4,8 +4,8 @@
 // coloca órdenes. Función pura (sin DB, sin Nest) → testeable. La carga de velas y el CLI viven en
 // run.ts; aquí solo la tubería candles → BacktestReport.
 
-import { generateIntents, type SignalConfig } from './signal-source';
-import { simulateAll, type SimCandle, type SimConfig } from './trade-simulator';
+import { generateIntentsDetailed, type IntentReject, type SignalConfig } from './signal-source';
+import { simulateAll, type SimCandle, type SimConfig, type SimResult, type TradeIntent } from './trade-simulator';
 import { computeMetrics, type BacktestMetrics } from './metrics';
 import type { BiasPoint } from './htf-bias';
 import type { ObCandle } from '../bot-analysis/ob.detector';
@@ -23,6 +23,10 @@ export interface BacktestReport {
   lastTime: number | null;
   signals: number;
   metrics: BacktestMetrics;
+  // Embudo completo para el registro/visor (el walk-forward y la rejilla los ignoran):
+  intents: TradeIntent[]; // señales emitidas (1:1 con results)
+  rejects: IntentReject[]; // candidatas descartadas con su razón (el porqué-no)
+  results: SimResult[]; // desenlace simulado de cada intent
 }
 
 /**
@@ -37,7 +41,7 @@ export function runBacktest(
   simConfig: Partial<SimConfig> = {},
   htfBias: BiasPoint[] = [],
 ): BacktestReport {
-  const intents = generateIntents(symbol, tf, candles, signalConfig, htfBias);
+  const { intents, rejects } = generateIntentsDetailed(symbol, tf, candles, signalConfig, htfBias);
   const simCandles: SimCandle[] = candles.map((c) => ({
     openTime: c.openTime,
     high: c.high,
@@ -57,6 +61,9 @@ export function runBacktest(
     lastTime: candles.length ? candles[candles.length - 1].openTime : null,
     signals: intents.length,
     metrics,
+    intents,
+    rejects,
+    results,
   };
 }
 

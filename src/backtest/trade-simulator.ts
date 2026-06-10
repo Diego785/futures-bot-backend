@@ -38,6 +38,16 @@ export interface SimCandle {
   closeTime?: number;
 }
 
+// Contexto CAUSAL de la señal (de dónde salió la zona): lo registra el visor/paper para explicar el
+// PORQUÉ de cada entrada sin re-derivar. El simulador NO lo usa para nada.
+export interface IntentContext {
+  zoneLow: number; // zona de la reacción (sweep) o del OB
+  zoneHigh: number;
+  sweptLevel?: number; // gatillo C: nivel barrido (la liquidez tomada)
+  wickExtreme?: number; // gatillo C: extremo de la mecha del sweep
+  sweptSwingTime?: number; // gatillo C: openTime de la vela del swing barrido
+}
+
 // Intención de trade emitida por el generador de señales (gatillo A/B/C). Precios ABSOLUTOS.
 export interface TradeIntent {
   id: string;
@@ -50,6 +60,7 @@ export interface TradeIntent {
   takeProfit: number; // TP
   invalidationPrice?: number; // pendiente: si el cuerpo CIERRA más allá (en contra) → cancelar
   cancelBeyond?: number; // pendiente: si el precio se ALEJA hasta aquí sin fill → cancelar (se fue sin nosotros)
+  context?: IntentContext; // porqué causal (visor/paper); ignorado por el simulador
 }
 
 export interface SimConfig {
