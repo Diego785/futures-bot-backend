@@ -36,7 +36,7 @@ Se prueba EXACTAMENTE el candidato validado en backtest, **sin re-tunear** duran
 | `minStopPct` (fee-aware) | 0.3 % |
 | Fees | maker 0.02 % / taker 0.05 % |
 | Sesgo HTF | 4H (BOS por cuerpo); LONG solo si 4H alcista, SHORT si bajista |
-| Símbolos | **BTCUSDT, XRPUSDT, SOLUSDT** (el subconjunto fuerte del barrido) |
+| Símbolos | **los 5 del barrido: BTC, ETH, XRP, SOL, BNB** (revisión 2026-06-10: en shadow los símbolos extra son gratis y el N manda — BTC solo genera ~5 trades/año hoy; con 5 símbolos ≈ 9.5/mes. El veredicto por símbolo se segmenta igual) |
 
 ## 2. Arquitectura (reutiliza el motor de backtest)
 
@@ -67,17 +67,31 @@ Entidad `paper_trades` (migración explícita, `synchronize:false`): `id`, `symb
 `fillPrice`, `exitTime`, `exitPrice`, `exitReason`, `rMultiple`, `cancelReason`, `createdAt`, `updatedAt`.
 Sobrevive reinicios; permite review y export. Idempotente por `(symbol, signalTime, direction)`.
 
-## 4. Criterios de éxito (pre-registrados — NO se cambian a mitad)
+## 4. Criterios de éxito (re-pre-registrados 2026-06-10 — NO se cambian a mitad)
 
-Tras 1–3 meses de operación continua:
-- **Consistencia IS→live:** la expectancy en R **live-forward** debe mantenerse cerca de la del backtest
-  (criterio #6: ≥50 % de la histórica). Si live ≈ backtest → el edge sobrevive a la ejecución real.
-- **N y estabilidad:** muestra suficiente acumulada; % de meses/ventanas rentables consistente con el
-  walk-forward.
-- **Veredicto:** si la curva live-forward acompaña a la del backtest → recién ENTONCES se abre la
-  discusión de ejecución real (con su propia revisión de seguridad). Si live **se derrumba** vs backtest
-  → el edge era ilusorio (slippage/fills reales lo matan) → NO autonomía. **Ambos desenlaces son
-  válidos**; el segundo nos ahorra perder dinero (doc §9).
+> **Por qué se re-registraron (revisión independiente):** la versión anterior ("1–3 meses; expectancy
+> live ≥50 % de la histórica") era estadísticamente inservible — con la tasa real de señales (~15
+> trades/trimestre con 3 símbolos) el error estándar es ≈0.28R: un edge real puede salir negativo y un
+> edge nulo positivo. El gate se define **por N acumulado, no por calendario**, y su criterio primario
+> es de *ingeniería* (lo que el paper SÍ puede medir), no de significancia que no puede alcanzar.
+
+- **Duración: hasta acumular N ≥ 50 trades cerrados** entre los 5 símbolos (estimado ~5-6 meses;
+  mínimo 2 meses aunque N llegue antes). El reloj se pausa si el ingest se cae (los datos persisten).
+- **Criterio PRIMARIO — paridad mecánica sim↔live (automatizable):** re-correr el backtest offline
+  sobre las velas persistidas del período debe reproducir **1:1** los `paper_trades` (mismas señales,
+  fills, salidas, R). Cualquier divergencia = bug del cableado live → se investiga, se corrige y se
+  anota; la paridad sostenida es la validación de que "lo que el bot haría" está bien medido.
+- **Criterio SECUNDARIO — no-colapso del edge:** al llegar a N≥50, el pooled live debe ser
+  **> −0.10R**. Si es peor → el edge no sobrevive al vivo → NO autonomía (resultado válido). La
+  *confirmación* positiva del edge (+0.13R del backtest OOS) exigirá más N; el paper puede extenderse
+  por decisión explícita, nunca acortarse por impaciencia.
+- **Instrumentación touched-vs-crossed (obligatoria):** por cada fill de entrada y de TP se registra si
+  el precio **cruzó** el nivel o solo lo **tocó** (granularidad de la vela). Al cierre del gate se
+  recalcula la expectancy bajo la regla estricta (solo cruces) → acota el sesgo optimista del fill por
+  toque que el simulador asume y que el paper, al evaluar sobre velas, hereda.
+- **Veredicto:** paridad OK + no-colapso → se abre la discusión del siguiente paso (más N en paper o
+  diseño de la revisión de seguridad para ejecución real). Paridad rota o colapso → se documenta y NO
+  se avanza. **Ambos desenlaces son válidos**; el segundo nos ahorra perder dinero (doc §9).
 - **Integridad (clave):** el registro mecánico (`paper_trades`) incluye TODA señal que el candidato
   congelado genera, **automáticamente, SIN filtro humano**. La lectura discrecional del usuario ("yo la
   tomaría / la saltaría") se anota APARTE (journal): dato valioso para aprender y para una posible capa
@@ -119,9 +133,16 @@ no se invalida (datos persisten).
 
 - **P.1 — núcleo PURO (offline):** `PaperEngine` incremental (vela a vela, derivado del simulador, sin
   red/DB) que reproduce EXACTO el backtest + test de invarianza Regla Cero (ningún archivo del módulo
-  referencia el write-API). El punto de partida.
+  referencia el write-API). El punto de partida. ✅
+- **V — VISOR DE BACKTESTS (antes de P.2; decisión 2026-06-10):** corrida registrada del candidato
+  (comando + paramsHash, reproducible) + replay visual causal sobre la gráfica (`PRODUCT-VISION.md`
+  §3.3) para que el usuario audite la mecanización trade a trade ANTES de comprometer meses de paper.
+  La capa visual de posiciones (entry/SL/TP/estado) se reutiliza después en P.3.
 - **P.2 — persistencia + cableado live:** entidad `paper_trades` (migración) + suscripción al stream de
-  velas cerradas (market-data) + eventos paper por WS. Read-only.
+  velas cerradas (market-data) + eventos paper por WS. Read-only. **Condiciones de la revisión:** test
+  de equivalencia ventana-vs-historial-completo (los swings del borde y el estado `prevSwept` pueden
+  divergir si se ventanea el buffer) + rehidratación tras restart (reconstruir `seen`/posiciones desde
+  DB; la idempotencia por `(symbol, signalTime, direction)` frena duplicados) + touched-vs-crossed.
 - **P.3 — dashboard de observabilidad:** endpoints `/api/paper/*` + capa frontend (posiciones con
   entry/SL/TP en la gráfica, panel de señales/abiertas, historial, el PORQUÉ causal, journal) + live por WS.
 - **P.4 — deploy + arranque:** v2 en el servidor (coexistencia/cutover con backups) + reloj de 1–3 meses.

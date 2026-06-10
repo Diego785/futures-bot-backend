@@ -216,6 +216,15 @@ los umbrales en **out-of-sample / out-of-time** (no in-sample):
 > 5. **Conclusión honesta:** hay un **candidato con pulso** (15m C, sobrevive un OOS naíf) pero **NADA
 >    pasa aún el criterio de autonomía** (§7: N≥100, walk-forward, etc.). Es progreso real, no veredicto.
 
+> ⚠️ **CORRECCIÓN DE DATASET (revisión independiente, 2026-06-10).** Todas las corridas desde la
+> Fase E hasta el HTF estricto (incluidas) se ejecutaron con el `--limit` por defecto del CLI
+> (100 000) → usaron las **últimas 100k velas 15m (2023-08→2026-06)**, NO 2022–2026. La frase
+> "incluye el bear de 2022" era incorrecta. Los números siguen siendo válidos *para ese subconjunto*
+> (se reprodujeron exactos) y las conclusiones **relativas** (C>B>A, el HTF ayuda, el HTF estricto no)
+> se sostienen; los números con el **histórico completo** están en la sección «Revisión independiente»
+> de abajo — el candidato MEJORA con 2022 incluido. Regla desde hoy: toda corrida documentada registra
+> su **comando completo** (con `--limit/--from/--to` explícitos).
+
 ### Hallazgos Fase E (2026-06-07, walk-forward + N con disciplina) — candidato VALIDADO en histórico
 **Candidato definido:** `15m · gatillo C (sweep+reclaim) · TP 2R fijo · cancelDist 3 · swingLookback 10 ·
 BE 50% · minStopPct 0.3% · fees maker/taker`. El único parámetro movido del default fue `cancelDist`
@@ -298,6 +307,44 @@ diversos, walk-forward 12 ventanas, 2022-2026 (15m a 155k velas c/u; 4h para el 
 >   BTC mejora" sería **cherry-picking** = overfit. Se mantiene 4H (mejor para el conjunto).
 > - **Conclusión:** el lever HTF está agotado. Quedan: (a) aceptar el edge 4H (débil/real) → paper-test;
 >   (b) mecanizar una capa NUEVA (premium/discount, inducement) = dimensión de señal distinta, no re-tuning.
+
+### Revisión independiente (2026-06-10) — re-validación con el histórico COMPLETO 2022-2026
+Revisión externa (modelo nuevo, mandato `REVIEW-BRIEF.md`): causalidad del motor verificada en código
+(sin lookahead en bias 4H/sweeps/OBs), 142/142 tests, corridas reproducidas. Hallazgo mayor = la
+corrección de dataset del banner de arriba. Re-corridas con `--limit 200000` (155k velas, 2022-26),
+candidato congelado + `--htf 4h`, walk-forward 12 ventanas:
+
+| símbolo | pooled | % ventanas | N | (doc con 100k velas) |
+|---|---|---|---|---|
+| BTC | **+0.330R** | 83.3 % | 112 | +0.249 / 72.7 % / 54 |
+| XRP | +0.163R | 66.7 % | 175 | +0.194 / 58.3 % / 103 |
+| SOL | +0.131R | 66.7 % | 244 | +0.146 / 66.7 % / 118 |
+| BNB | +0.089R | 66.7 % | 100 | +0.046 / 50.0 % / 59 |
+| ETH | +0.013R | 66.7 % | 191 | +0.045 / 41.7 % / 103 |
+
+> - **5/5 sigue pooled-positivo con N=822.** Embudo BTC: 159 señales → 112 trades (fill 70.4 %),
+>   TP 36 · SL 27 · BE 49, PF 2.18, maxDD 3.96R. La evidencia OOS limpia (símbolos congelados
+>   post-decisión: XRP/SOL/BNB) promedia **+0.134R (N=519)** — esa es la expectativa honesta, no el
+>   +0.33 de BTC (in-sample del proceso de selección).
+> - **Vecindad de parámetros = MESETA (anti-overfit):** cancelDist 2/3/4 → +0.468/+0.330/+0.325 ·
+>   swing 8/10/12 → +0.276/+0.330/+0.183. Todos positivos; el candidato no es un pico aislado.
+> - **CORRECCIÓN: "el BE al 50 % ES el mecanismo" es FALSO.** BE on/off: full+HTF **+0.330/+0.313**
+>   (aporte ~0.02R) · 100k+HTF +0.279/+0.224 · full sin HTF +0.184/+0.109 · 100k sin HTF (la corrida
+>   del doc) +0.231/+0.085. El BE era un **sustituto parcial del filtro HTF** (cortaba a ~0 los sweeps
+>   contra-tendencia que el HTF ahora elimina). El edge es **direccional**, no un artefacto del stop.
+> - **Slippage: el stress en $ fijos estaba mal especificado** ($20 = 0.12 %/lado con BTC a 17k en
+>   2022 vs 0.02 % hoy → castiga 6× el pasado; full daría +0.091R por ese artefacto). En franja de
+>   precio homogénea 2024-26: **+0.299 → +0.233R** con $20/lado (PF 1.79) = tolerable. Pendiente:
+>   flag `--slip-bps` para stress proporcional honesto.
+> - **Tasa de señales reciente (2025-06→2026-06), candidato congelado: 5/5 positivo, pooled ≈ +0.20R,
+>   ~114 trades/año entre los 5 símbolos (~9.5/mes). BTC casi mudo: 5 trades/año** → el paper-test se
+>   dimensiona por N acumulado (no por calendario) y el grueso vendrá de los símbolos no-BTC.
+> - **Veredicto: GO al paper-test** con condiciones (gate re-registrado en `PAPER-TEST-SPEC.md`):
+>   5 símbolos en shadow, evaluación a N≈50-60, criterio primario = paridad mecánica sim↔live +
+>   touched-vs-crossed (el fill al toque del simulador es optimista y el paper lo hereda — hay que
+>   instrumentarlo). Antes del paper: **visor de backtests** (replay visual; `PRODUCT-VISION.md` §3.3)
+>   para auditar la mecanización trade a trade. Fix aplicado: id de intents C ahora incluye dirección
+>   (dos sweeps opuestos en la misma vela ya no colisionan en el dedup del paper).
 
 ## 9. Honestidad / qué esperar
 

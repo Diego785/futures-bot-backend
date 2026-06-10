@@ -78,8 +78,20 @@ adverse selection). v2 mueve la decisión al humano y usa el software como ojos 
   Diseño en `docs/PAPER-TEST-SPEC.md` (shadow read-only: lee en vivo, registra lo que el candidato HARÍA,
   NO coloca órdenes; salvaguarda estructural = no importa el write-API). Candidato CONGELADO (no re-tunear).
   Plan P.1 (núcleo puro offline) → P.2 (cableado live) → P.3 (review) → P.4 (mini-deploy + reloj 1-3 meses).
-- SIGUIENTE: aprobar el diseño y construir **P.1** (tracker incremental + entidad `paper_trades` +
-  PaperTradingService PURO, offline-testeable, test de invarianza Regla Cero). Sin pasar a real.
+- **P.1 ✅** (commit 686a8e9): `PaperEngine` puro incremental (reproduce EXACTO el backtest; reusa
+  signal-source + simulador) + test de invarianza Regla Cero (escaneo estructural anti-write-API).
+- **Revisión independiente ✅ (2026-06-10, mandato `REVIEW-BRIEF.md`): GO al paper-test con condiciones.**
+  Causalidad verificada en código; corridas reproducidas. **Hallazgo mayor:** las corridas documentadas
+  (Fase E→htf2) usaron las últimas 100k velas (2023-08→2026-06), NO 2022-26 — con el histórico COMPLETO
+  el candidato MEJORA: BTC +0.330R/83.3 %/N=112; 5/5 símbolos positivo (N=822); vecindad de parámetros =
+  meseta. **Correcciones:** "el BE es el mecanismo" era falso (BE ≈ sustituto parcial del HTF; el edge es
+  direccional); stress de slippage en $ fijos mal especificado (franja 2024-26: +0.299→+0.233 con $20).
+  Fix aplicado: id de intents C con dirección (anti-colisión del dedup). Gate #7 RE-REGISTRADO en
+  `PAPER-TEST-SPEC.md` §4: 5 símbolos, evaluación a N≥50 (no calendario), paridad mecánica sim↔live +
+  touched-vs-crossed. Detalle en `SMC-STRATEGY-MECHANICAL.md` §8 («Revisión independiente»).
+- SIGUIENTE (decisión 2026-06-10): **VISOR DE BACKTESTS antes del paper** — V.1 corrida registrada
+  (comando+paramsHash) + endpoints read-only · V.2 replay visual causal sobre la gráfica (cursor vela a
+  vela, posiciones LONG/SHORT, porqué causal) → auditoría visual del usuario (GO/NO-GO) → P.2–P.4.
 
 ## Documentación (fuente de verdad — leer antes de codear)
 - `docs/PRODUCT-VISION.md` — **EL NORTE**: objetivo final (bot rentable y autónomo) + qué debe poder VER el usuario (dashboard en vivo + historial/reportes + replay visual de backtests). El "para qué" innegociable
