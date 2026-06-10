@@ -92,7 +92,30 @@ describe('generateIntents — modo C (sweep + reclaim)', () => {
     expect(it.entry).toBeCloseTo(entry, 6);
     expect(it.stopLoss).toBeCloseTo(sl, 6);
     expect(it.invalidationPrice).toBeCloseTo(zoneLow, 6);
-    expect(it.id).toBe(`C_BTCUSDT_15m_${s.sweepBarTime}`);
+    expect(it.id).toBe(`C_BTCUSDT_15m_${s.sweepBarTime}_u`);
+  });
+
+  it('dos sweeps opuestos en la MISMA vela generan intents con ids DISTINTOS (sin colisión)', () => {
+    // Swing high 120 (idx2) y swing low 90 (idx4), ambos confirmados; la vela idx7 barre los dos
+    // (h125>120 con cierre 106<120 · l85<90 con cierre 106>90) y reclama ambos.
+    const series: ObCandle[] = [
+      oc(0, 100, 105, 95, 100),
+      oc(1, 100, 106, 96, 100),
+      oc(2, 100, 120, 99, 101), // swing high 120
+      oc(3, 101, 107, 97, 102),
+      oc(4, 102, 108, 90, 103), // swing low 90
+      oc(5, 103, 109, 92, 104),
+      oc(6, 104, 110, 93, 105),
+      oc(7, 105, 125, 85, 106), // barre ambos y cierra entre los dos niveles
+    ];
+    const sweeps = detectSweeps('BTCUSDT', '15m', series, { swingLookback: 2 });
+    expect(sweeps).toHaveLength(2); // uno bullish + uno bearish en la misma vela
+
+    const intents = generateIntents('BTCUSDT', '15m', series, { gatillo: 'C', tpRule: 'fixedR', ...LB2 });
+    expect(intents).toHaveLength(2);
+    const ids = new Set(intents.map((i) => i.id));
+    expect(ids.size).toBe(2); // ids únicos: el dedup del paper-trading no los colapsa
+    expect(intents.map((i) => i.direction).sort()).toEqual(['LONG', 'SHORT']);
   });
 
   it('filtro fee-aware: minStopPct alto descarta el stop micro', () => {

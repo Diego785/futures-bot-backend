@@ -236,7 +236,10 @@ function intentsC(
     // Zona de la reacción: del extremo de la mecha al nivel barrido (el "descuento" del sweep).
     const zoneLow = direction === 'LONG' ? s.wickExtreme : s.sweptLevel;
     const zoneHigh = direction === 'LONG' ? s.sweptLevel : s.wickExtreme;
-    const it = buildIntent(symbol, tf, `${s.sweepBarTime}`, direction, s.sweepBarTime, zoneLow, zoneHigh, liqs, cfg, idxOfTime);
+    // El id lleva la dirección: una misma vela puede barrer un swing high Y un swing low (dos
+    // intents opuestos) y el dedup por id del paper-trading no debe colapsarlos.
+    const suffix = `${s.sweepBarTime}_${direction === 'LONG' ? 'u' : 'd'}`;
+    const it = buildIntent(symbol, tf, suffix, direction, s.sweepBarTime, zoneLow, zoneHigh, liqs, cfg, idxOfTime);
     if (it) out.push(it);
   }
   return out;
