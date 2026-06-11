@@ -49,9 +49,12 @@ export function ReplayChart({ candles, cursorIdx, tfMs, signals, focused, contex
   const priceLinesRef = useRef<IPriceLine[]>([]);
   const prevIdxRef = useRef(-1);
   const prevCandlesRef = useRef<Candle[] | null>(null);
-  // El overlay se re-proyecta cuando cambia el viewport (pan/zoom) — nonce coalescido por rAF.
+  // Precios de referencia (constantes por ventana) para detectar cambios de la escala VERTICAL.
+  const refPricesRef = useRef<[number, number] | null>(null);
+  // El overlay se re-proyecta ante CUALQUIER cambio de viewport: pan, zoom horizontal, zoom del eje
+  // de precio, autoescala y resize. Como la escala de precio no emite eventos en v4, un loop rAF
+  // compara una FIRMA del viewport y solo re-renderiza cuando cambió (en reposo no hace nada).
   const [viewNonce, setViewNonce] = useState(0);
-  const rafRef = useRef<number | null>(null);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -73,19 +76,25 @@ export function ReplayChart({ candles, cursorIdx, tfMs, signals, focused, contex
     });
     chartRef.current = chart;
     seriesRef.current = series;
-    const bump = () => {
-      if (rafRef.current != null) return;
-      rafRef.current = requestAnimationFrame(() => {
-        rafRef.current = null;
+
+    let raf = 0;
+    let lastSig = '';
+    const tick = () => {
+      raf = requestAnimationFrame(tick);
+      const lr = chart.timeScale().getVisibleLogicalRange();
+      const refs = refPricesRef.current;
+      const y0 = refs ? series.priceToCoordinate(refs[0]) : null;
+      const y1 = refs ? series.priceToCoordinate(refs[1]) : null;
+      const sig = `${lr?.from ?? ''}:${lr?.to ?? ''}|${y0 ?? ''}:${y1 ?? ''}|${host.clientWidth}x${host.clientHeight}`;
+      if (sig !== lastSig) {
+        lastSig = sig;
         setViewNonce((n) => n + 1);
-      });
+      }
     };
-    chart.timeScale().subscribeVisibleLogicalRangeChange(bump);
-    const ro = new ResizeObserver(bump);
-    ro.observe(host);
+    raf = requestAnimationFrame(tick);
+
     return () => {
-      ro.disconnect();
-      if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
+      cancelAnimationFrame(raf);
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
@@ -117,6 +126,8 @@ export function ReplayChart({ candles, cursorIdx, tfMs, signals, focused, contex
         chart.timeScale().scrollToRealTime();
       }
     }
+    // Referencias verticales de la firma del viewport (constantes por ventana).
+    refPricesRef.current = [candles[0].l, candles[0].h];
     prevCandlesRef.current = candles;
     prevIdxRef.current = idx;
   }, [candles, cursorIdx]);
@@ -230,13 +241,22 @@ export function ReplayChart({ candles, cursorIdx, tfMs, signals, focused, contex
   const series = seriesRef.current;
   let overlay: React.ReactNode = null;
   void viewNonce; // el nonce solo fuerza el re-render en pan/zoom/resize
+  let paneRight = 0;
+  let paneBottom = 0;
   if (chart && series && candles.length > 0) {
     const idx = Math.min(Math.max(cursorIdx, 0), candles.length - 1);
     const cursorOpen = candles[idx].openTime;
     const cursorClose = candles[idx].c;
     const first = candles[0].openTime;
     const host = hostRef.current;
-    const height = host?.clientHeight ?? 0;
+    // El overlay se recorta al PANE de velas (sin invadir el eje de precio ni el de tiempo).
+    try {
+      paneRight = chart.priceScale('right').width();
+      paneBottom = chart.timeScale().height();
+    } catch {
+      /* chart aún sin layout: 0 */
+    }
+    const paneHeight = Math.max((host?.clientHeight ?? 0) - paneBottom, 0);
 
     const xOf = (t: number): number | null => {
       const logical = (Math.min(t, cursorOpen) - first) / tfMs;
@@ -246,7 +266,7 @@ export function ReplayChart({ candles, cursorIdx, tfMs, signals, focused, contex
     const yOf = (price: number): number | null => {
       const c = series.priceToCoordinate(price);
       if (c != null) return c;
-      return price > cursorClose ? -20 : height + 20; // fuera del rango visible: clamp recortado
+      return price > cursorClose ? -20 : paneHeight + 20; // fuera del rango visible: clamp recortado
     };
 
     const items: React.ReactNode[] = [];
@@ -291,7 +311,7 @@ export function ReplayChart({ candles, cursorIdx, tfMs, signals, focused, contex
         const left = xOf(l.timeStart);
         const right = xOf(l.sweptAtTime != null ? Math.min(l.sweptAtTime, cursorOpen) : cursorOpen + tfMs);
         const y = yOf(l.level);
-        if (left == null || right == null || y == null || y < 0 || y > height) continue;
+        if (left == null || right == null || y == null || y < 0 || y > paneHeight) continue;
         const swept = l.sweptAtTime != null && cursorOpen >= l.sweptAtTime;
         const tag = l.type === 'equalHigh' ? 'EQH' : l.type === 'equalLow' ? 'EQL' : l.type === 'swingHigh' ? 'SH' : 'SL';
         items.push(
@@ -327,7 +347,11 @@ export function ReplayChart({ candles, cursorIdx, tfMs, signals, focused, contex
       }
     }
 
-    overlay = <div className="replay-overlay">{items}</div>;
+    overlay = (
+      <div className="replay-overlay" style={{ right: paneRight, bottom: paneBottom }}>
+        {items}
+      </div>
+    );
   }
 
   return (
