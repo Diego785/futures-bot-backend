@@ -357,6 +357,10 @@ POI/liquidez opuesto causal) + BE fiel (50 % del recorrido al target real) + poo
 el sweep (equal highs/lows + swings vigentes). 4 combinaciones, calibración/held-out intactos,
 benchmark = candidato actual, criterio de reemplazo fijado ANTES de correr. El candidato actual
 sigue CONGELADO y vigente salvo que el C2 lo supere bajo esos criterios.
+**RESULTADO (2026-06-11, `CYCLE-2-PREREG.md` §8): NEGATIVO-INFORMATIVO.** En calibración 5-símbolos
+la base ganó por paliza (+89.1R vs −15.1/−39.7/−159.9): el TP estructural era BTC-céntrico (la firma
+del overfit) y los pools refutados. **2ª confirmación de que el 2R fijo es el sustituto robusto de la
+discrecionalidad del target** (1ª: Fase D). El candidato congelado va al gate #7 tal cual.
 
 ## 9. Honestidad / qué esperar
 

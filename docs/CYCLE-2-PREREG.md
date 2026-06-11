@@ -1,7 +1,11 @@
 # Ciclo 2 — PRE-REGISTRO de la re-mecanización (TP estructural · BE fiel · pools de liquidez)
 
-> **Estado:** 🔴 PRE-REGISTRO para aprobación del usuario — NADA construido ni corrido aún.
-> Fecha: 2026-06-10. Fuente primaria: `transcripts/VIDEO-1-TRANSCRIPT.md` (aportada por el usuario)
+> **Estado: ⬛ CERRADO (2026-06-11) — resultado NEGATIVO-INFORMATIVO, ver §8.** Ninguna combinación
+> superó al candidato congelado en calibración multi-símbolo → según §5, **el candidato actual sigue
+> vigente y pasa al paper-test tal cual**. El código del C2 (`--tp structural`, `--pools`) queda como
+> herramienta de investigación, NO default. Pre-registrado el 2026-06-10 y ejecutado SIN cambiar
+> criterios a mitad.
+> Fuente primaria: `transcripts/VIDEO-1-TRANSCRIPT.md` (aportada por el usuario)
 > + auditoría visual del usuario en el visor + datos de la revisión independiente.
 > **Regla de oro:** este documento fija QUÉ se prueba, CÓMO se valida y CUÁNDO se reemplaza el
 > candidato actual — ANTES de mirar un solo resultado. Cambiar estos criterios a mitad = overfit.
@@ -126,3 +130,38 @@ ATR/lateralidad · multi-TF completo (POI HTF + gatillo LTF) · Breaker como se�
 - **C2.d** — held-out + walk-forward + veredicto contra §5 → decisión de reemplazo.
 - **C2.e** — si reemplaza: visor muestra el target estructural (qué POI es el TP) en el porqué
   causal; corridas canónicas re-registradas; docs actualizados.
+
+## 8. RESULTADOS (2026-06-11) — calibración 2022-01→2025-06, 4 combos × 5 símbolos (20 corridas registradas)
+
+**totalR por símbolo (single-run, mismos params congelados + HTF 4H):**
+
+| combinación | BTC | ETH | XRP | SOL | BNB | **Σ totalR** |
+|---|---|---|---|---|---|---|
+| **base (candidato actual)** | +34.5 | −0.6 | +21.1 | +28.7 | +5.4 | **+89.1** |
+| TP estructural | **+51.2** | −6.1 | **−37.6** | −5.5 | −17.1 | **−15.1** |
+| pools | −11.7 | −12.1 | −25.8 | +8.2 | +1.7 | **−39.7** |
+| estructural + pools | −27.3 | −49.1 | −95.3 | +34.0 | −22.2 | **−159.9** |
+
+> - **La elección de calibración (§4) es LA BASE** — ninguna combinación C2 se acerca siquiera.
+>   No procede held-out del C2 (no hay candidato C2 que validar). Aplica §5: el actual sigue.
+> - **El TP estructural en BTC era una sirena** (+51.2R, BE-rate 44 %→25 % — el objetivo del usuario
+>   cumplido EN BTC) pero **se derrumba fuera** (XRP −37.6, BNB −17.1): el patrón "positivo aislado
+>   en BTC" — la misma firma del overfit que la Fase F ya enseñó. WR se desploma a 24-32 % en todos.
+> - **Diagnóstico:** el target estructural mecánico-ingenuo ("el POI opuesto MÁS CERCANO") no captura
+>   la pieza DISCRECIONAL del método — el mentor elige el POI *importante* (fuerza, frescura,
+>   confluencia), no el más cercano. Sin ese juicio, la calidad del target es aleatoria: el WR cae
+>   más de lo que los ganadores grandes compensan. Es la 2ª vez que el TP-por-niveles pierde contra
+>   2R (Fase D con liquidez; ahora con OBs opuestos + timeline causal) → ya no es "mala mecanización":
+>   **el 2R fijo es un sustituto ROBUSTO de la discrecionalidad del target, y multi-símbolo.**
+> - **Los pools EMPEORAN y además reducen N** (BTC 97 señales vs 149): la regla "muere al cruce" +
+>   "el más profundo reclamado" produce zonas de entrada más profundas en mechas largas (adverse
+>   selection) y mata niveles que el modo lastSwing re-barría con éxito. Hipótesis "pools = más y
+>   mejores entradas" = **refutada**.
+> - **Disciplina:** no se prueban variantes extra del structural (cap de distancia, scoring del POI…)
+>   — sería el data-dredging que este doc prohíbe. Un eventual C3 (p. ej. scoring de POIs) exigiría
+>   su propio pre-registro, y la recomendación es correr ANTES el paper-test del candidato congelado:
+>   cada ciclo adicional sobre el mismo histórico erosiona la frescura del held-out.
+> - **Decisión (§5, automática): el candidato congelado va al gate #7 (paper-test) tal cual.**
+>   La fidelidad-al-video del usuario era correcta como diagnóstico (el BE hiperactivo ES infiel);
+>   la mecanización fiel resultó inferior al sustituto robusto. La lectura discrecional del POI
+>   pertenece al journal del copiloto (humano vs máquina), no al motor mecánico.

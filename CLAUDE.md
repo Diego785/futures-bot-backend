@@ -96,8 +96,16 @@ adverse selection). v2 mueve la decisión al humano y usa el software como ojos 
   (`docs/transcripts/`) se confirmó que los specs eran fieles y la desviación nació en el eje del
   backtest (TP 2R + BE atado a él). C2 = TP estructural + BE fiel + pools de liquidez; 4 combinaciones,
   calibración/held-out, benchmark = candidato actual congelado, criterio de reemplazo pre-fijado.
-- SIGUIENTE: aprobar el pre-registro → C2.a (pools) → C2.b (TP estructural) → C2.c/d (validación y
-  veredicto) → gate #7 (paper-test por N≥50, 5 símbolos) con el candidato que sobreviva.
+- **Ciclo 2 EJECUTADO y CERRADO (2026-06-11): resultado NEGATIVO-INFORMATIVO** (`CYCLE-2-PREREG.md`
+  §8). Calibración 4 combos × 5 símbolos: base +89.1R total vs structural −15.1 / pools −39.7 /
+  ambos −159.9. El TP estructural brillaba SOLO en BTC (+51.2, BE-rate 44→25 %) y se derrumbaba fuera
+  (XRP −37.6) = la firma del overfit; el POI-target mecánico-ingenuo no captura la discrecionalidad
+  del mentor; **2R fijo = sustituto robusto** (2ª confirmación tras Fase D). Pools refutados (peores
+  y con menos N). Por §5 del prereg: **el candidato CONGELADO sigue vigente** → paper-test tal cual.
+  Flags `--tp structural` y `--pools` quedan como herramientas, NO default.
+- SIGUIENTE: **P.2 del paper-test** (entidad paper_trades + cableado live + WS, con las condiciones
+  del gate re-registrado: equivalencia ventana-vs-full, rehidratación, touched-vs-crossed) → P.3
+  dashboard (reusa la capa visual del replay) → P.4 deploy + reloj por N≥50 en 5 símbolos.
 
 ## Documentación (fuente de verdad — leer antes de codear)
 - `docs/PRODUCT-VISION.md` — **EL NORTE**: objetivo final (bot rentable y autónomo) + qué debe poder VER el usuario (dashboard en vivo + historial/reportes + replay visual de backtests). El "para qué" innegociable
