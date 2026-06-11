@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   createChart,
   ColorType,
@@ -7,6 +7,7 @@ import {
   type IChartApi,
   type IPriceLine,
   type ISeriesApi,
+  type Logical,
   type SeriesMarker,
   type UTCTimestamp,
 } from 'lightweight-charts';
@@ -17,6 +18,7 @@ import {
   REPLAY_COLORS,
   type BacktestSignal,
 } from '../../features/backtest-viewer/backtestRuns.types';
+import type { ReplayContextResponse } from '../../features/backtest-viewer/backtestContext.types';
 import { msToUtcSeconds } from '../../lib/time';
 
 interface Props {
@@ -25,22 +27,32 @@ interface Props {
   tfMs: number;
   signals: BacktestSignal[]; // señales a dibujar (el padre decide cuáles; la fase causal se evalúa aquí)
   focused: BacktestSignal | null; // señal bajo auditoría (lleva niveles y marcadores extra)
+  context: ReplayContextResponse | null; // contexto SMC re-derivado (OBs + liquidez) con tiempos causales
+  showObs: boolean;
+  showLiq: boolean;
 }
 
+const MAX_OBS = 12; // anti-ruido: OBs visibles más recientes
+const MAX_LIQ = 8; // niveles de liquidez más cercanos al precio del cursor
+const SWEPT_LINGER_BARS = 10; // una liquidez barrida se sigue viendo N velas (para VER el barrido)
+
 /**
- * Gráfica del REPLAY (V.2) — read-only y CAUSAL: solo se dibujan las velas hasta el cursor y los
- * eventos que el motor ya conocía en ese instante (señal al cierre de su vela; fill/salida cuando
- * ocurren). Nada se pinta hacia atrás: si un detector tuviera lookahead, AQUÍ se vería.
+ * Gráfica del REPLAY — read-only y CAUSAL: solo se dibujan las velas hasta el cursor y los objetos
+ * que el motor ya conocía en ese instante (señal al cierre de su vela; OB desde su BOS; liquidez
+ * desde la confirmación de su pivote). Nada se pinta hacia atrás: si un detector tuviera lookahead,
+ * AQUÍ se vería.
  */
-export function ReplayChart({ candles, cursorIdx, tfMs, signals, focused }: Props) {
+export function ReplayChart({ candles, cursorIdx, tfMs, signals, focused, context, showObs, showLiq }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const priceLinesRef = useRef<IPriceLine[]>([]);
   const prevIdxRef = useRef(-1);
   const prevCandlesRef = useRef<Candle[] | null>(null);
+  // El overlay se re-proyecta cuando cambia el viewport (pan/zoom) — nonce coalescido por rAF.
+  const [viewNonce, setViewNonce] = useState(0);
+  const rafRef = useRef<number | null>(null);
 
-  // ── Chart una sola vez ──
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
@@ -61,7 +73,19 @@ export function ReplayChart({ candles, cursorIdx, tfMs, signals, focused }: Prop
     });
     chartRef.current = chart;
     seriesRef.current = series;
+    const bump = () => {
+      if (rafRef.current != null) return;
+      rafRef.current = requestAnimationFrame(() => {
+        rafRef.current = null;
+        setViewNonce((n) => n + 1);
+      });
+    };
+    chart.timeScale().subscribeVisibleLogicalRangeChange(bump);
+    const ro = new ResizeObserver(bump);
+    ro.observe(host);
     return () => {
+      ro.disconnect();
+      if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
@@ -123,8 +147,6 @@ export function ReplayChart({ candles, cursorIdx, tfMs, signals, focused }: Prop
         continue;
       }
 
-      // Señal conocida (al cierre de su vela): flecha direccional. Color por estado final una vez
-      // que el cursor ya lo vio; antes, color de dirección (el replay no adelanta el desenlace).
       markers.push({
         time: msToUtcSeconds(s.signalBarTime),
         position: long ? 'belowBar' : 'aboveBar',
@@ -170,7 +192,6 @@ export function ReplayChart({ candles, cursorIdx, tfMs, signals, focused }: Prop
     markers.sort((a, b) => (a.time as number) - (b.time as number));
     series.setMarkers(markers);
 
-    // Niveles de la señal ENFOCADA (auditoría): entry/SL/TP + nivel barrido + cancelBeyond.
     for (const pl of priceLinesRef.current) series.removePriceLine(pl);
     priceLinesRef.current = [];
     if (focused) {
@@ -204,5 +225,115 @@ export function ReplayChart({ candles, cursorIdx, tfMs, signals, focused }: Prop
     }
   }, [candles, cursorIdx, tfMs, signals, focused]);
 
-  return <div className="replay-chart" ref={hostRef} />;
+  // ── Overlay de CONTEXTO SMC (rectángulos/niveles), proyectado al viewport actual ──
+  const chart = chartRef.current;
+  const series = seriesRef.current;
+  let overlay: React.ReactNode = null;
+  void viewNonce; // el nonce solo fuerza el re-render en pan/zoom/resize
+  if (chart && series && candles.length > 0) {
+    const idx = Math.min(Math.max(cursorIdx, 0), candles.length - 1);
+    const cursorOpen = candles[idx].openTime;
+    const cursorClose = candles[idx].c;
+    const first = candles[0].openTime;
+    const host = hostRef.current;
+    const height = host?.clientHeight ?? 0;
+
+    const xOf = (t: number): number | null => {
+      const logical = (Math.min(t, cursorOpen) - first) / tfMs;
+      const coord = chart.timeScale().logicalToCoordinate(logical as Logical);
+      return coord == null ? null : coord;
+    };
+    const yOf = (price: number): number | null => {
+      const c = series.priceToCoordinate(price);
+      if (c != null) return c;
+      return price > cursorClose ? -20 : height + 20; // fuera del rango visible: clamp recortado
+    };
+
+    const items: React.ReactNode[] = [];
+
+    if (showObs && context) {
+      const visibles = context.obs
+        .filter((o) => o.confirmedAtTime <= cursorOpen && (o.invalidatedAt == null || cursorOpen < o.invalidatedAt))
+        .sort((a, b) => b.confirmedAtTime - a.confirmedAtTime)
+        .slice(0, MAX_OBS);
+      for (const o of visibles) {
+        const left = xOf(o.originTime);
+        const right = xOf(cursorOpen + tfMs); // proyección viva hasta el cursor
+        const top = yOf(o.obHigh);
+        const bottom = yOf(o.obLow);
+        if (left == null || right == null || top == null || bottom == null) continue;
+        if (right < 0 || left > (host?.clientWidth ?? 0)) continue;
+        const mitigated = o.mitigatedAt != null && cursorOpen >= o.mitigatedAt;
+        const bull = o.direction === 'bullish';
+        items.push(
+          <div
+            key={o.id}
+            className={`rx-ob ${bull ? 'bull' : 'bear'} ${mitigated ? 'mitigated' : ''}`}
+            style={{ left, top, width: Math.max(right - left, 2), height: Math.max(bottom - top, 2) }}
+          >
+            {right - left > 46 && <span className="rx-ob-label">OB {bull ? '▲' : '▼'}</span>}
+          </div>,
+        );
+      }
+    }
+
+    if (showLiq && context) {
+      const visibles = context.liquidity
+        .filter(
+          (l) =>
+            l.visibleFromTime != null &&
+            l.visibleFromTime <= cursorOpen &&
+            (l.sweptAtTime == null || cursorOpen <= l.sweptAtTime + SWEPT_LINGER_BARS * tfMs),
+        )
+        .sort((a, b) => Math.abs(a.level - cursorClose) - Math.abs(b.level - cursorClose))
+        .slice(0, MAX_LIQ);
+      for (const l of visibles) {
+        const left = xOf(l.timeStart);
+        const right = xOf(l.sweptAtTime != null ? Math.min(l.sweptAtTime, cursorOpen) : cursorOpen + tfMs);
+        const y = yOf(l.level);
+        if (left == null || right == null || y == null || y < 0 || y > height) continue;
+        const swept = l.sweptAtTime != null && cursorOpen >= l.sweptAtTime;
+        const tag = l.type === 'equalHigh' ? 'EQH' : l.type === 'equalLow' ? 'EQL' : l.type === 'swingHigh' ? 'SH' : 'SL';
+        items.push(
+          <div
+            key={l.id}
+            className={`rx-liq ${swept ? 'swept' : ''}`}
+            style={{ left, top: y, width: Math.max(right - left, 8) }}
+          >
+            <span className="rx-liq-label">{tag}{swept ? ' ✕' : ''}</span>
+          </div>,
+        );
+      }
+    }
+
+    // Banda de la zona del sweep de la señal enfocada (de la vela del sweep hasta su resolución).
+    if (focused && focused.zoneLow != null && focused.zoneHigh != null) {
+      const phase = signalPhaseAt(focused, cursorOpen, tfMs);
+      if (phase !== 'future') {
+        const endT = focused.exitTime ?? focused.endTime ?? cursorOpen + tfMs;
+        const left = xOf(focused.signalBarTime);
+        const right = xOf(Math.min(endT, cursorOpen + tfMs));
+        const top = yOf(focused.zoneHigh);
+        const bottom = yOf(focused.zoneLow);
+        if (left != null && right != null && top != null && bottom != null) {
+          items.push(
+            <div
+              key="focus-zone"
+              className={`rx-zone ${focused.direction === 'LONG' ? 'bull' : 'bear'} ${phase === 'rejected' ? 'rejected' : ''}`}
+              style={{ left, top, width: Math.max(right - left, 2), height: Math.max(bottom - top, 2) }}
+            />,
+          );
+        }
+      }
+    }
+
+    overlay = <div className="replay-overlay">{items}</div>;
+  }
+
+  return (
+    <div className="replay-chart-wrap">
+      <div className="replay-chart" ref={hostRef} />
+      {overlay}
+    </div>
+  );
 }

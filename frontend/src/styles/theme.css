@@ -336,3 +336,48 @@ body {
 .equity-spark svg { cursor: pointer; background: var(--panel-2); border: 1px solid var(--border); border-radius: 3px; }
 .equity-spark.empty { color: var(--muted); font-size: 12px; }
 .equity-label { font-size: 11px; color: var(--muted); }
+
+/* ─────────────── V.3: claridad total del replay ─────────────── */
+.rt-funnel { color: var(--muted); font-size: 11px; border: 1px solid var(--border); border-radius: 3px; padding: 1px 6px; white-space: nowrap; cursor: help; }
+
+.rl-exitfilter { display: flex; gap: 4px; padding: 0 6px 6px; }
+.rl-exitfilter button { background: var(--panel-2); color: var(--muted); border: 1px solid var(--border); font-size: 11px; padding: 1px 7px; cursor: pointer; border-radius: 3px; }
+.rl-exitfilter button.on { color: var(--text); border-color: var(--accent); }
+.r-pos { color: var(--up); font-weight: 700; }
+.r-neg { color: var(--down); font-weight: 700; }
+.r-zero { color: var(--muted); }
+
+/* Bloque prominente de niveles del trade enfocado */
+.ri-levels { background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 10px; margin-top: 10px; }
+.ri-flow { display: flex; align-items: center; gap: 10px; justify-content: space-between; }
+.ri-flow > div { display: flex; flex-direction: column; min-width: 0; }
+.lv-label { font-size: 10px; color: var(--muted); letter-spacing: 0.4px; }
+.lv-price { font-size: 17px; font-weight: 800; color: var(--text); }
+.lv-sub { font-size: 10px; color: var(--muted); }
+.lv-arrow { color: var(--muted); font-size: 16px; }
+.ri-rnet { font-size: 26px; font-weight: 900; text-align: center; margin-top: 8px; }
+.ri-rbreak { text-align: center; color: var(--muted); font-size: 11px; margin-top: 2px; }
+.ri-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; margin-top: 10px; }
+.ri-grid > div { display: flex; justify-content: space-between; gap: 8px; }
+.lv-val { font-weight: 700; }
+.lv-val.sl { color: var(--down); }
+.lv-val.tp { color: var(--up); }
+
+/* Overlay de contexto SMC sobre la gráfica del replay (read-only, recortado al viewport) */
+.replay-chart-wrap { position: absolute; inset: 0; overflow: hidden; }
+.replay-overlay { position: absolute; inset: 0; z-index: 3; pointer-events: none; overflow: hidden; }
+.rx-ob { position: absolute; border: 1px solid; border-radius: 2px; }
+.rx-ob.bull { border-color: rgba(38, 166, 154, 0.85); background: rgba(38, 166, 154, 0.10); }
+.rx-ob.bear { border-color: rgba(239, 83, 80, 0.85); background: rgba(239, 83, 80, 0.10); }
+.rx-ob.mitigated { opacity: 0.40; }
+.rx-ob-label { position: absolute; top: 1px; left: 3px; font-size: 10px; font-weight: 700; color: inherit; opacity: 0.9; }
+.rx-ob.bull .rx-ob-label { color: #26a69a; }
+.rx-ob.bear .rx-ob-label { color: #ef5350; }
+.rx-liq { position: absolute; border-top: 1px dashed #f59e0b; height: 0; }
+.rx-liq.swept { border-top-color: #6b7280; }
+.rx-liq-label { position: absolute; right: -2px; top: -14px; font-size: 9px; color: #f59e0b; font-weight: 700; }
+.rx-liq.swept .rx-liq-label { color: #6b7280; }
+.rx-zone { position: absolute; border: 1px dashed; border-radius: 2px; }
+.rx-zone.bull { border-color: rgba(38, 166, 154, 0.9); background: rgba(38, 166, 154, 0.14); }
+.rx-zone.bear { border-color: rgba(239, 83, 80, 0.9); background: rgba(239, 83, 80, 0.14); }
+.rx-zone.rejected { border-color: rgba(107, 114, 128, 0.9); background: rgba(107, 114, 128, 0.12); }

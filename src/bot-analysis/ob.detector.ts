@@ -75,23 +75,45 @@ function zoneBounds(o: ObCandle, useBody: boolean): [number, number] {
   return useBody ? [Math.min(o.open, o.close), Math.max(o.open, o.close)] : [o.low, o.high];
 }
 
-// Estado de mitigación (causal): solo velas desde startIdx en adelante.
-function computeState(candles: ObCandle[], startIdx: number, direction: ObDirection, obLow: number, obHigh: number): ObState {
-  let touched = false;
-  let mitigated = false;
+// LÍNEA DE TIEMPO del estado de un OB (causal): cuándo ocurrió cada transición. Cada timestamp es
+// el openTime de la vela cuya acción la produjo (se CONOCE al cierre de esa vela). El visor del
+// replay la usa para mostrar el OB en su estado correcto en cada instante SIN duplicar esta lógica.
+export interface ObStateTimeline {
+  touchedAt: number | null; // primera vela que entra en la zona
+  mitigatedAt: number | null; // primera vela que alcanza el extremo distal
+  invalidatedAt: number | null; // primera vela cuyo CUERPO cierra más allá del distal (y ahí se detiene)
+}
+
+export function computeStateTimeline(
+  candles: ObCandle[],
+  startIdx: number,
+  direction: ObDirection,
+  obLow: number,
+  obHigh: number,
+): ObStateTimeline {
+  let touchedAt: number | null = null;
+  let mitigatedAt: number | null = null;
   for (let j = startIdx; j < candles.length; j++) {
     const c = candles[j];
     if (direction === 'bullish') {
-      if (c.low < obHigh) touched = true;
-      if (c.low <= obLow) mitigated = true;
-      if (c.close < obLow) return 'invalidated';
+      if (touchedAt == null && c.low < obHigh) touchedAt = c.openTime;
+      if (mitigatedAt == null && c.low <= obLow) mitigatedAt = c.openTime;
+      if (c.close < obLow) return { touchedAt, mitigatedAt, invalidatedAt: c.openTime };
     } else {
-      if (c.high > obLow) touched = true;
-      if (c.high >= obHigh) mitigated = true;
-      if (c.close > obHigh) return 'invalidated';
+      if (touchedAt == null && c.high > obLow) touchedAt = c.openTime;
+      if (mitigatedAt == null && c.high >= obHigh) mitigatedAt = c.openTime;
+      if (c.close > obHigh) return { touchedAt, mitigatedAt, invalidatedAt: c.openTime };
     }
   }
-  return mitigated ? 'mitigated' : touched ? 'touched' : 'untouched';
+  return { touchedAt, mitigatedAt, invalidatedAt: null };
+}
+
+// Estado de mitigación (causal): solo velas desde startIdx en adelante. Deriva del timeline para
+// que detector y visor compartan UNA sola definición de las transiciones.
+function computeState(candles: ObCandle[], startIdx: number, direction: ObDirection, obLow: number, obHigh: number): ObState {
+  const t = computeStateTimeline(candles, startIdx, direction, obLow, obHigh);
+  if (t.invalidatedAt != null) return 'invalidated';
+  return t.mitigatedAt != null ? 'mitigated' : t.touchedAt != null ? 'touched' : 'untouched';
 }
 
 // ───────────────────────── Modo IMPULSE (lente anterior) ─────────────────────────

@@ -137,3 +137,52 @@ describe('detectOrderBlocks (structural)', () => {
     expect(ob.obHigh).toBe(100.5);
   });
 });
+
+describe('computeStateTimeline — transiciones causales para el replay', () => {
+  const { computeStateTimeline } = jest.requireActual<typeof import('../ob.detector')>('../ob.detector');
+  const k = (openTime: number, open: number, high: number, low: number, close: number) => ({
+    openTime,
+    open,
+    high,
+    low,
+    close,
+  });
+
+  it('registra touched → mitigated → invalidated con el openTime de cada vela (bullish)', () => {
+    // Zona [100, 105]: A no toca · B entra (touched) · C alcanza el distal (mitigated) ·
+    // D cierra con cuerpo por debajo (invalidated, y ahí se detiene).
+    const candles = [
+      k(10, 107, 108, 106, 107), // A
+      k(20, 106, 107, 104, 106), // B: low 104 < 105 → touched
+      k(30, 105, 106, 99, 103), // C: low 99 ≤ 100 → mitigated (cierre 103 dentro)
+      k(40, 102, 103, 97, 98), // D: close 98 < 100 → invalidated
+      k(50, 98, 99, 90, 91), // (no se procesa: el timeline se detiene al invalidarse)
+    ];
+    const tl = computeStateTimeline(candles, 0, 'bullish', 100, 105);
+    expect(tl).toEqual({ touchedAt: 20, mitigatedAt: 30, invalidatedAt: 40 });
+  });
+
+  it('zona nunca tocada → todo null (untouched)', () => {
+    const candles = [k(10, 110, 111, 108, 110), k(20, 110, 112, 109, 111)];
+    expect(computeStateTimeline(candles, 0, 'bullish', 100, 105)).toEqual({
+      touchedAt: null,
+      mitigatedAt: null,
+      invalidatedAt: null,
+    });
+  });
+
+  it('bearish: toca por arriba y se invalida con cierre sobre el proximal', () => {
+    // Zona bearish [100, 105]: entra si high > 100; mitiga si high ≥ 105; invalida si close > 105.
+    const candles = [
+      k(10, 95, 99, 94, 95),
+      k(20, 96, 102, 95, 97), // touched (high 102 > 100)
+      k(30, 97, 106, 96, 104), // mitigated (high 106 ≥ 105), cierre dentro
+      k(40, 104, 108, 103, 107), // invalidated (close 107 > 105)
+    ];
+    expect(computeStateTimeline(candles, 0, 'bearish', 100, 105)).toEqual({
+      touchedAt: 20,
+      mitigatedAt: 30,
+      invalidatedAt: 40,
+    });
+  });
+});

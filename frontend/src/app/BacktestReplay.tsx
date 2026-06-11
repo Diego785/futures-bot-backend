@@ -4,6 +4,8 @@ import { ReplayChart } from '../components/replay/ReplayChart';
 import { ReplayControls } from '../components/replay/ReplayControls';
 import { EquitySparkline } from '../components/replay/EquitySparkline';
 import { fetchBacktestRuns, fetchBacktestRun } from '../features/backtest-viewer/backtestRuns.api';
+import { fetchReplayContext } from '../features/backtest-viewer/backtestContext.api';
+import type { ReplayContextResponse } from '../features/backtest-viewer/backtestContext.types';
 import {
   biasAtTime,
   equityCurve,
@@ -58,6 +60,10 @@ export function BacktestReplay() {
   const [speed, setSpeed] = useState(4);
   const [showCancelled, setShowCancelled] = useState(true);
   const [showRejected, setShowRejected] = useState(false);
+  const [showObs, setShowObs] = useState(true);
+  const [showLiq, setShowLiq] = useState(true);
+  const [exitFilter, setExitFilter] = useState<'all' | 'TP' | 'SL' | 'BE'>('all');
+  const [context, setContext] = useState<ReplayContextResponse | null>(null);
   const [verdicts, setVerdicts] = useState<Record<string, VerdictEntry>>({});
 
   // ── Corridas registradas ──
@@ -103,10 +109,25 @@ export function BacktestReplay() {
 
   // ── Lista filtrada (la navegación de la auditoría) ──
   const listed = useMemo(() => {
-    const byFilter =
-      listFilter === 'all' ? signals : signals.filter((s) => s.outcome === listFilter);
+    let byFilter = listFilter === 'all' ? signals : signals.filter((s) => s.outcome === listFilter);
+    if (listFilter === 'filled' && exitFilter !== 'all') {
+      byFilter = byFilter.filter((s) => s.exitReason === exitFilter);
+    }
     return byFilter; // ya viene ordenada por signalBarTime
-  }, [signals, listFilter]);
+  }, [signals, listFilter, exitFilter]);
+
+  // Embudo de la corrida (los conteos que explican POR QUÉ hay las señales que hay).
+  const funnel = useMemo(() => {
+    const byReason: Record<string, number> = {};
+    let rejected = 0;
+    for (const s of signals) {
+      if (s.outcome === 'rejected') {
+        rejected++;
+        byReason[s.reason ?? '?'] = (byReason[s.reason ?? '?'] ?? 0) + 1;
+      }
+    }
+    return { rejected, byReason };
+  }, [signals]);
 
   // ── Ventana de velas alrededor de la señal enfocada ──
   const focusSignal = useCallback(
@@ -128,6 +149,11 @@ export function BacktestReplay() {
           setWindowStatus('ready');
         })
         .catch(() => setWindowStatus('error'));
+      // Contexto SMC causal de la ventana (OBs + liquidez): no bloquea el replay si falla.
+      setContext(null);
+      fetchReplayContext(run.id, from, to)
+        .then(setContext)
+        .catch(() => setContext(null));
     },
     [run, tfMs],
   );
@@ -208,6 +234,23 @@ export function BacktestReplay() {
           {run.fromTime ? formatUtc(run.fromTime).slice(0, 10) : '—'} → {run.toTime ? formatUtc(run.toTime).slice(0, 10) : '—'})
         </span>
       )}
+      {run && (
+        <span
+          className="rt-funnel"
+          title={`El EMBUDO de la corrida: de cada sweep detectado a trade real.\nDescartes: ${Object.entries(funnel.byReason)
+            .map(([k, v]) => `${k} ${v}`)
+            .join(' · ')}`}
+        >
+          {run.metrics.signals} señales → {run.metrics.trades} trades · {run.metrics.cancelled} cancel ·{' '}
+          {funnel.rejected} descartes
+        </span>
+      )}
+      <label className="rt-toggle" title="Order Blocks re-derivados causalmente (contexto)">
+        <input type="checkbox" checked={showObs} onChange={() => setShowObs((v) => !v)} /> OBs
+      </label>
+      <label className="rt-toggle" title="Niveles de liquidez (equal highs/lows y swings) con su barrido">
+        <input type="checkbox" checked={showLiq} onChange={() => setShowLiq((v) => !v)} /> liquidez
+      </label>
       <label className="rt-toggle">
         <input type="checkbox" checked={showCancelled} onChange={() => setShowCancelled((v) => !v)} /> canceladas
       </label>
@@ -218,6 +261,7 @@ export function BacktestReplay() {
   );
 
   const LIST_CAP = 600;
+  const rClass = (r: number | null) => (r == null ? '' : r > 0.05 ? 'r-pos' : r < -0.05 ? 'r-neg' : 'r-zero');
   const left = (
     <div className="replay-list">
       <div className="rl-header">
@@ -229,6 +273,16 @@ export function BacktestReplay() {
         </select>
         <span className="rl-audited" title="Señales con veredicto del auditor">✓ {audited}</span>
       </div>
+      {listFilter === 'filled' && (
+        <div className="rl-exitfilter">
+          {(['all', 'TP', 'SL', 'BE'] as const).map((f) => (
+            <button key={f} className={exitFilter === f ? 'on' : ''} onClick={() => setExitFilter(f)}>
+              {f === 'all' ? 'todas' : f}
+              {f !== 'all' && ` (${signals.filter((s) => s.outcome === 'filled' && s.exitReason === f).length})`}
+            </button>
+          ))}
+        </div>
+      )}
       <ul>
         {listed.slice(0, LIST_CAP).map((s, i) => {
           const v = verdicts[s.intentId];
@@ -241,7 +295,7 @@ export function BacktestReplay() {
               <span className="rl-idx">{i + 1}</span>
               <span className={`rl-dir ${s.direction === 'LONG' ? 'long' : 'short'}`}>{s.direction === 'LONG' ? '▲' : '▼'}</span>
               <span className="rl-date">{formatUtc(s.signalBarTime).slice(2, 16)}</span>
-              <span className="rl-out">
+              <span className={`rl-out ${s.outcome === 'filled' ? rClass(s.rMultiple) : ''}`}>
                 {s.outcome === 'filled' ? `${s.exitReason} ${fmtR(s.rMultiple)}` : s.outcome === 'rejected' ? `✕ ${s.reason}` : `${s.outcome}`}
               </span>
               {v && <span className={`rl-verdict v-${v.verdict}`}>{v.verdict === 'valida' ? '✓' : v.verdict === 'dudosa' ? '?' : '✗'}</span>}
@@ -273,7 +327,16 @@ export function BacktestReplay() {
   } else {
     center = (
       <div className="replay-center">
-        <ReplayChart candles={candles} cursorIdx={cursorIdx} tfMs={tfMs} signals={chartSignals} focused={focused} />
+        <ReplayChart
+          candles={candles}
+          cursorIdx={cursorIdx}
+          tfMs={tfMs}
+          signals={chartSignals}
+          focused={focused}
+          context={context}
+          showObs={showObs}
+          showLiq={showLiq}
+        />
       </div>
     );
   }
@@ -293,6 +356,46 @@ export function BacktestReplay() {
             <button onClick={() => focusNeighbor(-1)} disabled={focusedListIdx <= 0}>‹ anterior</button>
             <button onClick={() => focusNeighbor(1)} disabled={focusedListIdx < 0 || focusedListIdx >= listed.length - 1}>siguiente ›</button>
           </div>
+
+          {/* ── LO IMPORTANTE, de un vistazo: niveles + resultado con su desglose ── */}
+          <div className="ri-levels">
+            {focused.outcome === 'filled' ? (
+              <>
+                <div className="ri-flow">
+                  <div>
+                    <span className="lv-label">ENTRADA</span>
+                    <span className="lv-price">{focused.entryPrice}</span>
+                    <span className="lv-sub">límite {focused.entry}</span>
+                  </div>
+                  <span className="lv-arrow">→</span>
+                  <div>
+                    <span className="lv-label">SALIDA ({focused.exitReason})</span>
+                    <span className="lv-price">{focused.exitPrice}</span>
+                    <span className="lv-sub">{focused.exitTime != null ? formatUtc(focused.exitTime).slice(2, 16) : ''}</span>
+                  </div>
+                </div>
+                <div className={`ri-rnet ${rClass(focused.rMultiple)}`}>{fmtR(focused.rMultiple)}</div>
+                <div className="ri-rbreak">
+                  bruto {fmtR(focused.grossR)} · comisiones+slip −{(focused.costR ?? 0).toFixed(2)}R
+                </div>
+              </>
+            ) : (
+              <div className="ri-flow">
+                <div>
+                  <span className="lv-label">{focused.outcome === 'rejected' ? 'DESCARTADA' : 'SIN FILL'}</span>
+                  <span className="lv-price">{focused.entry ?? '—'}</span>
+                  <span className="lv-sub">{focused.reason}</span>
+                </div>
+              </div>
+            )}
+            <div className="ri-grid">
+              <div><span className="lv-label">SL</span><span className="lv-val sl">{focused.stopLoss ?? '—'}</span></div>
+              <div><span className="lv-label">TP (2R)</span><span className="lv-val tp">{focused.takeProfit ?? '—'}</span></div>
+              <div><span className="lv-label">riesgo</span><span className="lv-val">{focused.entry != null && focused.stopLoss != null ? Math.abs(focused.entry - focused.stopLoss).toFixed(2) : '—'}</span></div>
+              <div><span className="lv-label">BE</span><span className="lv-val">{focused.movedToBE ? 'armado' : 'no'}</span></div>
+            </div>
+          </div>
+
           <h4>Porqué causal</h4>
           <table className="ri-table">
             <tbody>
