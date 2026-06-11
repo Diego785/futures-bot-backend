@@ -78,3 +78,89 @@ describe('detectSweeps', () => {
     expect(detectSweeps('BTCUSDT', '15m', candles, P)).toHaveLength(1);
   });
 });
+
+describe('detectSweeps — modo pools (Ciclo 2, CYCLE-2-PREREG Eje 2)', () => {
+  const PP: SweepParams = { swingLookback: 2, poolMode: 'pools' };
+
+  it('equal lows: dos pivotes dentro de tolerancia forman UN pool (≥2 toques) y su barrida es un sweep equal', () => {
+    const candles = [
+      k(0, 100, 106, 98, 100),
+      k(1, 100, 106, 97, 100),
+      k(2, 100, 106, 95, 100), // pivote low 95
+      k(3, 100, 106, 98, 100),
+      k(4, 100, 106, 97.5, 100), // confirma i2 → pool {95}
+      k(5, 100, 106, 98, 100),
+      k(6, 100, 106, 95.05, 100), // pivote low 95.05 (|Δ|/95 ≈ 0.05 % ≤ 0.1 %) → merge
+      k(7, 100, 106, 98, 100),
+      k(8, 100, 106, 97, 100), // confirma i6 → pool {95, touches 2}
+      k(9, 100, 106, 94, 96), // barre (94 < 95) y reclama (96 > 95)
+    ];
+    const sweeps = detectSweeps('BTCUSDT', '15m', candles, PP);
+    expect(sweeps).toHaveLength(1);
+    expect(sweeps[0]).toMatchObject({
+      direction: 'bullish',
+      sweptLevel: 95, // el extremo del cluster (mínimo de los lows)
+      sweepBarTime: 9,
+      sweptSwingTime: 6, // el ÚLTIMO pivote que formó el pool
+      poolType: 'equal',
+      touches: 2,
+      wickExtreme: 94,
+    });
+  });
+
+  it('los swings VIEJOS no barridos siguen vigentes (el modo lastSwing solo ve el último)', () => {
+    const candles = [
+      k(0, 100, 106, 98, 100),
+      k(1, 100, 106, 97, 100),
+      k(2, 100, 106, 90, 100), // pivote low 90 (profundo, viejo)
+      k(3, 100, 106, 96, 100),
+      k(4, 100, 106, 97, 100), // confirma i2 → pool {90}
+      k(5, 100, 106, 98, 100),
+      k(6, 100, 106, 95, 100), // pivote low 95 (lejos de 90 → pool propio)
+      k(7, 100, 106, 97, 100),
+      k(8, 100, 106, 96, 100), // confirma i6 → pools {90} y {95}
+      k(9, 100, 106, 94, 97), // barre 95 y reclama → sweep A; el pool 90 sigue vivo (94 > 90)
+      k(10, 100, 106, 89, 92), // barre 90 y reclama → sweep B
+    ];
+    const pools = detectSweeps('BTCUSDT', '15m', candles, PP);
+    expect(pools).toHaveLength(2);
+    expect(pools[0]).toMatchObject({ sweptLevel: 95, sweepBarTime: 9, poolType: 'swing', touches: 1 });
+    expect(pools[1]).toMatchObject({ sweptLevel: 90, sweepBarTime: 10 });
+
+    // Contraste: el modo default (candidato congelado) solo barre el ÚLTIMO swing confirmado.
+    const last = detectSweeps('BTCUSDT', '15m', candles, P);
+    expect(last).toHaveLength(1);
+    expect(last[0].sweptLevel).toBe(95);
+  });
+
+  it('el pool MUERE al cruce de mecha aunque NO haya reclaim (ruptura): un retest posterior ya no es sweep', () => {
+    const candles = [
+      k(0, 100, 106, 98, 100),
+      k(1, 100, 106, 97, 100),
+      k(2, 100, 106, 95, 100), // pivote low 95
+      k(3, 100, 106, 98, 100),
+      k(4, 100, 106, 97, 100), // confirma → pool {95}
+      k(5, 100, 106, 92, 93), // CRUZA (92 < 95) pero cierra DEBAJO (93 < 95) = ruptura → pool muerto, sin señal
+      k(6, 100, 106, 94, 97), // "retest con reclaim" sobre un pool muerto → nada
+    ];
+    expect(detectSweeps('BTCUSDT', '15m', candles, PP)).toHaveLength(0);
+  });
+
+  it('si una vela barre y reclama VARIOS pools del mismo lado, emite UNO: el más profundo', () => {
+    const candles = [
+      k(0, 100, 106, 98, 100),
+      k(1, 100, 106, 97, 100),
+      k(2, 100, 106, 90, 100), // pivote low 90
+      k(3, 100, 106, 96, 100),
+      k(4, 100, 106, 97, 100), // confirma → pool {90}
+      k(5, 100, 106, 98, 100),
+      k(6, 100, 106, 95, 100), // pivote low 95
+      k(7, 100, 106, 97, 100),
+      k(8, 100, 106, 96, 100), // confirma → pools {90} y {95}
+      k(9, 100, 106, 88, 97), // barre AMBOS (88 < 90 < 95) y reclama ambos (97 > 95) → UN sweep, el de 90
+    ];
+    const sweeps = detectSweeps('BTCUSDT', '15m', candles, PP);
+    expect(sweeps).toHaveLength(1);
+    expect(sweeps[0]).toMatchObject({ sweptLevel: 90, wickExtreme: 88, direction: 'bullish', sweepBarTime: 9 });
+  });
+});

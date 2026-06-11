@@ -51,6 +51,7 @@ export interface SignalConfig {
   minStopPct: number; // FEE-AWARE: descarta stops micro (riesgo < minStopPct×entry) donde el fee domina
   swingLookback: number; // pivotes para OB/sweep/liquidez (default 10)
   confirmProximityFrac: number; // modo B: la madre debe solapar o estar a ≤ frac×rango del OB de confirmación
+  poolMode: 'lastSwing' | 'pools'; // gatillo C: qué liquidez se barre (Ciclo 2, CYCLE-2-PREREG Eje 2)
 }
 
 // Defaults provisionales 🔴 (alineados con SMC-STRATEGY-MECHANICAL §5).
@@ -64,6 +65,7 @@ export const DEFAULT_SIGNAL_CONFIG: SignalConfig = {
   minStopPct: 0, // 0 = sin filtro (el CLI pone un default fee-aware ~0.003)
   swingLookback: 10,
   confirmProximityFrac: 1,
+  poolMode: 'lastSwing', // candidato congelado; 'pools' = Ciclo 2
 };
 
 const round4 = (n: number) => Math.round(n * 1e4) / 1e4;
@@ -278,7 +280,7 @@ function intentsC(
   cfg: SignalConfig,
   idxOfTime: Map<number, number>,
 ): { intents: TradeIntent[]; rejects: IntentReject[] } {
-  const sweeps = detectSweeps(symbol, tf, candles, { swingLookback: cfg.swingLookback });
+  const sweeps = detectSweeps(symbol, tf, candles, { swingLookback: cfg.swingLookback, poolMode: cfg.poolMode });
   const out = { intents: [] as TradeIntent[], rejects: [] as IntentReject[] };
   for (const s of sweeps) {
     const direction: TradeDirection = s.direction === 'bullish' ? 'LONG' : 'SHORT';
