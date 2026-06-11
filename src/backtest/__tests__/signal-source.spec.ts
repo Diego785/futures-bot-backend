@@ -1,4 +1,4 @@
-import { generateIntents } from '../signal-source';
+import { generateIntents, generateIntentsDetailed } from '../signal-source';
 import { detectOrderBlocks, type ObCandle } from '../../bot-analysis/ob.detector';
 import { detectSweeps } from '../../bot-analysis/sweep.detector';
 
@@ -144,5 +144,57 @@ describe('generateIntents — modo C (sweep + reclaim)', () => {
       { time: 0, bias: 'bearish' },
     ]);
     expect(conBear).toHaveLength(0); // en contra → filtrado
+  });
+
+  it('lleva el contexto causal del sweep (qué liquidez barrió) para el visor/paper', () => {
+    const s = detectSweeps('BTCUSDT', '15m', C_SERIES, { swingLookback: 2 })[0];
+    const it = generateIntents('BTCUSDT', '15m', C_SERIES, { gatillo: 'C', tpRule: 'fixedR', ...LB2 })[0];
+    expect(it.context).toMatchObject({
+      zoneLow: s.wickExtreme,
+      zoneHigh: s.sweptLevel,
+      sweptLevel: s.sweptLevel,
+      wickExtreme: s.wickExtreme,
+      sweptSwingTime: s.sweptSwingTime,
+    });
+  });
+});
+
+describe('generateIntentsDetailed — el porqué-no (rejects con razón)', () => {
+  it('un sweep contra el sesgo HTF sale como reject htfBias con su zona', () => {
+    const { intents, rejects } = generateIntentsDetailed(
+      'BTCUSDT',
+      '15m',
+      C_SERIES,
+      { gatillo: 'C', tpRule: 'fixedR', ...LB2 },
+      [{ time: 0, bias: 'bearish' }], // el sweep es LONG → contra-tendencia
+    );
+    expect(intents).toHaveLength(0);
+    expect(rejects).toHaveLength(1);
+    const s = detectSweeps('BTCUSDT', '15m', C_SERIES, { swingLookback: 2 })[0];
+    expect(rejects[0]).toMatchObject({
+      reason: 'htfBias',
+      direction: 'LONG',
+      signalBarTime: s.sweepBarTime,
+      zoneLow: s.wickExtreme,
+      zoneHigh: s.sweptLevel,
+    });
+  });
+
+  it('un stop micro sale como reject minStop (filtro fee-aware)', () => {
+    const { intents, rejects } = generateIntentsDetailed('BTCUSDT', '15m', C_SERIES, {
+      gatillo: 'C',
+      tpRule: 'fixedR',
+      minStopPct: 0.05, // risk/entry ≈ 3.24 % < 5 % → descartado
+      ...LB2,
+    });
+    expect(intents).toHaveLength(0);
+    expect(rejects).toHaveLength(1);
+    expect(rejects[0].reason).toBe('minStop');
+  });
+
+  it('generateIntents (la API estable) devuelve exactamente los intents del detallado', () => {
+    const detailed = generateIntentsDetailed('BTCUSDT', '15m', C_SERIES, { gatillo: 'C', tpRule: 'fixedR', ...LB2 });
+    const simple = generateIntents('BTCUSDT', '15m', C_SERIES, { gatillo: 'C', tpRule: 'fixedR', ...LB2 });
+    expect(simple).toEqual(detailed.intents);
   });
 });

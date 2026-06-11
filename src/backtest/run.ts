@@ -6,15 +6,21 @@
 //   node dist/backtest/run.js --info                                     (inventario de velas en la DB)
 // Flags: --limit N · --from YYYY-MM-DD · --to YYYY-MM-DD · --fee 0.0005 · --slip 0 · --r 2 ·
 //        --sl-buffer 0.1 · --swing 10 · --min-rr 1 · --be 0.5 · --max-wait 0
+// Registro (visor): añadir --register [--note "..."] a un single-run → persiste la corrida COMPLETA
+// (params resueltos + paramsHash + comando reproducible + embudo de señales) en backtest_runs/
+// backtest_signals para el replay del dashboard. Requiere `npm run migration:run` previo.
 
+import { execSync } from 'child_process';
 import { NestFactory } from '@nestjs/core';
 import { BacktestModule } from './backtest.module';
 import { CandleRepository } from '../market-data/candle.repository';
+import { BacktestRunRepository } from './backtest-run.repository';
+import { buildSignalRows, makeParamsHash } from './register.mapper';
 import { runBacktest, runGrid, type BacktestReport, type RunnerCandle } from './backtest.runner';
 import { walkForward, type WalkForwardResult } from './walkforward';
 import { computeHtfBias, alignBias, type BiasPoint } from './htf-bias';
-import type { SignalConfig } from './signal-source';
-import type { SimConfig } from './trade-simulator';
+import { DEFAULT_SIGNAL_CONFIG, type SignalConfig } from './signal-source';
+import { DEFAULT_SIM_CONFIG, type SimConfig } from './trade-simulator';
 
 const args = process.argv.slice(2);
 const getArg = (name: string, def: string): string => {
@@ -114,8 +120,10 @@ async function main(): Promise<void> {
     const repo = app.get(CandleRepository);
     const symbol = getArg('symbol', 'BTCUSDT');
     const limit = parseInt(getArg('limit', '100000'), 10);
-    const from = toMs(getArg('from', ''));
-    const to = toMs(getArg('to', ''));
+    const fromArg = getArg('from', '');
+    const toArg = getArg('to', '');
+    const from = toMs(fromArg);
+    const to = toMs(toArg);
 
     if (hasFlag('info')) {
       const tfs = getArg('tfs', '1m,5m,15m,1h,4h,1d').split(',');
@@ -204,7 +212,87 @@ async function main(): Promise<void> {
     }
     const gatillo = getArg('gatillo', 'C') as SignalConfig['gatillo'];
     const tpRule = getArg('tp', 'fixedR') as SignalConfig['tpRule'];
-    printReport(runBacktest(symbol, tf, candles, { ...signalBase, gatillo, tpRule }, simConfig, htfBias));
+    const report = runBacktest(symbol, tf, candles, { ...signalBase, gatillo, tpRule }, simConfig, htfBias);
+    printReport(report);
+
+    // --register: persiste la corrida COMPLETA (reproducible) para el visor. Solo single-run.
+    if (hasFlag('register')) {
+      // Params RESUELTOS (defaults incluidos): lo que la corrida USÓ de verdad, no lo que se tipeó.
+      // Lección de la revisión 2026-06-10: un default implícito (--limit) cambió el dataset sin que
+      // nadie lo notara. El orden de claves es fijo (literal) → paramsHash estable y comparable.
+      const signalFull = { ...DEFAULT_SIGNAL_CONFIG, ...signalBase, gatillo, tpRule };
+      const simFull = { ...DEFAULT_SIM_CONFIG, ...simConfig };
+      const params: Record<string, unknown> = {
+        symbol,
+        tf,
+        signal: signalFull,
+        sim: simFull,
+        htf: htfTf || null,
+        htf2: htfTf2 || null,
+      };
+      const createdAt = Date.now();
+      const runId = `bt_${createdAt}`;
+      let engineVersion = 'unknown';
+      try {
+        engineVersion = execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] })
+          .toString()
+          .trim();
+      } catch {
+        /* sin git (p. ej. deploy sin .git) → 'unknown' */
+      }
+      const cmd = [
+        'npm run backtest --',
+        `--symbol ${symbol}`,
+        `--tf ${tf}`,
+        `--gatillo ${gatillo}`,
+        `--tp ${tpRule}`,
+        `--r ${signalFull.rMultipleTp}`,
+        `--sl-buffer ${signalFull.slBufferFrac}`,
+        `--swing ${signalFull.swingLookback}`,
+        `--min-rr ${signalFull.minRr}`,
+        `--min-stop-pct ${signalFull.minStopPct}`,
+        `--cancel-dist ${signalFull.cancelDistanceFrac}`,
+        feeArg !== ''
+          ? `--fee ${simFull.feeRatePerSide}`
+          : `--maker ${simFull.makerFee} --taker ${simFull.takerFee}`,
+        `--slip ${simFull.slippagePerSide}`,
+        `--be ${simFull.breakevenAtTpFraction}`,
+        `--max-wait ${simFull.maxWaitFillBars}`,
+        `--limit ${limit}`,
+        ...(fromArg ? [`--from ${fromArg}`] : []),
+        ...(toArg ? [`--to ${toArg}`] : []),
+        ...(htfTf ? [`--htf ${htfTf}`] : []),
+        ...(htfTf2 ? [`--htf2 ${htfTf2}`] : []),
+        '--register',
+      ].join(' ');
+
+      const signalRows = buildSignalRows(runId, report.intents, report.rejects, report.results);
+      await app.get(BacktestRunRepository).saveRun(
+        {
+          id: runId,
+          createdAt,
+          symbol,
+          tf,
+          fromTime: report.firstTime,
+          toTime: report.lastTime,
+          candleCount: report.candles,
+          engineVersion,
+          paramsHash: makeParamsHash(params),
+          command: cmd,
+          params,
+          metrics: report.metrics as unknown as Record<string, unknown>,
+          biasPoints: htfBias.length > 0 ? htfBias : null,
+          note: getArg('note', ''),
+        },
+        signalRows,
+      );
+      console.log('');
+      console.log(`✓ Corrida registrada: ${runId} (engine ${engineVersion}, paramsHash ${makeParamsHash(params)})`);
+      console.log(
+        `  Señales persistidas: ${signalRows.length} (${report.metrics.trades} trades · ${report.metrics.cancelled} canceladas · ${report.metrics.expired} expiradas · ${report.rejects.length} descartadas)`,
+      );
+      console.log(`  Comando: ${cmd}`);
+    }
   } finally {
     await app.close();
   }

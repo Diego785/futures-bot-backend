@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import 'dotenv/config'; // lee el .env (DB_*) — sin esto `npm run migration:run` exige exportar las vars a mano
 import { DataSource } from 'typeorm';
 
 /**
