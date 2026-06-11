@@ -116,6 +116,8 @@ export interface SimResult {
   intentId: string;
   outcome: SimOutcome;
   reason?: SimReason; // por qué se canceló/expiró (solo si no llenó)
+  endTime?: number; // cuándo se decidió la cancelación/expiración (closeTime de esa vela) — informativo
+  // para el replay causal del visor; NO afecta la mecánica. Ausente en badRisk/noData (nunca vivió).
   trade?: SimTrade; // presente solo si outcome === 'filled'
 }
 
@@ -204,7 +206,7 @@ export function simulateTrade(
     if (!filled) {
       const offset = b - start;
       if (cfg.maxWaitFillBars > 0 && offset >= cfg.maxWaitFillBars) {
-        return { intentId: intent.id, outcome: 'cancelled', reason: 'maxWaitFill' };
+        return { intentId: intent.id, outcome: 'cancelled', reason: 'maxWaitFill', endTime: ct };
       }
       const hitEntry = intent.direction === 'LONG' ? c.low <= intent.entry : c.high >= intent.entry;
       if (hitEntry) {
@@ -218,12 +220,12 @@ export function simulateTrade(
         if (intent.cancelBeyond != null) {
           const ranAway =
             intent.direction === 'LONG' ? c.high >= intent.cancelBeyond : c.low <= intent.cancelBeyond;
-          if (ranAway) return { intentId: intent.id, outcome: 'cancelled', reason: 'ranAway' };
+          if (ranAway) return { intentId: intent.id, outcome: 'cancelled', reason: 'ranAway', endTime: ct };
         }
         if (intent.invalidationPrice != null) {
           const invalidated =
             intent.direction === 'LONG' ? c.close < intent.invalidationPrice : c.close > intent.invalidationPrice;
-          if (invalidated) return { intentId: intent.id, outcome: 'cancelled', reason: 'invalidated' };
+          if (invalidated) return { intentId: intent.id, outcome: 'cancelled', reason: 'invalidated', endTime: ct };
         }
         continue;
       }
@@ -267,7 +269,8 @@ export function simulateTrade(
     const last = candles[candles.length - 1];
     return finishTrade(last.close, last.closeTime ?? last.openTime, 'endOfData');
   }
-  return { intentId: intent.id, outcome: 'expired', reason: 'noFill' };
+  const last = candles[candles.length - 1];
+  return { intentId: intent.id, outcome: 'expired', reason: 'noFill', endTime: last.closeTime ?? last.openTime };
 }
 
 /**

@@ -31,6 +31,9 @@ export class BacktestSignalEntity {
   @Column({ type: 'varchar', length: 16, nullable: true })
   reason: string | null; // reject: badZone/minStop/minRr/htfBias · cancelled/expired: ranAway/invalidated/maxWaitFill/noFill/...
 
+  @Column({ type: 'bigint', transformer: bigintToNumber, nullable: true })
+  endTime: number | null; // cancelled/expired: cuándo murió la pendiente (replay causal). null en filled/rejected.
+
   // Zona causal (sweep o OB). Presente en TODAS (rejects incluidos) — es lo que se dibuja.
   @Column({ type: 'double precision', nullable: true })
   zoneLow: number | null;

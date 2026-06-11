@@ -34,6 +34,7 @@ export interface BacktestSignalRow {
   signalBarTime: number;
   outcome: SignalOutcome;
   reason: string | null;
+  endTime: number | null;
   zoneLow: number | null;
   zoneHigh: number | null;
   sweptLevel: number | null;
@@ -123,6 +124,7 @@ export function buildSignalRows(
         ...base,
         outcome: 'filled',
         reason: null,
+        endTime: null,
         entryTime: t.entryTime,
         entryPrice: t.entryPrice,
         exitTime: t.exitTime,
@@ -141,6 +143,7 @@ export function buildSignalRows(
         ...EMPTY_TRADE,
         outcome: res?.outcome === 'cancelled' ? 'cancelled' : 'expired',
         reason: res?.reason ?? null,
+        endTime: res?.endTime ?? null,
       });
     }
   }
@@ -153,6 +156,7 @@ export function buildSignalRows(
       signalBarTime: rj.signalBarTime,
       outcome: 'rejected',
       reason: rj.reason,
+      endTime: null,
       zoneLow: rj.zoneLow,
       zoneHigh: rj.zoneHigh,
       sweptLevel: null,

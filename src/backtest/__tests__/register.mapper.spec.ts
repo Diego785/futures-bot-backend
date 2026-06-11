@@ -54,7 +54,7 @@ describe('buildSignalRows — el embudo completo de la corrida', () => {
           movedToBE: true,
         },
       },
-      { intentId: cancelled.id, outcome: 'cancelled', reason: 'ranAway' },
+      { intentId: cancelled.id, outcome: 'cancelled', reason: 'ranAway', endTime: 250 },
     ];
     const rejects: IntentReject[] = [
       { id: 'C_x_3_d', direction: 'SHORT', signalBarTime: 300, zoneLow: 120, zoneHigh: 125, reason: 'htfBias' },
@@ -82,7 +82,14 @@ describe('buildSignalRows — el embudo completo de la corrida', () => {
     });
 
     const c = rows[1];
-    expect(c).toMatchObject({ outcome: 'cancelled', reason: 'ranAway', entry: 100, exitTime: null, rMultiple: null });
+    expect(c).toMatchObject({
+      outcome: 'cancelled',
+      reason: 'ranAway',
+      endTime: 250, // cuándo murió la pendiente (replay causal)
+      entry: 100,
+      exitTime: null,
+      rMultiple: null,
+    });
 
     const r = rows[2];
     expect(r).toMatchObject({

@@ -48,6 +48,7 @@ export class CreateBacktestRuns1781200000000 implements MigrationInterface {
           { name: 'signalBarTime', type: 'bigint', isNullable: false },
           { name: 'outcome', type: 'varchar', length: '10', isNullable: false },
           { name: 'reason', type: 'varchar', length: '16', isNullable: true },
+          { name: 'endTime', type: 'bigint', isNullable: true },
           { name: 'zoneLow', type: 'double precision', isNullable: true },
           { name: 'zoneHigh', type: 'double precision', isNullable: true },
           { name: 'sweptLevel', type: 'double precision', isNullable: true },
