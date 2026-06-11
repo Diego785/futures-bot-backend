@@ -346,6 +346,18 @@ candidato congelado + `--htf 4h`, walk-forward 12 ventanas:
 >   para auditar la mecanización trade a trade. Fix aplicado: id de intents C ahora incluye dirección
 >   (dos sweeps opuestos en la misma vela ya no colisionan en el dedup del paper).
 
+### Ciclo 2 pre-registrado (2026-06-10) — re-mecanización de la GESTIÓN con la transcripción del V1
+La auditoría visual del usuario (vía el visor) + la transcripción cruda del Video 1
+(`transcripts/VIDEO-1-TRANSCRIPT.md`) revelaron que la desviación del método NO estaba en los specs
+(que eran fieles: "TP en la siguiente liquidez/POI", "BE a mitad del recorrido") sino en el diseño
+del backtest de este doc (§6): el eje "TP 2R fijo" ganó contra una mecanización POBRE del
+TP-liquidez, y el BE al 50 % quedó atado a ese 2R sintético → **44 % de trades en BE** (hiperactivo,
+no fiel). **Pre-registro completo del Ciclo 2 en `CYCLE-2-PREREG.md`:** TP estructural (primer
+POI/liquidez opuesto causal) + BE fiel (50 % del recorrido al target real) + pools de liquidez para
+el sweep (equal highs/lows + swings vigentes). 4 combinaciones, calibración/held-out intactos,
+benchmark = candidato actual, criterio de reemplazo fijado ANTES de correr. El candidato actual
+sigue CONGELADO y vigente salvo que el C2 lo supere bajo esos criterios.
+
 ## 9. Honestidad / qué esperar
 
 - El **modo A (riesgo)** probablemente pierda — es el control del experimento.

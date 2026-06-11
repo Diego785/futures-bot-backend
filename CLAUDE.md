@@ -89,9 +89,15 @@ adverse selection). v2 mueve la decisión al humano y usa el software como ojos 
   Fix aplicado: id de intents C con dirección (anti-colisión del dedup). Gate #7 RE-REGISTRADO en
   `PAPER-TEST-SPEC.md` §4: 5 símbolos, evaluación a N≥50 (no calendario), paridad mecánica sim↔live +
   touched-vs-crossed. Detalle en `SMC-STRATEGY-MECHANICAL.md` §8 («Revisión independiente»).
-- SIGUIENTE (decisión 2026-06-10): **VISOR DE BACKTESTS antes del paper** — V.1 corrida registrada
-  (comando+paramsHash) + endpoints read-only · V.2 replay visual causal sobre la gráfica (cursor vela a
-  vela, posiciones LONG/SHORT, porqué causal) → auditoría visual del usuario (GO/NO-GO) → P.2–P.4.
+- **Visor de backtests ✅ (V.1+V.2+V.3, commits 5dad0e0/7633edf/+)**: corridas registradas
+  reproducibles + replay visual CAUSAL + claridad total (niveles/fees, contexto SMC OBs/liquidez,
+  embudo). El usuario AUDITÓ y detectó: BE hiperactivo (44 %), TP 2R no fiel, pocas entradas.
+- **Ciclo 2 PRE-REGISTRADO (`docs/CYCLE-2-PREREG.md`, 2026-06-10):** con la transcripción del V1
+  (`docs/transcripts/`) se confirmó que los specs eran fieles y la desviación nació en el eje del
+  backtest (TP 2R + BE atado a él). C2 = TP estructural + BE fiel + pools de liquidez; 4 combinaciones,
+  calibración/held-out, benchmark = candidato actual congelado, criterio de reemplazo pre-fijado.
+- SIGUIENTE: aprobar el pre-registro → C2.a (pools) → C2.b (TP estructural) → C2.c/d (validación y
+  veredicto) → gate #7 (paper-test por N≥50, 5 símbolos) con el candidato que sobreviva.
 
 ## Documentación (fuente de verdad — leer antes de codear)
 - `docs/PRODUCT-VISION.md` — **EL NORTE**: objetivo final (bot rentable y autónomo) + qué debe poder VER el usuario (dashboard en vivo + historial/reportes + replay visual de backtests). El "para qué" innegociable
