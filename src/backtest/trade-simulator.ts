@@ -48,6 +48,9 @@ export interface IntentContext {
   sweptSwingTime?: number; // gatillo C: openTime de la vela del swing barrido
 }
 
+// De dónde salió el TP del intent (Ciclo 2): el visor lo muestra y el análisis cuenta fallbacks.
+export type TpSource = 'fixedR' | 'liquidity' | 'structural-ob' | 'structural-liq' | 'fallbackFixedR';
+
 // Intención de trade emitida por el generador de señales (gatillo A/B/C). Precios ABSOLUTOS.
 export interface TradeIntent {
   id: string;
@@ -60,6 +63,7 @@ export interface TradeIntent {
   takeProfit: number; // TP
   invalidationPrice?: number; // pendiente: si el cuerpo CIERRA más allá (en contra) → cancelar
   cancelBeyond?: number; // pendiente: si el precio se ALEJA hasta aquí sin fill → cancelar (se fue sin nosotros)
+  tpSource?: TpSource; // procedencia del TP (informativo; el simulador no lo usa)
   context?: IntentContext; // porqué causal (visor/paper); ignorado por el simulador
 }
 

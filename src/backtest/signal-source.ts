@@ -17,16 +17,29 @@
 
 import {
   detectOrderBlocks,
+  computeStateTimeline,
   type BotOb,
   type ObCandle,
+  type ObDirection,
 } from '../bot-analysis/ob.detector';
 import { detectSweeps } from '../bot-analysis/sweep.detector';
 import { detectLiquidity, DEFAULT_LIQ_PARAMS, type BotLiquidity } from '../bot-analysis/liquidity.detector';
 import { biasAt, type BiasPoint } from './htf-bias';
-import type { IntentContext, TradeDirection, TradeIntent } from './trade-simulator';
+import type { IntentContext, TpSource, TradeDirection, TradeIntent } from './trade-simulator';
 
 export type Gatillo = 'A' | 'B' | 'C';
-export type TpRule = 'fixedR' | 'liquidity';
+// 'fixedR' = 2R sintético (candidato congelado) · 'liquidity' = nivel de liquidez opuesto (Fase D)
+// · 'structural' = Ciclo 2 (CYCLE-2-PREREG Eje 1): el target del VIDEO — el más cercano entre el
+//   OB OPUESTO vigente (no invalidado a la señal) y la liquidez opuesta no barrida.
+export type TpRule = 'fixedR' | 'liquidity' | 'structural';
+
+// Target estructural derivado de un OB (causal): proximal = el borde que el precio toca primero.
+export interface ObTargetInfo {
+  direction: ObDirection; // bearish = oferta (target de LONGs) · bullish = demanda (target de SHORTs)
+  proximal: number; // bearish → obLow · bullish → obHigh
+  confirmedAtTime: number; // conocido desde aquí
+  invalidatedAt: number | null; // muerto desde aquí (cuerpo cruzó el distal)
+}
 
 // Señal candidata DESCARTADA y su porqué (para el visor/auditoría: el "porqué NO entró" importa tanto
 // como el porqué sí). 'badZone' = zona/riesgo degenerado · 'minStop' = stop micro (fee-aware) ·
@@ -105,6 +118,41 @@ function nearestLiquidityTp(
   return best;
 }
 
+/**
+ * TP ESTRUCTURAL (Ciclo 2): el más cercano, en la dirección del trade, entre (a) el borde proximal
+ * del OB OPUESTO vigente a la señal (confirmado y no invalidado — causal vía timeline) y (b) la
+ * liquidez opuesta no barrida. Es el target del video: *"mi take profit está en el order block de
+ * la parte alta… si sigo esperando más arriba pierdo mi entrada"*. Exportada para tests puros.
+ */
+export function resolveStructuralTp(
+  direction: TradeDirection,
+  entry: number,
+  signalBarTime: number,
+  signalIdx: number,
+  obTargets: ObTargetInfo[],
+  liqs: BotLiquidity[],
+  cfg: SignalConfig,
+  idxOfTime: Map<number, number>,
+): { price: number; source: 'structural-ob' | 'structural-liq' } | null {
+  const wantDir: ObDirection = direction === 'LONG' ? 'bearish' : 'bullish';
+  let best: { price: number; source: 'structural-ob' | 'structural-liq' } | null = null;
+  for (const t of obTargets) {
+    if (t.direction !== wantDir) continue;
+    if (t.confirmedAtTime > signalBarTime) continue; // aún no se conocía
+    if (t.invalidatedAt != null && t.invalidatedAt <= signalBarTime) continue; // ya estaba muerto
+    const beyond = direction === 'LONG' ? t.proximal > entry : t.proximal < entry;
+    if (!beyond) continue;
+    if (best == null || Math.abs(t.proximal - entry) < Math.abs(best.price - entry)) {
+      best = { price: t.proximal, source: 'structural-ob' };
+    }
+  }
+  const liq = nearestLiquidityTp(direction, entry, signalBarTime, signalIdx, liqs, cfg, idxOfTime);
+  if (liq != null && (best == null || Math.abs(liq - entry) < Math.abs(best.price - entry))) {
+    best = { price: liq, source: 'structural-liq' };
+  }
+  return best;
+}
+
 function resolveTp(
   direction: TradeDirection,
   entry: number,
@@ -112,14 +160,19 @@ function resolveTp(
   signalBarTime: number,
   signalIdx: number,
   liqs: BotLiquidity[],
+  obTargets: ObTargetInfo[],
   cfg: SignalConfig,
   idxOfTime: Map<number, number>,
-): number {
+): { price: number; source: TpSource } {
   const sign = direction === 'LONG' ? 1 : -1;
   const fixed = entry + sign * cfg.rMultipleTp * risk;
-  if (cfg.tpRule === 'fixedR') return fixed;
+  if (cfg.tpRule === 'fixedR') return { price: fixed, source: 'fixedR' };
+  if (cfg.tpRule === 'structural') {
+    const st = resolveStructuralTp(direction, entry, signalBarTime, signalIdx, obTargets, liqs, cfg, idxOfTime);
+    return st ?? { price: fixed, source: 'fallbackFixedR' }; // sin POI/liquidez vigente → 2R etiquetado
+  }
   const liq = nearestLiquidityTp(direction, entry, signalBarTime, signalIdx, liqs, cfg, idxOfTime);
-  return liq ?? fixed; // sin liquidez válida → fallback a R fijo
+  return liq != null ? { price: liq, source: 'liquidity' } : { price: fixed, source: 'fallbackFixedR' };
 }
 
 // ─────────────────────────── Intent ───────────────────────────
@@ -141,6 +194,7 @@ function buildIntent(
   zoneLow: number,
   zoneHigh: number,
   liqs: BotLiquidity[],
+  obTargets: ObTargetInfo[],
   cfg: SignalConfig,
   idxOfTime: Map<number, number>,
   extraContext: Partial<IntentContext> = {},
@@ -158,8 +212,8 @@ function buildIntent(
   // Filtro fee-aware: descarta stops micro donde el fee domina la R. Para que el coste round-trip
   // ≤ ~25 % del riesgo con fee 0.05 %/lado, minStopPct ≳ 8×fee ≈ 0.4 %.
   if (cfg.minStopPct > 0 && risk < cfg.minStopPct * entry) return { rejectReason: 'minStop' };
-  const takeProfit = resolveTp(direction, entry, risk, signalBarTime, signalIdx, liqs, cfg, idxOfTime);
-  const rr = Math.abs(takeProfit - entry) / risk;
+  const tp = resolveTp(direction, entry, risk, signalBarTime, signalIdx, liqs, obTargets, cfg, idxOfTime);
+  const rr = Math.abs(tp.price - entry) / risk;
   if (rr < cfg.minRr) return { rejectReason: 'minRr' };
   const distal = direction === 'LONG' ? zoneLow : zoneHigh;
   return {
@@ -171,9 +225,10 @@ function buildIntent(
       signalBarTime,
       entry: round4(entry),
       stopLoss: round4(stopLoss),
-      takeProfit: round4(takeProfit),
+      takeProfit: round4(tp.price),
       invalidationPrice: round4(distal),
       cancelBeyond: round4(entry + sign * cfg.cancelDistanceFrac * range),
+      tpSource: tp.source,
       context: { zoneLow: round4(zoneLow), zoneHigh: round4(zoneHigh), ...extraContext },
     },
   };
@@ -213,13 +268,14 @@ function intentsA(
   tf: string,
   obs: BotOb[],
   liqs: BotLiquidity[],
+  obTargets: ObTargetInfo[],
   cfg: SignalConfig,
   idxOfTime: Map<number, number>,
 ): { intents: TradeIntent[]; rejects: IntentReject[] } {
   const out = { intents: [] as TradeIntent[], rejects: [] as IntentReject[] };
   for (const o of obs) {
     const direction: TradeDirection = o.direction === 'bullish' ? 'LONG' : 'SHORT';
-    const res = buildIntent(symbol, tf, `${o.originTime}`, direction, o.confirmedAtTime, o.obLow, o.obHigh, liqs, cfg, idxOfTime);
+    const res = buildIntent(symbol, tf, `${o.originTime}`, direction, o.confirmedAtTime, o.obLow, o.obHigh, liqs, obTargets, cfg, idxOfTime);
     collect(res, out, cfg, symbol, tf, `${o.originTime}`, direction, o.confirmedAtTime, o.obLow, o.obHigh);
   }
   return out;
@@ -243,6 +299,7 @@ function intentsB(
   obs: BotOb[],
   candles: ObCandle[],
   liqs: BotLiquidity[],
+  obTargets: ObTargetInfo[],
   cfg: SignalConfig,
   idxOfTime: Map<number, number>,
 ): { intents: TradeIntent[]; rejects: IntentReject[] } {
@@ -265,7 +322,7 @@ function intentsB(
     }
     if (!matched) continue;
     const direction: TradeDirection = conf.direction === 'bullish' ? 'LONG' : 'SHORT';
-    const res = buildIntent(symbol, tf, `${conf.originTime}`, direction, conf.confirmedAtTime, conf.obLow, conf.obHigh, liqs, cfg, idxOfTime);
+    const res = buildIntent(symbol, tf, `${conf.originTime}`, direction, conf.confirmedAtTime, conf.obLow, conf.obHigh, liqs, obTargets, cfg, idxOfTime);
     collect(res, out, cfg, symbol, tf, `${conf.originTime}`, direction, conf.confirmedAtTime, conf.obLow, conf.obHigh);
   }
   return out;
@@ -277,6 +334,7 @@ function intentsC(
   tf: string,
   candles: ObCandle[],
   liqs: BotLiquidity[],
+  obTargets: ObTargetInfo[],
   cfg: SignalConfig,
   idxOfTime: Map<number, number>,
 ): { intents: TradeIntent[]; rejects: IntentReject[] } {
@@ -290,7 +348,7 @@ function intentsC(
     // El id lleva la dirección: una misma vela puede barrer un swing high Y un swing low (dos
     // intents opuestos) y el dedup por id del paper-trading no debe colapsarlos.
     const suffix = `${s.sweepBarTime}_${direction === 'LONG' ? 'u' : 'd'}`;
-    const res = buildIntent(symbol, tf, suffix, direction, s.sweepBarTime, zoneLow, zoneHigh, liqs, cfg, idxOfTime, {
+    const res = buildIntent(symbol, tf, suffix, direction, s.sweepBarTime, zoneLow, zoneHigh, liqs, obTargets, cfg, idxOfTime, {
       sweptLevel: s.sweptLevel,
       wickExtreme: s.wickExtreme,
       sweptSwingTime: s.sweptSwingTime,
@@ -316,32 +374,51 @@ export function generateIntentsDetailed(
   const idxOfTime = new Map<number, number>();
   candles.forEach((c, i) => idxOfTime.set(c.openTime, i));
 
-  // Liquidez (solo si el TP la necesita): histórico completo, con barridos, sin filtros de distancia
+  // Liquidez (si el TP la necesita): histórico completo, con barridos, sin filtros de distancia
   // ni tope → el filtro causal lo aplica nearestLiquidityTp por intent.
-  const liqs: BotLiquidity[] =
-    cfg.tpRule === 'liquidity'
-      ? detectLiquidity(symbol, tf, candles, {
-          ...DEFAULT_LIQ_PARAMS,
-          swingLookback: cfg.swingLookback,
-          showSweptLiquidity: true,
-          maxDistanceFromPricePct: null,
-          maxLevels: Number.MAX_SAFE_INTEGER,
+  const needLiq = cfg.tpRule === 'liquidity' || cfg.tpRule === 'structural';
+  const liqs: BotLiquidity[] = needLiq
+    ? detectLiquidity(symbol, tf, candles, {
+        ...DEFAULT_LIQ_PARAMS,
+        swingLookback: cfg.swingLookback,
+        showSweptLiquidity: true,
+        maxDistanceFromPricePct: null,
+        maxLevels: Number.MAX_SAFE_INTEGER,
+      })
+    : [];
+
+  // OBs: una sola detección sirve a los gatillos A/B (zonas de entrada) y al TP estructural
+  // (targets opuestos con su línea de tiempo causal de invalidación).
+  const needObs = cfg.gatillo !== 'C' || cfg.tpRule === 'structural';
+  const obs: BotOb[] = needObs
+    ? detectOrderBlocks(symbol, tf, candles, {
+        swingLookback: cfg.swingLookback,
+        showLastBullish: Number.MAX_SAFE_INTEGER,
+        showLastBearish: Number.MAX_SAFE_INTEGER,
+      })
+    : [];
+  const obTargets: ObTargetInfo[] =
+    cfg.tpRule === 'structural'
+      ? obs.map((o) => {
+          const ci = idxOfTime.get(o.confirmedAtTime);
+          const tl = computeStateTimeline(candles, (ci ?? candles.length) + 1, o.direction, o.obLow, o.obHigh);
+          return {
+            direction: o.direction,
+            proximal: o.direction === 'bearish' ? o.obLow : o.obHigh,
+            confirmedAtTime: o.confirmedAtTime,
+            invalidatedAt: tl.invalidatedAt,
+          };
         })
       : [];
 
   let result: { intents: TradeIntent[]; rejects: IntentReject[] };
   if (cfg.gatillo === 'C') {
-    result = intentsC(symbol, tf, candles, liqs, cfg, idxOfTime);
+    result = intentsC(symbol, tf, candles, liqs, obTargets, cfg, idxOfTime);
   } else {
-    const obs = detectOrderBlocks(symbol, tf, candles, {
-      swingLookback: cfg.swingLookback,
-      showLastBullish: Number.MAX_SAFE_INTEGER,
-      showLastBearish: Number.MAX_SAFE_INTEGER,
-    });
     result =
       cfg.gatillo === 'A'
-        ? intentsA(symbol, tf, obs, liqs, cfg, idxOfTime)
-        : intentsB(symbol, tf, obs, candles, liqs, cfg, idxOfTime);
+        ? intentsA(symbol, tf, obs, liqs, obTargets, cfg, idxOfTime)
+        : intentsB(symbol, tf, obs, candles, liqs, obTargets, cfg, idxOfTime);
   }
 
   // Filtro de sesgo HTF (multi-TF, Capa 1): solo gatillos A FAVOR de la estructura del TF alto.

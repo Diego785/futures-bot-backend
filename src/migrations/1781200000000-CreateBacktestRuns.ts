@@ -57,6 +57,7 @@ export class CreateBacktestRuns1781200000000 implements MigrationInterface {
           { name: 'entry', type: 'double precision', isNullable: true },
           { name: 'stopLoss', type: 'double precision', isNullable: true },
           { name: 'takeProfit', type: 'double precision', isNullable: true },
+          { name: 'tpSource', type: 'varchar', length: '20', isNullable: true },
           { name: 'invalidationPrice', type: 'double precision', isNullable: true },
           { name: 'cancelBeyond', type: 'double precision', isNullable: true },
           { name: 'entryTime', type: 'bigint', isNullable: true },

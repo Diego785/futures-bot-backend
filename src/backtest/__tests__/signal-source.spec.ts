@@ -198,3 +198,78 @@ describe('generateIntentsDetailed — el porqué-no (rejects con razón)', () =>
     expect(simple).toEqual(detailed.intents);
   });
 });
+
+describe('TP estructural (Ciclo 2 — CYCLE-2-PREREG Eje 1)', () => {
+  const { resolveStructuralTp, DEFAULT_SIGNAL_CONFIG } =
+    jest.requireActual<typeof import('../signal-source')>('../signal-source');
+  const cfg = { ...DEFAULT_SIGNAL_CONFIG, swingLookback: 2 };
+  const target = (
+    direction: 'bullish' | 'bearish',
+    proximal: number,
+    confirmedAtTime: number,
+    invalidatedAt: number | null = null,
+  ) => ({ direction, proximal, confirmedAtTime, invalidatedAt });
+
+  it('elige el OB OPUESTO vigente más cercano (su borde proximal)', () => {
+    const obT = [target('bearish', 110, 0), target('bearish', 120, 0), target('bullish', 90, 0)];
+    const r = resolveStructuralTp('LONG', 100, 50, 5, obT, [], cfg, new Map());
+    expect(r).toEqual({ price: 110, source: 'structural-ob' });
+  });
+
+  it('descarta el OB invalidado ANTES de la señal y el confirmado DESPUÉS (causalidad)', () => {
+    const obT = [
+      target('bearish', 110, 0, 40), // invalidado en t40 ≤ señal t50 → muerto
+      target('bearish', 115, 60), // confirmado en t60 > señal t50 → aún no se conocía
+      target('bearish', 125, 0), // vigente
+    ];
+    const r = resolveStructuralTp('LONG', 100, 50, 5, obT, [], cfg, new Map());
+    expect(r).toEqual({ price: 125, source: 'structural-ob' });
+  });
+
+  it('la liquidez opuesta gana si está más cerca que el OB', () => {
+    const liq = {
+      id: 'liq_x',
+      symbol: 'BTCUSDT',
+      tf: '15m',
+      type: 'swingHigh' as const,
+      side: 'buyside' as const,
+      level: 105,
+      candleTimes: [0],
+      touches: 1,
+      swept: false,
+      sweptAtTime: null,
+      distancePct: 0,
+      timeStart: 0,
+    };
+    const idx = new Map([[0, 0]]);
+    const r = resolveStructuralTp('LONG', 100, 50, 5, [target('bearish', 110, 0)], [liq], cfg, idx);
+    expect(r).toEqual({ price: 105, source: 'structural-liq' });
+  });
+
+  it('e2e: sin OB ni liquidez vigente → fallback 2R ETIQUETADO (tpSource fallbackFixedR)', () => {
+    const intents = generateIntents('BTCUSDT', '15m', C_SERIES, { gatillo: 'C', tpRule: 'structural', ...LB2 });
+    expect(intents).toHaveLength(1);
+    const it = intents[0];
+    const risk = Math.abs(it.entry - it.stopLoss);
+    expect(it.takeProfit).toBeCloseTo(it.entry + 2 * risk, 6);
+    expect(it.tpSource).toBe('fallbackFixedR');
+  });
+
+  it('e2e: con liquidez buyside confirmada encima, el TP structural apunta a ella', () => {
+    // Swing high 114 (i2, confirmado en i4) = liquidez buyside · swing low 95 (i3, confirmado en
+    // i5) · i6 barre el low (90 < 95) y reclama (102 > 95) → LONG con TP en la liquidez (114).
+    const series: ObCandle[] = [
+      oc(0, 105, 110, 100, 105),
+      oc(1, 104, 109, 101, 104),
+      oc(2, 103, 114, 100.5, 103), // swing high 114
+      oc(3, 102, 107, 95, 102), // swing low 95
+      oc(4, 101, 106, 100, 101), // confirma el high
+      oc(5, 101, 104, 98, 102), // confirma el low
+      oc(6, 102, 103, 90, 102), // sweep + reclaim → señal LONG
+    ];
+    const intents = generateIntents('BTCUSDT', '15m', series, { gatillo: 'C', tpRule: 'structural', ...LB2 });
+    expect(intents).toHaveLength(1);
+    expect(intents[0].tpSource).toBe('structural-liq');
+    expect(intents[0].takeProfit).toBeCloseTo(114, 6);
+  });
+});

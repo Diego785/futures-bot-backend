@@ -60,6 +60,7 @@ export interface BacktestSignal {
   entry: number | null;
   stopLoss: number | null;
   takeProfit: number | null;
+  tpSource: string | null; // fixedR · liquidity · structural-ob · structural-liq · fallbackFixedR
   invalidationPrice: number | null;
   cancelBeyond: number | null;
   entryTime: number | null;

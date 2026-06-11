@@ -43,6 +43,7 @@ export interface BacktestSignalRow {
   entry: number | null;
   stopLoss: number | null;
   takeProfit: number | null;
+  tpSource: string | null;
   invalidationPrice: number | null;
   cancelBeyond: number | null;
   entryTime: number | null;
@@ -68,6 +69,7 @@ const EMPTY_LEVELS = {
   entry: null,
   stopLoss: null,
   takeProfit: null,
+  tpSource: null,
   invalidationPrice: null,
   cancelBeyond: null,
 } as const;
@@ -114,6 +116,7 @@ export function buildSignalRows(
       entry: it.entry,
       stopLoss: it.stopLoss,
       takeProfit: it.takeProfit,
+      tpSource: it.tpSource ?? null,
       invalidationPrice: it.invalidationPrice ?? null,
       cancelBeyond: it.cancelBeyond ?? null,
     };

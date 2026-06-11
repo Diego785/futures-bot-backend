@@ -61,6 +61,9 @@ export class BacktestSignalEntity {
   @Column({ type: 'double precision', nullable: true })
   takeProfit: number | null;
 
+  @Column({ type: 'varchar', length: 20, nullable: true })
+  tpSource: string | null; // fixedR · liquidity · structural-ob · structural-liq · fallbackFixedR
+
   @Column({ type: 'double precision', nullable: true })
   invalidationPrice: number | null;
 
