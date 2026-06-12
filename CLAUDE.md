@@ -103,9 +103,16 @@ adverse selection). v2 mueve la decisión al humano y usa el software como ojos 
   del mentor; **2R fijo = sustituto robusto** (2ª confirmación tras Fase D). Pools refutados (peores
   y con menos N). Por §5 del prereg: **el candidato CONGELADO sigue vigente** → paper-test tal cual.
   Flags `--tp structural` y `--pools` quedan como herramientas, NO default.
+- **Barrido OOS FRESCO ✅ (2026-06-12): el edge sobrevive su prueba más dura.** 5 símbolos jamás
+  mirados (DOGE/ADA/LINK/AVAX/DOT, backfill 2022-26) con el candidato congelado tal cual:
+  **+105R sobre N=1.137 (pooled +0.092R), 4/5 no-negativos** (DOGE +0.191/83 % el mejor; DOT −0.02).
+  Universo completo: **10 símbolos, N=1.959, ≈+214R, pooled +0.109R, 9/10 no-negativos.** Corridas
+  registradas en el visor. Visor V.4 ✅: panel de ESTADÍSTICAS del run (¿es rentable? totalR/
+  expectancy en grande, salidas, embudo, equity con años, por dirección/año) + tpSource en etiquetas.
 - SIGUIENTE: **P.2 del paper-test** (entidad paper_trades + cableado live + WS, con las condiciones
   del gate re-registrado: equivalencia ventana-vs-full, rehidratación, touched-vs-crossed) → P.3
-  dashboard (reusa la capa visual del replay) → P.4 deploy + reloj por N≥50 en 5 símbolos.
+  dashboard (reusa la capa visual del replay) → P.4 deploy + reloj por N≥50. **Propuesto: ampliar el
+  universo del paper de 5 → 10 símbolos ANTES de encender (anexo pre-arranque en PAPER-TEST-SPEC).**
 
 ## Documentación (fuente de verdad — leer antes de codear)
 - `docs/PRODUCT-VISION.md` — **EL NORTE**: objetivo final (bot rentable y autónomo) + qué debe poder VER el usuario (dashboard en vivo + historial/reportes + replay visual de backtests). El "para qué" innegociable

@@ -362,6 +362,28 @@ la base ganó por paliza (+89.1R vs −15.1/−39.7/−159.9): el TP estructural
 del overfit) y los pools refutados. **2ª confirmación de que el 2R fijo es el sustituto robusto de la
 discrecionalidad del target** (1ª: Fase D). El candidato congelado va al gate #7 tal cual.
 
+### Barrido OOS FRESCO — 5 símbolos jamás mirados (2026-06-12): el edge sobrevive su prueba más dura
+A pedido del usuario (más frecuencia + validación), se backfillearon 5 símbolos que JAMÁS influyeron
+en ninguna decisión de diseño (DOGE/ADA/LINK/AVAX/DOT, 155k velas 15m + 4h c/u desde 2022) y se corrió
+el candidato CONGELADO tal cual (+ `--htf 4h`), single-run registrado + walk-forward 12 ventanas:
+
+| símbolo | pooled | % ventanas | N | totalR |
+|---|---|---|---|---|
+| DOGE | **+0.191R** | 83.3 % | 220 | +41.9 |
+| ADA | +0.149R | 50.0 % | 222 | +33.0 |
+| LINK | +0.139R | 66.7 % | 240 | +33.7 |
+| AVAX | +0.005R | 33.3 % | 247 | +1.2 |
+| DOT | −0.023R | 41.7 % | 208 | −4.8 |
+
+> - **Agregado fresco: +105.0R sobre N=1.137 → pooled +0.092R** (4/5 no-negativos; 3/5 claramente
+>   positivos). Es **evidencia 100 % out-of-sample** — ningún parámetro vio nunca estos símbolos —
+>   y replica el patrón del universo original (media positiva débil, dispersión por símbolo).
+> - **Universo completo: 10 símbolos, N=1.959, ≈ +214R, pooled ≈ +0.109R, 9/10 no-negativos.**
+>   La hipótesis "edge débil real" recibió su confirmación más fuerte hasta la fecha.
+> - Implicación para el gate #7: con 10 símbolos en shadow la frecuencia ≈ se duplica
+>   (~19-20 trades/mes estimado) → N≥50 se alcanza en ~2,5-3 meses. Propuesto ampliar el universo
+>   del paper de 5 → 10 símbolos ANTES de encenderlo (anexo pre-arranque, no cambio a mitad).
+
 ## 9. Honestidad / qué esperar
 
 - El **modo A (riesgo)** probablemente pierda — es el control del experimento.
