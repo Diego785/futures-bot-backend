@@ -416,7 +416,7 @@ export function BacktestReplay() {
             )}
             <div className="ri-grid">
               <div><span className="lv-label">SL</span><span className="lv-val sl">{focused.stopLoss ?? '—'}</span></div>
-              <div><span className="lv-label">TP (2R)</span><span className="lv-val tp">{focused.takeProfit ?? '—'}</span></div>
+              <div><span className="lv-label">TP{focused.tpSource ? ` (${focused.tpSource})` : ''}</span><span className="lv-val tp">{focused.takeProfit ?? '—'}</span></div>
               <div><span className="lv-label">riesgo</span><span className="lv-val">{focused.entry != null && focused.stopLoss != null ? Math.abs(focused.entry - focused.stopLoss).toFixed(2) : '—'}</span></div>
               <div><span className="lv-label">BE</span><span className="lv-val">{focused.movedToBE ? 'armado' : 'no'}</span></div>
             </div>
@@ -432,7 +432,7 @@ export function BacktestReplay() {
               <tr><td>zona de reacción</td><td>{focused.zoneLow} ↔ {focused.zoneHigh}</td></tr>
               {focused.entry != null && <tr><td>entry (límite CE)</td><td>{focused.entry}</td></tr>}
               {focused.stopLoss != null && <tr><td>SL inicial</td><td>{focused.stopLoss}</td></tr>}
-              {focused.takeProfit != null && <tr><td>TP (2R)</td><td>{focused.takeProfit}</td></tr>}
+              {focused.takeProfit != null && <tr><td>TP{focused.tpSource ? ` (${focused.tpSource})` : ''}</td><td>{focused.takeProfit}</td></tr>}
               {focused.cancelBeyond != null && <tr><td>cancelBeyond</td><td>{focused.cancelBeyond}</td></tr>}
             </tbody>
           </table>

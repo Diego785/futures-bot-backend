@@ -228,7 +228,7 @@ export function ReplayChart({ candles, cursorIdx, tfMs, signals, focused, contex
         } else {
           add(focused.entry, REPLAY_COLORS.entry, 'entry (límite CE)');
           add(focused.stopLoss, REPLAY_COLORS.sl, 'SL inicial');
-          add(focused.takeProfit, REPLAY_COLORS.tp, 'TP 2R');
+          add(focused.takeProfit, REPLAY_COLORS.tp, focused.tpSource ? `TP ${focused.tpSource}` : 'TP');
           add(focused.sweptLevel, REPLAY_COLORS.swept, 'liquidez barrida', true);
           if (phase === 'pending') add(focused.cancelBeyond, REPLAY_COLORS.cancel, 'cancelBeyond', true);
         }
