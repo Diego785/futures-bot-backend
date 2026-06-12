@@ -3,6 +3,7 @@ import { AppShell } from '../components/layout/AppShell';
 import { ReplayChart } from '../components/replay/ReplayChart';
 import { ReplayControls } from '../components/replay/ReplayControls';
 import { EquitySparkline } from '../components/replay/EquitySparkline';
+import { RunStats } from '../components/replay/RunStats';
 import { fetchBacktestRuns, fetchBacktestRun } from '../features/backtest-viewer/backtestRuns.api';
 import { fetchReplayContext } from '../features/backtest-viewer/backtestContext.api';
 import type { ReplayContextResponse } from '../features/backtest-viewer/backtestContext.types';
@@ -165,6 +166,15 @@ export function BacktestReplay() {
     if (i >= 0 && i < listed.length) focusSignal(listed[i]);
   };
 
+  // Volver a la vista de ESTADÍSTICAS del run (V.4): sin señal enfocada, el centro es el resumen.
+  const showStats = () => {
+    setFocusedId(null);
+    setPlaying(false);
+    setCandles([]);
+    setContext(null);
+    setWindowStatus('idle');
+  };
+
   // ── Play: avanza por velas cerradas a `speed` velas/s ──
   const maxIdx = Math.max(candles.length - 1, 0);
   useEffect(() => {
@@ -245,6 +255,9 @@ export function BacktestReplay() {
           {funnel.rejected} descartes
         </span>
       )}
+      <button className="rt-stats-btn" onClick={showStats} title="Estadísticas generales del run (¿es rentable?)">
+        📊 estadísticas
+      </button>
       <label className="rt-toggle" title="Order Blocks re-derivados causalmente (contexto)">
         <input type="checkbox" checked={showObs} onChange={() => setShowObs((v) => !v)} /> OBs
       </label>
@@ -319,7 +332,20 @@ export function BacktestReplay() {
   } else if (!run) {
     center = <div className="state state-loading">Cargando corridas…</div>;
   } else if (windowStatus === 'idle') {
-    center = <div className="state">Elige una señal de la lista para reproducirla sobre la gráfica.</div>;
+    // Sin señal enfocada: ESTADÍSTICAS del run (la respuesta a "¿es rentable?") — V.4.
+    center = (
+      <div className="rs-scroll">
+        <RunStats
+          run={run}
+          signals={signals}
+          equity={equity}
+          onPickTrade={(intentId) => {
+            const s = signals.find((x) => x.intentId === intentId);
+            if (s) focusSignal(s);
+          }}
+        />
+      </div>
+    );
   } else if (windowStatus === 'loading') {
     center = <div className="state state-loading">Cargando ventana de velas…</div>;
   } else if (windowStatus === 'error') {
