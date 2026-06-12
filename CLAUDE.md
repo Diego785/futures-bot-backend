@@ -109,6 +109,13 @@ adverse selection). v2 mueve la decisión al humano y usa el software como ojos 
   Universo completo: **10 símbolos, N=1.959, ≈+214R, pooled +0.109R, 9/10 no-negativos.** Corridas
   registradas en el visor. Visor V.4 ✅: panel de ESTADÍSTICAS del run (¿es rentable? totalR/
   expectancy en grande, salidas, embudo, equity con años, por dirección/año) + tpSource en etiquetas.
+- **Transcripción V2 verificada ✅ (2026-06-12, `transcripts/VIDEO-2-TRANSCRIPT.md`):** la
+  mecanización es FIEL — riesgo=gatillo A, confirmación=gatillo B, "ni ganaste ni perdiste"=
+  cancelBeyond, entrada CE=la del mentor. **Sin parciales TP1/TP2 en ninguna fuente** (los "3
+  niveles" son entradas) → pendiente cerrado. Única pieza mayor restante: refinamiento multi-TF
+  (eventual C3 post-paper, prereg propio). V.4 ✅ panel de estadísticas + selector etiquetado
+  (⭐ candidato / 🧪 experimento). Reporte de validación entregado: candidato = N=1.965, +216R,
+  pooled +0.110R (IC95 [+0.06,+0.16]), proyección ~+1 %/mes a riesgo 0.5 %.
 - SIGUIENTE: **P.2 del paper-test** (entidad paper_trades + cableado live + WS, con las condiciones
   del gate re-registrado: equivalencia ventana-vs-full, rehidratación, touched-vs-crossed) → P.3
   dashboard (reusa la capa visual del replay) → P.4 deploy + reloj por N≥50. **Propuesto: ampliar el

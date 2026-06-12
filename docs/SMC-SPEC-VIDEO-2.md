@@ -5,6 +5,33 @@
 > Regla: nada marcado 🔴 se implementa con valores fijos hasta validarlo. Todo parametrizable.
 > Habrá más videos (3, 4…) que afinarán/debatirán esta misma estrategia: versionar, no reescribir.
 
+> ## ✅ VERIFICADO contra la transcripción cruda (2026-06-12, `transcripts/VIDEO-2-TRANSCRIPT.md`)
+> El usuario aportó la transcripción completa; cotejo regla por regla contra lo construido:
+> - **Entrada por riesgo** = dejar la límite programada en el POI sin esperar reacción (*"estamos
+>   tomando la decisión nosotros ANTES… corriendo el riesgo de que rompa ese punto"*) → **= gatillo A**
+>   ✓ fiel (y medido: pierde, como el propio video advierte — es el control del experimento).
+> - **Entrada por confirmación** = *"marco el PRÓXIMO punto de interés que SE GENERÓ DESDE esta
+>   entrada… no quiero nada que ver con ese mismo bloque"* → **= gatillo B** (OB nuevo tras mitigar
+>   la madre) ✓ fiel en esencia.
+> - **"Ni ganaste ni perdiste"** (orden no alcanzada → expira sin P&L, reprogramar sin estrés) →
+>   **= `cancelBeyond`/cancelada del simulador** ✓ fiel (cita literal en el código).
+> - **3 niveles de entrada** (alta/media/baja) y dato NUEVO: *"la estrategia smart money NO contempla
+>   esta línea media… pero yo particularmente sí la contemplo"* → la **entrada CE es la del MENTOR**
+>   (refuerza nuestra elección de la central como entrada del candidato) ✓.
+> - **Refinamiento multi-TF** (POI 1h → afinar en 15m/5m, piso 5m; *"al que mucho refina… alta
+>   probabilidad de que los que sí se den sean ganadores"*) → **NO mecanizado** (consciente, §7).
+>   Matiz: el gatillo C en 15m con SL bajo la mecha del sweep ya produce stops del tamaño "refinado"
+>   (0.2-0.5 % — los ejemplos del video usan 0.22 %/0.5 %) → capturamos el EFECTO por otra vía.
+>   El refinamiento POI-HTF→entrada-LTF queda como LA pieza mayor restante (eventual C3 post-paper,
+>   con pre-registro propio).
+> - **SIN parciales TP1/TP2**: los "3 niveles" del video son ENTRADAS, no TPs escalonados; ningún
+>   video trae parciales → se cierra el pendiente de `CYCLE-2-PREREG.md` §6 (no hay base en las
+>   fuentes para mecanizar parciales).
+> - **Volumen** como señal de interés: mencionado, NO mecanizado (la fuerza usa rango/cuerpo; el
+>   volumen sigue opcional 🔴 en `SMC-SPEC-VIDEO-1.md` §1). Menor.
+> - Bonus: el video respalda nuestro camino — *"practique constantemente, ojo, NO con dinero real…
+>   cuentas demo"* = exactamente backtest → paper-test antes de cualquier euro (Regla Cero).
+
 > **Lectura de una línea:** el Video 1 enseñó a DIBUJAR zonas; el Video 2 enseña a ENTRAR a ellas.
 > Casi todo su aporte va a `ENTRY-EDGE-SPEC.md`, no a `SMC-SPEC-VIDEO-1.md`.
 

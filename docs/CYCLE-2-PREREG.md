@@ -119,6 +119,10 @@ las corridas canónicas y el gate #7 corre con él (mismos términos: N≥50, 5 
 Parciales TP1/TP2 (el Video 1 usa UN target; esperar transcripción del Video 2 antes de
 pre-registrar parciales) · inducement · premium/discount · killzones · filtro de régimen
 ATR/lateralidad · multi-TF completo (POI HTF + gatillo LTF) · Breaker como señal.
+> **Actualización 2026-06-12:** transcripción del Video 2 verificada (`transcripts/`): los "3
+> niveles" son ENTRADAS (alta/media/baja), NO take-profits escalonados — **ningún video trae
+> parciales** → el pendiente se CIERRA sin acción (no hay base en las fuentes). La única pieza
+> mayor restante de los videos es el **refinamiento multi-TF del ingreso** (eventual C3 post-paper).
 
 ## 7. Plan de slices (cada uno: build + tests + aprobación)
 - **C2.a** — detector de pools (`pools` en `sweep.detector` o módulo propio) + tests causales
