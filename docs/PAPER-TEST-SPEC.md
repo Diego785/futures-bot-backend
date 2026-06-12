@@ -36,7 +36,7 @@ Se prueba EXACTAMENTE el candidato validado en backtest, **sin re-tunear** duran
 | `minStopPct` (fee-aware) | 0.3 % |
 | Fees | maker 0.02 % / taker 0.05 % |
 | Sesgo HTF | 4H (BOS por cuerpo); LONG solo si 4H alcista, SHORT si bajista |
-| Símbolos | **los 5 del barrido: BTC, ETH, XRP, SOL, BNB** (revisión 2026-06-10: en shadow los símbolos extra son gratis y el N manda — BTC solo genera ~5 trades/año hoy; con 5 símbolos ≈ 9.5/mes. El veredicto por símbolo se segmenta igual) |
+| Símbolos | **10 (anexo PRE-arranque 2026-06-12):** BTC, ETH, XRP, SOL, BNB + **DOGE, ADA, LINK, AVAX, DOT** — los 5 nuevos pasaron el barrido OOS fresco con el candidato congelado (+105R/N=1.137, 4/5 no-negativos) y duplican la frecuencia (~19-20 trades/mes → N≥50 en ~2,5-3 meses). Anexado ANTES de encender el reloj, no a mitad. El veredicto se segmenta por símbolo |
 
 ## 2. Arquitectura (reutiliza el motor de backtest)
 
@@ -138,11 +138,19 @@ no se invalida (datos persisten).
   (comando + paramsHash, reproducible) + replay visual causal sobre la gráfica (`PRODUCT-VISION.md`
   §3.3) para que el usuario audite la mecanización trade a trade ANTES de comprometer meses de paper.
   La capa visual de posiciones (entry/SL/TP/estado) se reutiliza después en P.3.
-- **P.2 — persistencia + cableado live:** entidad `paper_trades` (migración) + suscripción al stream de
-  velas cerradas (market-data) + eventos paper por WS. Read-only. **Condiciones de la revisión:** test
-  de equivalencia ventana-vs-historial-completo (los swings del borde y el estado `prevSwept` pueden
-  divergir si se ventanea el buffer) + rehidratación tras restart (reconstruir `seen`/posiciones desde
-  DB; la idempotencia por `(symbol, signalTime, direction)` frena duplicados) + touched-vs-crossed.
+- **P.2 — persistencia + cableado live ✅ (2026-06-12):** módulo `src/paper-trading/` completo:
+  entidad `paper_trades` (migración; PK intentId + único `(symbol, signalBarTime, direction)`) ·
+  `PaperTradingService` con **la DB como cola ordenada y cursor por símbolo** (el tick del WS solo
+  despierta; los huecos reconciliados por REST nunca se pierden) · candidato CONGELADO en
+  `frozen-candidate.ts` con paramsHash == corridas canónicas (trazabilidad sim↔live) · bias 4H
+  causal refrescado al cierre 4h · **rehidratación = el mismo dren** (ventana ampliada hasta la señal
+  viva más vieja; upsert idempotente absorbe lo ya registrado; sin eventos del pasado) · ventana
+  segura del engine (3.000 velas; nunca recorta velas que una posición viva necesita) ·
+  **touched-vs-crossed** persistido como penetraciones (`entryPenetration`/`tpPenetration`) ·
+  gateway WS `/paper` (`paper.position`) · `GET /api/paper/status|trades` · flag `PAPER_TRADING`
+  (default false). **Condiciones cumplidas:** test jest de equivalencia ventanada + recorte seguro;
+  `verify-equivalence` (CLI read-only) compara el engine ventaneado vela a vela contra el backtest
+  full-history sobre años reales — el chequeo de PARIDAD del gate, re-ejecutable en cualquier momento.
 - **P.3 — dashboard de observabilidad:** endpoints `/api/paper/*` + capa frontend (posiciones con
   entry/SL/TP en la gráfica, panel de señales/abiertas, historial, el PORQUÉ causal, journal) + live por WS.
 - **P.4 — deploy + arranque:** v2 en el servidor (coexistencia/cutover con backups) + reloj de 1–3 meses.

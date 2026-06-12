@@ -11,6 +11,7 @@ import { MarketDataModule } from './market-data/market-data.module';
 import { ManualMarksModule } from './manual-marks/manual-marks.module';
 import { BotAnalysisModule } from './bot-analysis/bot-analysis.module';
 import { BacktestViewerModule } from './backtest-viewer/backtest-viewer.module';
+import { PaperTradingModule } from './paper-trading/paper-trading.module';
 
 // TypeORM se activa SOLO si DB_ENABLED=true. En el skeleton v2 todavía no hay
 // entidades; conectar a Postgres no aporta nada y bloquearía el arranque local
@@ -58,6 +59,7 @@ const DB_ENABLED = process.env.DB_ENABLED?.trim() === 'true';
           ManualMarksModule,
           BotAnalysisModule,
           BacktestViewerModule,
+          PaperTradingModule,
         ]
       : []),
 

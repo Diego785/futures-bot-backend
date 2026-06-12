@@ -116,10 +116,18 @@ adverse selection). v2 mueve la decisión al humano y usa el software como ojos 
   (eventual C3 post-paper, prereg propio). V.4 ✅ panel de estadísticas + selector etiquetado
   (⭐ candidato / 🧪 experimento). Reporte de validación entregado: candidato = N=1.965, +216R,
   pooled +0.110R (IC95 [+0.06,+0.16]), proyección ~+1 %/mes a riesgo 0.5 %.
-- SIGUIENTE: **P.2 del paper-test** (entidad paper_trades + cableado live + WS, con las condiciones
-  del gate re-registrado: equivalencia ventana-vs-full, rehidratación, touched-vs-crossed) → P.3
-  dashboard (reusa la capa visual del replay) → P.4 deploy + reloj por N≥50. **Propuesto: ampliar el
-  universo del paper de 5 → 10 símbolos ANTES de encender (anexo pre-arranque en PAPER-TEST-SPEC).**
+- **P.2 ✅ (2026-06-12): paper-trading LIVE construido** (`src/paper-trading/`, PAPER-TEST-SPEC §7).
+  Universo ampliado a **10 símbolos** (anexo pre-arranque). Arquitectura: **DB como cola ordenada +
+  cursor por símbolo** (el tick del WS solo despierta; huecos reconciliados nunca se pierden;
+  rehidratación = el mismo dren). Candidato CONGELADO en `frozen-candidate.ts` (paramsHash ==
+  corridas canónicas). Entidad `paper_trades` (PK intentId + único symbol/signalBarTime/direction) ·
+  touched-vs-crossed persistido (penetraciones) · ventana segura del engine (3k velas; lote ==
+  vela-a-vela probado) · WS `/paper` · `GET /api/paper/status|trades` · flag `PAPER_TRADING`.
+  **Equivalencia ventana-vs-full verificada sobre años reales: BTC 110/0 · SOL 239/0 divergencias**
+  (`node dist/paper-trading/verify-equivalence.js` = el chequeo de PARIDAD del gate, re-ejecutable).
+- SIGUIENTE: **P.3** dashboard del paper (pestaña Paper: stats en vivo estilo V.4 + historial +
+  posiciones por WS, reusa la capa visual del replay) → **P.4** deploy al VPS (COEXISTIR con el v1,
+  checklist SAFETY-V2, backups) + encender el reloj del gate (N≥50, ~2,5-3 meses con 10 símbolos).
 
 ## Documentación (fuente de verdad — leer antes de codear)
 - `docs/PRODUCT-VISION.md` — **EL NORTE**: objetivo final (bot rentable y autónomo) + qué debe poder VER el usuario (dashboard en vivo + historial/reportes + replay visual de backtests). El "para qué" innegociable

@@ -24,6 +24,11 @@ const baseSchema = z.object({
   MARKET_DATA_SYMBOLS: z.string().optional(), // CSV; cae a DEFAULT_SYMBOL si falta
   MARKET_DATA_TIMEFRAMES: z.string().default('15m,1h,4h,1d'), // CSV
 
+  // ─── Paper-trading (gate #7, P.2) ───
+  // PAPER_TRADING: si 'true' (y DB_ENABLED), el shadow del candidato CONGELADO registra en vivo
+  // lo que HARÍA (paper_trades). READ-ONLY (Regla Cero). Universo = MARKET_DATA_SYMBOLS.
+  PAPER_TRADING: z.enum(['true', 'false']).default('false'),
+
   // ─── Database (opcional en skeleton; requerida cuando DB_ENABLED=true) ───
   DB_ENABLED: boolFlag.default(false),
   DB_HOST: z.string().optional(),

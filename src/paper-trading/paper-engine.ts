@@ -27,7 +27,8 @@ export interface PaperPosition {
   id: string; // = intent.id
   intent: TradeIntent;
   state: PaperState;
-  trade?: SimTrade; // presente si CLOSED por fill + salida (lleva la R)
+  trade?: SimTrade; // presente si CLOSED por fill + salida (lleva la R definitiva)
+  live?: SimTrade; // FILLED: el estado provisional (fill real + "salida" endOfData al último cierre)
   cancelReason?: string; // presente si CLOSED sin trade (cancelada)
 }
 
@@ -42,9 +43,15 @@ const toSim = (c: PaperCandle): SimCandle => ({
 /**
  * Motor de paper-trading incremental y PURO (sin red, sin DB). Aliméntalo con cada vela CERRADA nueva
  * (orden ascendente) + el sesgo HTF vigente; mantiene las paper-positions del candidato y su desenlace.
+ *
+ * VENTANA (P.2): con `maxBufferBars > 0` el buffer se recorta para que el coste por vela no crezca
+ * sin límite en un proceso 24/7. El recorte es SEGURO: nunca descarta velas necesarias para una
+ * posición viva (la re-simulación escanea desde su señal). La equivalencia con el backtest
+ * full-history la garantizan el test de invarianza y la verificación empírica sobre años de datos
+ * reales (`verify-equivalence`). Sin ventana (default 0) el comportamiento es el de P.1: exacto.
  */
 export class PaperEngine {
-  private readonly candles: PaperCandle[] = [];
+  private candles: PaperCandle[] = [];
   private readonly positions: PaperPosition[] = [];
   private readonly seen = new Set<string>();
 
@@ -53,11 +60,56 @@ export class PaperEngine {
     private readonly tf: string,
     private readonly signalConfig: Partial<SignalConfig> = {},
     private readonly simConfig: Partial<SimConfig> = {},
+    private readonly maxBufferBars = 0, // 0 = sin recorte (P.1)
   ) {}
+
+  /** openTime de la última vela procesada (cursor del consumidor), o null si aún no hay velas. */
+  lastCandleTime(): number | null {
+    return this.candles.length ? this.candles[this.candles.length - 1].openTime : null;
+  }
+
+  /** Copia del buffer actual (para instrumentación: penetraciones touched-vs-crossed). */
+  bufferSnapshot(): PaperCandle[] {
+    return [...this.candles];
+  }
+
+  // Recorta el buffer a maxBufferBars respetando las posiciones VIVAS: simulateTrade re-escanea
+  // las velas con openTime > signalBarTime, así que solo pueden descartarse velas con
+  // openTime ≤ señal-viva-más-vieja. Las CERRADAS no re-escanean: no limitan el recorte.
+  private trimBuffer(): void {
+    if (this.maxBufferBars <= 0 || this.candles.length <= this.maxBufferBars) return;
+    let cutIdx = this.candles.length - this.maxBufferBars; // corte deseado por tamaño
+    const oldestOpen = this.positions.reduce<number | null>(
+      (min, p) =>
+        p.state !== 'CLOSED' && (min == null || p.intent.signalBarTime < min) ? p.intent.signalBarTime : min,
+      null,
+    );
+    if (oldestOpen != null) {
+      // Máximo recorte permitido: hasta la primera vela POSTERIOR a esa señal (exclusive).
+      let maxCut = 0;
+      while (maxCut < this.candles.length && this.candles[maxCut].openTime <= oldestOpen) maxCut++;
+      cutIdx = Math.min(cutIdx, maxCut);
+    }
+    if (cutIdx > 0) this.candles = this.candles.slice(cutIdx);
+  }
 
   /** Procesa una vela cerrada nueva: registra señales nuevas y actualiza las posiciones abiertas. */
   onClosedCandle(candle: PaperCandle, htfBias: BiasPoint[] = []): void {
-    this.candles.push(candle);
+    this.onClosedCandles([candle], htfBias);
+  }
+
+  /**
+   * Procesa un LOTE de velas cerradas (ascendentes) con UNA sola pasada de detección/simulación.
+   * Determinista ⇒ los estados FINALES son idénticos a procesarlas una a una (los intents son
+   * función de la serie, y la re-simulación siempre re-escanea desde la señal); solo colapsan las
+   * transiciones intermedias del lote — que el consumidor ya colapsa igual. Es lo que hace viable
+   * la REHIDRATACIÓN (miles de velas) en segundos.
+   */
+  onClosedCandles(batch: PaperCandle[], htfBias: BiasPoint[] = []): void {
+    if (batch.length === 0) return;
+    this.candles.push(...batch);
+    // OJO: el recorte va AL FINAL (tras detectar/simular) — recortar antes perdería las señales
+    // del frente de un lote grande (rehidratación). Lote y vela-a-vela quedan equivalentes.
     const sim = this.candles.map(toSim);
 
     // 1) Señales NUEVAS del candidato (dedup por id; causal: solo aparecen al cerrar su vela de señal).
@@ -74,9 +126,11 @@ export class PaperEngine {
       if (res.outcome === 'filled' && res.trade) {
         if (res.trade.exitReason === 'endOfData') {
           p.state = 'FILLED'; // llenó pero aún no sale → sigue abierta
+          p.live = res.trade; // estado provisional (fill real; R flotante al último cierre)
         } else {
           p.state = 'CLOSED'; // SL/TP/BE/maxHold → resuelta con su R
           p.trade = res.trade;
+          p.live = undefined;
         }
       } else if (res.outcome === 'cancelled') {
         p.state = 'CLOSED'; // ranAway / invalidated / maxWaitFill / badRisk → no es trade
@@ -84,6 +138,8 @@ export class PaperEngine {
       }
       // outcome 'expired' (noFill / noData = sin velas adelante todavía) → sin cambio: sigue PENDING.
     }
+
+    this.trimBuffer(); // al final: las señales del lote ya se detectaron y las vivas protegen su historia
   }
 
   /** Posiciones aún vivas (PENDING o FILLED). */
