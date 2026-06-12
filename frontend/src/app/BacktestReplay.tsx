@@ -232,11 +232,24 @@ export function BacktestReplay() {
     <div className="replay-topbar">
       <span className="rt-title">Visor de backtests</span>
       <select className="rt-run" value={runId ?? ''} onChange={(e) => setRunId(e.target.value)}>
-        {runs.map((r) => (
-          <option key={r.id} value={r.id}>
-            {r.symbol} {r.tf} · {fmtR(r.metrics.expectancyR)} · N={r.metrics.trades} · {r.id}
-          </option>
-        ))}
+        {runs.map((r) => {
+          // Etiqueta anti-confusión: el visor guarda también EXPERIMENTOS (refutados incluidos);
+          // solo las corridas del CANDIDATO cuentan para juzgar la estrategia.
+          const tag = r.note.startsWith('Corrida canonica')
+            ? '⭐ candidato'
+            : r.note.startsWith('OOS fresco')
+              ? '🆕 candidato (OOS fresco)'
+              : r.note.startsWith('C2')
+                ? '🧪 experimento C2 (refutado)'
+                : r.note
+                  ? `· ${r.note.slice(0, 28)}`
+                  : 'corrida manual';
+          return (
+            <option key={r.id} value={r.id}>
+              {r.symbol} {r.tf} · {fmtR(r.metrics.expectancyR)} · N={r.metrics.trades} · {tag}
+            </option>
+          );
+        })}
       </select>
       {run && (
         <span className="rt-meta" title={run.command}>
