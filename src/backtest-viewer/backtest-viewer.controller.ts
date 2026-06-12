@@ -2,8 +2,7 @@ import { Controller, Get, NotFoundException, Param, Query } from '@nestjs/common
 import { BacktestRunRepository } from '../backtest/backtest-run.repository';
 import { CandleRepository } from '../market-data/candle.repository';
 import { tfToMs } from '../market-data/candle-ingest.service';
-import { detectOrderBlocks, computeStateTimeline } from '../bot-analysis/ob.detector';
-import { detectLiquidity, DEFAULT_LIQ_PARAMS } from '../bot-analysis/liquidity.detector';
+import { buildSmcContext } from './smc-context';
 import { GetContextQueryDto } from './dto/get-context-query.dto';
 
 // Velas previas al rango pedido para que los OBs/swings vigentes al inicio de la ventana existan
@@ -59,63 +58,7 @@ export class BacktestViewerController {
     const closed = rows
       .filter((r) => r.isClosed)
       .map((r) => ({ openTime: r.openTime, open: r.open, high: r.high, low: r.low, close: r.close }));
-    const idxOfTime = new Map<number, number>();
-    closed.forEach((c, i) => idxOfTime.set(c.openTime, i));
-
-    // OBs vivos en algún punto de [from, to], con sus transiciones (el front filtra por cursor).
-    const obs = detectOrderBlocks(run.symbol, run.tf, closed, {
-      swingLookback,
-      showLastBullish: Number.MAX_SAFE_INTEGER,
-      showLastBearish: Number.MAX_SAFE_INTEGER,
-    })
-      .filter((o) => o.confirmedAtTime <= q.to)
-      .map((o) => {
-        const ci = idxOfTime.get(o.confirmedAtTime);
-        const tl = computeStateTimeline(closed, (ci ?? closed.length) + 1, o.direction, o.obLow, o.obHigh);
-        return {
-          id: o.id,
-          direction: o.direction,
-          originTime: o.originTime,
-          confirmedAtTime: o.confirmedAtTime,
-          obLow: o.obLow,
-          obHigh: o.obHigh,
-          ...tl,
-        };
-      })
-      .filter((o) => o.invalidatedAt == null || o.invalidatedAt >= q.from);
-
-    // Liquidez (mismo lookback que los sweeps del candidato): visible desde que su último pivote
-    // queda CONFIRMADO (lookback velas después), hasta su barrido.
-    const liquidity = detectLiquidity(run.symbol, run.tf, closed, {
-      ...DEFAULT_LIQ_PARAMS,
-      swingLookback,
-      showSweptLiquidity: true,
-      maxDistanceFromPricePct: null,
-      maxLevels: Number.MAX_SAFE_INTEGER,
-    })
-      .map((l) => {
-        const lastPivotTime = l.candleTimes[l.candleTimes.length - 1];
-        const li = idxOfTime.get(lastPivotTime);
-        const confIdx = li != null ? li + swingLookback : -1;
-        const visibleFromTime = confIdx >= 0 && confIdx < closed.length ? closed[confIdx].openTime : null;
-        return {
-          id: l.id,
-          type: l.type,
-          side: l.side,
-          level: l.level,
-          timeStart: l.timeStart,
-          lastPivotTime,
-          visibleFromTime,
-          sweptAtTime: l.sweptAtTime,
-        };
-      })
-      .filter(
-        (l) =>
-          l.visibleFromTime != null &&
-          l.visibleFromTime <= q.to &&
-          (l.sweptAtTime == null || l.sweptAtTime >= q.from),
-      );
-
-    return { runId: id, symbol: run.symbol, tf: run.tf, from: q.from, to: q.to, obs, liquidity };
+    const ctx = buildSmcContext(run.symbol, run.tf, closed, swingLookback, q.from, q.to);
+    return { runId: id, symbol: run.symbol, tf: run.tf, from: q.from, to: q.to, ...ctx };
   }
 }

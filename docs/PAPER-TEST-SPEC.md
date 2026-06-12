@@ -151,8 +151,16 @@ no se invalida (datos persisten).
   (default false). **Condiciones cumplidas:** test jest de equivalencia ventanada + recorte seguro;
   `verify-equivalence` (CLI read-only) compara el engine ventaneado vela a vela contra el backtest
   full-history sobre años reales — el chequeo de PARIDAD del gate, re-ejecutable en cualquier momento.
-- **P.3 — dashboard de observabilidad:** endpoints `/api/paper/*` + capa frontend (posiciones con
-  entry/SL/TP en la gráfica, panel de señales/abiertas, historial, el PORQUÉ causal, journal) + live por WS.
+- **P.3 — dashboard de observabilidad ✅ (2026-06-12):** pestaña **Paper** en el frontend
+  (Cockpit | Backtests | Paper). REUSA la capa visual auditada del visor: **estadísticas EN VIVO**
+  (RunStats modo paper: ¿vamos rentables? + por símbolo/dirección/año + equity clickeable) ·
+  historial completo filtrable (vivas/cerradas/canceladas × símbolo) · clic en una posición →
+  **la gráfica** (ReplayChart con cursor = presente: niveles entry/SL/TP, zona del sweep, contexto
+  SMC OBs+liquidez vía `GET /api/paper/context`) · panel del porqué causal + **touched-vs-crossed
+  visible** (penetraciones del fill/TP) + trazabilidad (paramsHash/engine por trade) · **tiempo real**
+  por WS `/paper` (`paper.position` actualiza lista/stats/gráfica al cierre de cada vela) · barra de
+  estado por símbolo (vivas + cursor). El journal discrecional del usuario (§4) queda para una
+  iteración posterior — el registro mecánico ya es completo e inviolable.
 - **P.4 — deploy + arranque:** v2 en el servidor (coexistencia/cutover con backups) + reloj de 1–3 meses.
 
 > P.1–P.3 son offline/read-only (Regla Cero estructuralmente intacta). P.4 es la decisión operativa.

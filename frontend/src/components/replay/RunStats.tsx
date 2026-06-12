@@ -9,6 +9,8 @@ interface Props {
   signals: BacktestSignal[];
   equity: { time: number; cum: number; intentId: string }[];
   onPickTrade: (intentId: string) => void;
+  mode?: 'backtest' | 'paper'; // paper: textos del embudo y advertencia adaptados (sin rejects)
+  bySymbol?: { symbol: string; n: number; r: number; wins: number }[]; // bloque extra (paper multi-símbolo)
 }
 
 const W = 860;
@@ -25,7 +27,7 @@ const rcls = (r: number) => (r > 0.001 ? 'r-pos' : r < -0.001 ? 'r-neg' : 'r-zer
  * completo: salidas, embudo, equity, por año y por dirección. Backtest ≠ garantía:
  * el veredicto real lo da el forward-test (gate #7).
  */
-export function RunStats({ run, signals, equity, onPickTrade }: Props) {
+export function RunStats({ run, signals, equity, onPickTrade, mode = 'backtest', bySymbol }: Props) {
   const m = run.metrics;
 
   const agg = useMemo(() => {
@@ -101,14 +103,18 @@ export function RunStats({ run, signals, equity, onPickTrade }: Props) {
     <div className="run-stats">
       {/* ── Veredicto ── */}
       <div className="rs-verdict">
-        <div className="rs-question">¿Fue rentable en este histórico?</div>
+        <div className="rs-question">{mode === 'paper' ? '¿Vamos rentables en el paper-test?' : '¿Fue rentable en este histórico?'}</div>
         <div className={`rs-total ${rcls(m.totalR)}`}>{fmtR(m.totalR)}</div>
         <div className="rs-sub">
           {fmtR(m.expectancyR)} por trade · {m.trades} trades · {run.symbol} {run.tf} ·{' '}
           {run.fromTime ? new Date(run.fromTime).toISOString().slice(0, 10) : '—'} →{' '}
           {run.toTime ? new Date(run.toTime).toISOString().slice(0, 10) : '—'}
         </div>
-        <div className="rs-warn">backtest ≠ garantía — el veredicto real lo da el forward-test en papel (gate #7)</div>
+        <div className="rs-warn">
+          {mode === 'paper'
+            ? 'registro mecánico SIN filtro humano (gate #7) — el veredicto formal: N≥50 con paridad sim↔live'
+            : 'backtest ≠ garantía — el veredicto real lo da el forward-test en papel (gate #7)'}
+        </div>
       </div>
 
       {/* ── Tarjetas ── */}
@@ -152,17 +158,41 @@ export function RunStats({ run, signals, equity, onPickTrade }: Props) {
 
         {/* ── Embudo ── */}
         <div className="rs-block">
-          <h4>Embudo (de sweep detectado a trade)</h4>
+          <h4>{mode === 'paper' ? 'Embudo (señales del candidato en vivo)' : 'Embudo (de sweep detectado a trade)'}</h4>
           <table className="rs-table">
             <tbody>
-              <tr><td>sweeps detectados</td><td>{signals.length}</td></tr>
-              <tr><td>descartados por filtros</td><td>{agg.rejected} ({Object.entries(agg.rejectByReason).map(([k, v]) => `${k} ${v}`).join(' · ')})</td></tr>
+              {mode === 'backtest' && (
+                <>
+                  <tr><td>sweeps detectados</td><td>{signals.length}</td></tr>
+                  <tr><td>descartados por filtros</td><td>{agg.rejected} ({Object.entries(agg.rejectByReason).map(([k, v]) => `${k} ${v}`).join(' · ')})</td></tr>
+                </>
+              )}
               <tr><td>señales emitidas</td><td>{m.signals}</td></tr>
               <tr><td>canceladas sin fill</td><td>{m.cancelled}</td></tr>
-              <tr><td><b>trades reales (N)</b></td><td><b>{m.trades}</b></td></tr>
+              <tr><td><b>trades cerrados (N)</b></td><td><b>{m.trades}</b></td></tr>
             </tbody>
           </table>
         </div>
+
+        {/* ── Por símbolo (paper multi-símbolo) ── */}
+        {bySymbol && bySymbol.length > 1 && (
+          <div className="rs-block">
+            <h4>Por símbolo</h4>
+            <table className="rs-table">
+              <thead><tr><th></th><th>N</th><th>win-rate</th><th>totalR</th></tr></thead>
+              <tbody>
+                {bySymbol.map((s) => (
+                  <tr key={s.symbol}>
+                    <td>{s.symbol}</td>
+                    <td>{s.n}</td>
+                    <td>{s.n ? pct(s.wins / s.n) : '—'}</td>
+                    <td className={rcls(s.r)}>{fmtR(s.r)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
 
         {/* ── Por dirección ── */}
         <div className="rs-block">

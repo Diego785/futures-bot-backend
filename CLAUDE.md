@@ -125,9 +125,13 @@ adverse selection). v2 mueve la decisión al humano y usa el software como ojos 
   vela-a-vela probado) · WS `/paper` · `GET /api/paper/status|trades` · flag `PAPER_TRADING`.
   **Equivalencia ventana-vs-full verificada sobre años reales: BTC 110/0 · SOL 239/0 divergencias**
   (`node dist/paper-trading/verify-equivalence.js` = el chequeo de PARIDAD del gate, re-ejecutable).
-- SIGUIENTE: **P.3** dashboard del paper (pestaña Paper: stats en vivo estilo V.4 + historial +
-  posiciones por WS, reusa la capa visual del replay) → **P.4** deploy al VPS (COEXISTIR con el v1,
-  checklist SAFETY-V2, backups) + encender el reloj del gate (N≥50, ~2,5-3 meses con 10 símbolos).
+- **P.3 ✅ (2026-06-12): pestaña Paper en el dashboard** — stats EN VIVO (RunStats modo paper +
+  por símbolo), historial filtrable, clic→gráfica (ReplayChart cursor=presente + contexto SMC vía
+  `/api/paper/context`), touched-vs-crossed y trazabilidad visibles por trade, WS `/paper` en
+  tiempo real, barra de estado por símbolo. Smoke verificado (16 trades del mes + 1 PENDING viva).
+- SIGUIENTE: **P.4** deploy al VPS 38.242.145.246 (COEXISTIR con el v1: puerto/DB propios;
+  checklist SAFETY-V2 + backups DB/.env ANTES; PAPER_TRADING=true + MARKET_DATA_LIVE=true +
+  10 símbolos) → encender el reloj del gate (evaluación a N≥50, ~2,5-3 meses).
 
 ## Documentación (fuente de verdad — leer antes de codear)
 - `docs/PRODUCT-VISION.md` — **EL NORTE**: objetivo final (bot rentable y autónomo) + qué debe poder VER el usuario (dashboard en vivo + historial/reportes + replay visual de backtests). El "para qué" innegociable

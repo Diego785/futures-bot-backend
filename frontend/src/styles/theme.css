@@ -419,3 +419,12 @@ body {
 .rs-equity { margin-bottom: 14px; overflow-x: auto; }
 .rs-equity svg { cursor: pointer; display: block; background: var(--bg); border-radius: 4px; }
 .rs-years { max-width: 480px; }
+
+/* ─────────────── P.3: pestaña Paper (gate #7 en vivo) ─────────────── */
+.pp-ws { font-size: 11px; padding: 1px 8px; border-radius: 3px; border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }
+.pp-ws.on { color: var(--up); border-color: var(--up); }
+.pp-live { color: var(--accent); font-weight: 700; }
+.rl-sym { min-width: 38px; font-weight: 700; color: var(--text); }
+.pp-bottom { display: flex; align-items: center; gap: 8px; height: 100%; padding: 0 10px; overflow-x: auto; }
+.pp-chip { font-size: 11px; color: var(--muted); border: 1px solid var(--border); border-radius: 3px; padding: 2px 8px; white-space: nowrap; }
+.pp-chip b { color: var(--accent); }

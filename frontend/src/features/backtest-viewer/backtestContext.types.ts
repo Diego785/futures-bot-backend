@@ -25,7 +25,7 @@ export interface LiquidityContext {
 }
 
 export interface ReplayContextResponse {
-  runId: string;
+  runId?: string; // ausente cuando el contexto viene del paper (/api/paper/context)
   symbol: string;
   tf: string;
   from: number;
