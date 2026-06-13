@@ -101,19 +101,19 @@ export function RunStats({ run, signals, equity, onPickTrade, mode = 'backtest',
 
   return (
     <div className="run-stats">
-      {/* ── Veredicto ── */}
+      {/* ── Veredicto (compacto, horizontal) ── */}
       <div className="rs-verdict">
-        <div className="rs-question">{mode === 'paper' ? '¿Vamos rentables en el paper-test?' : '¿Fue rentable en este histórico?'}</div>
-        <div className={`rs-total ${rcls(m.totalR)}`}>{fmtR(m.totalR)}</div>
-        <div className="rs-sub">
-          {fmtR(m.expectancyR)} por trade · {m.trades} trades · {run.symbol} {run.tf} ·{' '}
-          {run.fromTime ? new Date(run.fromTime).toISOString().slice(0, 10) : '—'} →{' '}
-          {run.toTime ? new Date(run.toTime).toISOString().slice(0, 10) : '—'}
+        <div className="rs-headline">
+          <div className={`rs-total ${rcls(m.totalR)}`}>{fmtR(m.totalR)}</div>
+          <div className="rs-headside">
+            <div className="rs-question">{mode === 'paper' ? '¿Vamos rentables?' : '¿Fue rentable?'}</div>
+            <div className="rs-sub">{fmtR(m.expectancyR)}/trade · {m.trades} trades · {run.symbol}</div>
+          </div>
         </div>
         <div className="rs-warn">
           {mode === 'paper'
-            ? 'registro mecánico SIN filtro humano (gate #7) — el veredicto formal: N≥50 con paridad sim↔live'
-            : 'backtest ≠ garantía — el veredicto real lo da el forward-test en papel (gate #7)'}
+            ? 'registro mecánico sin filtro humano — el veredicto formal es a N≥50 con paridad sim↔live'
+            : 'backtest ≠ garantía — el veredicto real lo da el paper-test (gate #7)'}
         </div>
       </div>
 
@@ -127,8 +127,38 @@ export function RunStats({ run, signals, equity, onPickTrade, mode = 'backtest',
         <div className="rs-card"><span className="rs-k">duración media</span><b>{agg.avgBarsHeld.toFixed(0)} velas</b><span className="rs-d">dentro de la posición</span></div>
       </div>
 
+      {/* ── Equity (protagonista) ── */}
+      {eq && (
+        <div className="rs-block rs-equity">
+          <h4>Curva de ganancia en R (click = auditar ese trade)</h4>
+          <svg
+            width={W}
+            height={H}
+            preserveAspectRatio="none"
+            viewBox={`0 0 ${W} ${H}`}
+            style={{ width: '100%', height: 150 }}
+            onClick={(e) => {
+              const rect = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
+              const x = ((e.clientX - rect.left) / rect.width) * W;
+              const i = Math.round(((x - PAD) / (W - 2 * PAD)) * (equity.length - 1));
+              const p = equity[Math.min(Math.max(i, 0), equity.length - 1)];
+              if (p) onPickTrade(p.intentId);
+            }}
+          >
+            <line x1={PAD} y1={eq.zeroY} x2={W - PAD} y2={eq.zeroY} stroke="#232733" strokeDasharray="4 4" />
+            {eq.yearTicks.map((t) => (
+              <g key={t.label}>
+                <line x1={t.x} y1={PAD / 2} x2={t.x} y2={H - PAD / 2} stroke="#1b1f2a" />
+                <text x={t.x + 4} y={14} fill="#6b7280" fontSize={10}>{t.label}</text>
+              </g>
+            ))}
+            <path d={eq.d} fill="none" stroke="#3b82f6" strokeWidth={1.8} />
+          </svg>
+        </div>
+      )}
+
+      {/* ── Lo importante a la vista: salidas + el desglose más relevante ── */}
       <div className="rs-grid">
-        {/* ── Salidas ── */}
         <div className="rs-block">
           <h4>Salidas (qué pasó con cada trade)</h4>
           {exitOrder.filter((e) => agg.byExit[e]).map((e) => {
@@ -144,38 +174,7 @@ export function RunStats({ run, signals, equity, onPickTrade, mode = 'backtest',
           })}
         </div>
 
-        {/* ── Distribución R ── */}
-        <div className="rs-block">
-          <h4>Distribución de resultados (R)</h4>
-          {rBuckets.map((b) => (
-            <div key={b} className="rs-bar-row">
-              <span className="rs-bar-label">{b}</span>
-              <div className="rs-bar"><div className="rs-bar-fill dist" style={{ width: `${((rDist[b] ?? 0) / maxBucket) * 100}%` }} /></div>
-              <span className="rs-bar-n">{rDist[b] ?? 0}</span>
-            </div>
-          ))}
-        </div>
-
-        {/* ── Embudo ── */}
-        <div className="rs-block">
-          <h4>{mode === 'paper' ? 'Embudo (señales del candidato en vivo)' : 'Embudo (de sweep detectado a trade)'}</h4>
-          <table className="rs-table">
-            <tbody>
-              {mode === 'backtest' && (
-                <>
-                  <tr><td>sweeps detectados</td><td>{signals.length}</td></tr>
-                  <tr><td>descartados por filtros</td><td>{agg.rejected} ({Object.entries(agg.rejectByReason).map(([k, v]) => `${k} ${v}`).join(' · ')})</td></tr>
-                </>
-              )}
-              <tr><td>señales emitidas</td><td>{m.signals}</td></tr>
-              <tr><td>canceladas sin fill</td><td>{m.cancelled}</td></tr>
-              <tr><td><b>trades cerrados (N)</b></td><td><b>{m.trades}</b></td></tr>
-            </tbody>
-          </table>
-        </div>
-
-        {/* ── Por símbolo (paper multi-símbolo) ── */}
-        {bySymbol && bySymbol.length > 1 && (
+        {bySymbol && bySymbol.length > 1 ? (
           <div className="rs-block">
             <h4>Por símbolo</h4>
             <table className="rs-table">
@@ -183,7 +182,7 @@ export function RunStats({ run, signals, equity, onPickTrade, mode = 'backtest',
               <tbody>
                 {bySymbol.map((s) => (
                   <tr key={s.symbol}>
-                    <td>{s.symbol}</td>
+                    <td>{s.symbol.replace('USDT', '')}</td>
                     <td>{s.n}</td>
                     <td>{s.n ? pct(s.wins / s.n) : '—'}</td>
                     <td className={rcls(s.r)}>{fmtR(s.r)}</td>
@@ -192,77 +191,100 @@ export function RunStats({ run, signals, equity, onPickTrade, mode = 'backtest',
               </tbody>
             </table>
           </div>
+        ) : (
+          <div className="rs-block">
+            <h4>Por dirección</h4>
+            <table className="rs-table">
+              <thead><tr><th></th><th>N</th><th>win-rate</th><th>totalR</th></tr></thead>
+              <tbody>
+                {(['LONG', 'SHORT'] as const).map((d) => {
+                  const v = agg.byDir[d];
+                  return (
+                    <tr key={d}>
+                      <td className={d === 'LONG' ? 'long' : 'short'}>{d}</td>
+                      <td>{v.n}</td>
+                      <td>{v.n ? pct(v.wins / v.n) : '—'}</td>
+                      <td className={rcls(v.r)}>{fmtR(v.r)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
-
-        {/* ── Por dirección ── */}
-        <div className="rs-block">
-          <h4>Por dirección</h4>
-          <table className="rs-table">
-            <thead><tr><th></th><th>N</th><th>win-rate</th><th>totalR</th></tr></thead>
-            <tbody>
-              {(['LONG', 'SHORT'] as const).map((d) => {
-                const v = agg.byDir[d];
-                return (
-                  <tr key={d}>
-                    <td className={d === 'LONG' ? 'long' : 'short'}>{d}</td>
-                    <td>{v.n}</td>
-                    <td>{v.n ? pct(v.wins / v.n) : '—'}</td>
-                    <td className={rcls(v.r)}>{fmtR(v.r)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
       </div>
 
-      {/* ── Equity ── */}
-      {eq && (
-        <div className="rs-block rs-equity">
-          <h4>Curva de equity en R (click = auditar ese trade en el replay)</h4>
-          <svg
-            width={W}
-            height={H}
-            onClick={(e) => {
-              const rect = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
-              const x = e.clientX - rect.left;
-              const i = Math.round(((x - PAD) / (W - 2 * PAD)) * (equity.length - 1));
-              const p = equity[Math.min(Math.max(i, 0), equity.length - 1)];
-              if (p) onPickTrade(p.intentId);
-            }}
-          >
-            <line x1={PAD} y1={eq.zeroY} x2={W - PAD} y2={eq.zeroY} stroke="#232733" strokeDasharray="4 4" />
-            {eq.yearTicks.map((t) => (
-              <g key={t.label}>
-                <line x1={t.x} y1={PAD / 2} x2={t.x} y2={H - PAD / 2} stroke="#1b1f2a" />
-                <text x={t.x + 4} y={14} fill="#6b7280" fontSize={10}>{t.label}</text>
-              </g>
+      {/* ── Detalle secundario (plegado: no estorba) ── */}
+      <details className="rs-more">
+        <summary>Ver desglose completo (distribución, embudo{bySymbol && bySymbol.length > 1 ? ', dirección' : ''}{agg.byYear.length > 1 ? ', por año' : ''})</summary>
+        <div className="rs-grid">
+          <div className="rs-block">
+            <h4>Distribución de resultados (R)</h4>
+            {rBuckets.map((b) => (
+              <div key={b} className="rs-bar-row">
+                <span className="rs-bar-label">{b}</span>
+                <div className="rs-bar"><div className="rs-bar-fill dist" style={{ width: `${((rDist[b] ?? 0) / maxBucket) * 100}%` }} /></div>
+                <span className="rs-bar-n">{rDist[b] ?? 0}</span>
+              </div>
             ))}
-            <path d={eq.d} fill="none" stroke="#3b82f6" strokeWidth={1.8} />
-            <text x={W - PAD} y={eq.yTo(eq.last.cum) - 6} fill={eq.last.cum >= 0 ? '#26a69a' : '#ef5350'} fontSize={12} fontWeight={800} textAnchor="end">
-              {fmtR(eq.last.cum)}
-            </text>
-          </svg>
+          </div>
+          <div className="rs-block">
+            <h4>{mode === 'paper' ? 'Embudo (señales en vivo)' : 'Embudo (de sweep a trade)'}</h4>
+            <table className="rs-table">
+              <tbody>
+                {mode === 'backtest' && (
+                  <>
+                    <tr><td>sweeps detectados</td><td>{signals.length}</td></tr>
+                    <tr><td>descartados por filtros</td><td>{agg.rejected}</td></tr>
+                  </>
+                )}
+                <tr><td>señales emitidas</td><td>{m.signals}</td></tr>
+                <tr><td>canceladas sin fill</td><td>{m.cancelled}</td></tr>
+                <tr><td><b>trades cerrados (N)</b></td><td><b>{m.trades}</b></td></tr>
+              </tbody>
+            </table>
+          </div>
+          {bySymbol && bySymbol.length > 1 && (
+            <div className="rs-block">
+              <h4>Por dirección</h4>
+              <table className="rs-table">
+                <thead><tr><th></th><th>N</th><th>win-rate</th><th>totalR</th></tr></thead>
+                <tbody>
+                  {(['LONG', 'SHORT'] as const).map((d) => {
+                    const v = agg.byDir[d];
+                    return (
+                      <tr key={d}>
+                        <td className={d === 'LONG' ? 'long' : 'short'}>{d}</td>
+                        <td>{v.n}</td>
+                        <td>{v.n ? pct(v.wins / v.n) : '—'}</td>
+                        <td className={rcls(v.r)}>{fmtR(v.r)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {agg.byYear.length > 1 && (
+            <div className="rs-block">
+              <h4>Por año</h4>
+              <table className="rs-table rs-years">
+                <thead><tr><th>año</th><th>N</th><th>win-rate</th><th>totalR</th></tr></thead>
+                <tbody>
+                  {agg.byYear.map(([year, v]) => (
+                    <tr key={year}>
+                      <td>{year}</td>
+                      <td>{v.n}</td>
+                      <td>{pct(v.wins / Math.max(v.n, 1))}</td>
+                      <td className={rcls(v.r)}>{fmtR(v.r)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
-      )}
-
-      {/* ── Por año ── */}
-      <div className="rs-block">
-        <h4>Por año</h4>
-        <table className="rs-table rs-years">
-          <thead><tr><th>año</th><th>N</th><th>win-rate</th><th>totalR</th></tr></thead>
-          <tbody>
-            {agg.byYear.map(([year, v]) => (
-              <tr key={year}>
-                <td>{year}</td>
-                <td>{v.n}</td>
-                <td>{pct(v.wins / Math.max(v.n, 1))}</td>
-                <td className={rcls(v.r)}>{fmtR(v.r)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      </details>
     </div>
   );
 }

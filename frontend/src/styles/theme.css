@@ -428,3 +428,30 @@ body {
 .pp-bottom { display: flex; align-items: center; gap: 8px; height: 100%; padding: 0 10px; overflow-x: auto; }
 .pp-chip { font-size: 11px; color: var(--muted); border: 1px solid var(--border); border-radius: 3px; padding: 2px 8px; white-space: nowrap; }
 .pp-chip b { color: var(--accent); }
+
+/* ─────────────── UI cleanup (2026-06-13): pestañas prominentes + stats densas ─────────────── */
+/* Las 3 pestañas: barra clara y prominente (antes botones flotantes diminutos) */
+.app-viewtabs { position: fixed; top: 6px; left: 50%; transform: translateX(-50%); z-index: 50; display: flex; gap: 4px; background: rgba(11,12,16,0.85); padding: 3px; border-radius: 8px; border: 1px solid var(--border); }
+.app-viewtabs button { display: flex; flex-direction: column; align-items: center; gap: 0; background: transparent; color: var(--muted); border: none; padding: 4px 16px; cursor: pointer; border-radius: 6px; line-height: 1.15; }
+.app-viewtabs button:hover { background: var(--panel-2); }
+.app-viewtabs button.on { background: var(--accent); color: #fff; }
+.app-viewtabs .vt-label { font-size: 13px; font-weight: 700; }
+.app-viewtabs .vt-sub { font-size: 9px; opacity: 0.75; }
+
+/* Stats densas: caben en una pantalla, sin scroll innecesario */
+.run-stats { max-width: 1000px; margin: 0 auto; padding: 30px 16px 16px; }
+.rs-verdict { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 4px 0 10px; flex-wrap: wrap; }
+.rs-headline { display: flex; align-items: baseline; gap: 12px; }
+.rs-headside { display: flex; flex-direction: column; }
+.rs-verdict .rs-total { font-size: 38px; font-weight: 900; line-height: 1; }
+.rs-verdict .rs-question { font-size: 13px; color: var(--muted); }
+.rs-verdict .rs-sub { font-size: 12px; color: var(--text); }
+.rs-verdict .rs-warn { flex: 1 1 260px; text-align: right; color: #f59e0b; font-size: 10px; max-width: 340px; margin-left: auto; }
+.rs-cards { margin: 8px 0 10px; gap: 6px; }
+.rs-equity { margin-bottom: 10px; }
+.rs-equity svg { width: 100%; }
+.rs-grid { margin-bottom: 10px; }
+.rs-more { margin-top: 4px; }
+.rs-more > summary { cursor: pointer; color: var(--muted); font-size: 12px; padding: 6px 0; user-select: none; }
+.rs-more > summary:hover { color: var(--text); }
+.rs-more[open] > summary { color: var(--text); margin-bottom: 6px; }

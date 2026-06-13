@@ -13,18 +13,20 @@ export function App() {
   });
   useEffect(() => localStorage.setItem('app.view', view), [view]);
 
+  const tabs: { id: View; label: string; sub: string }[] = [
+    { id: 'cockpit', label: 'Cockpit', sub: 'marcar en vivo' },
+    { id: 'backtests', label: 'Backtests', sub: 'auditar histórico' },
+    { id: 'paper', label: 'Paper', sub: 'gate #7 en vivo' },
+  ];
   return (
     <>
       <nav className="app-viewtabs">
-        <button className={view === 'cockpit' ? 'on' : ''} onClick={() => setView('cockpit')}>
-          Cockpit
-        </button>
-        <button className={view === 'backtests' ? 'on' : ''} onClick={() => setView('backtests')}>
-          Backtests
-        </button>
-        <button className={view === 'paper' ? 'on' : ''} onClick={() => setView('paper')}>
-          Paper
-        </button>
+        {tabs.map((t) => (
+          <button key={t.id} className={view === t.id ? 'on' : ''} onClick={() => setView(t.id)}>
+            <span className="vt-label">{t.label}</span>
+            <span className="vt-sub">{t.sub}</span>
+          </button>
+        ))}
       </nav>
       {view === 'cockpit' ? <TradingCockpit /> : view === 'backtests' ? <BacktestReplay /> : <PaperDashboard />}
     </>
