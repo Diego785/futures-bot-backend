@@ -161,6 +161,11 @@ no se invalida (datos persisten).
   por WS `/paper` (`paper.position` actualiza lista/stats/gráfica al cierre de cada vela) · barra de
   estado por símbolo (vivas + cursor). El journal discrecional del usuario (§4) queda para una
   iteración posterior — el registro mecánico ya es completo e inviolable.
+- **Separación histórico vs forward-test ✅ (2026-06-13):** al arrancar, el motor REHIDRATA (replay
+  de la ventana reciente para reconstruir su estado) → esas señales son `phase='backfill'` (CONTEXTO,
+  no cuentan). `PAPER_CLOCK_START` (env) marca el arranque oficial: señales posteriores = `phase='live'`
+  (el forward-test real). Las estadísticas usan SOLO `live`; el dashboard nunca mezcla. **El deploy DEBE
+  fijar `PAPER_CLOCK_START`** al momento de encender — ese es "anotar la fecha de arranque del reloj".
 - **P.4 — deploy + arranque:** v2 en el servidor (coexistencia/cutover con backups) + reloj de 1–3 meses.
 
 > P.1–P.3 son offline/read-only (Regla Cero estructuralmente intacta). P.4 es la decisión operativa.
