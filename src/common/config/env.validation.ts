@@ -28,6 +28,11 @@ const baseSchema = z.object({
   // PAPER_TRADING: si 'true' (y DB_ENABLED), el shadow del candidato CONGELADO registra en vivo
   // lo que HARÍA (paper_trades). READ-ONLY (Regla Cero). Universo = MARKET_DATA_SYMBOLS.
   PAPER_TRADING: z.enum(['true', 'false']).default('false'),
+  // PAPER_CLOCK_START: marca el ARRANQUE OFICIAL del reloj del gate (fecha ISO o epoch ms). Las
+  // señales con signalBarTime ANTERIOR son 'backfill' (histórico rehidratado = contexto, NO cuentan
+  // en estadísticas); las posteriores son 'live' (el forward-test real). Sin esta var, NADA es live
+  // (todo es contexto) — el deploy debe fijarla conscientemente para encender el reloj limpio.
+  PAPER_CLOCK_START: z.string().optional(),
 
   // ─── Database (opcional en skeleton; requerida cuando DB_ENABLED=true) ───
   DB_ENABLED: boolFlag.default(false),

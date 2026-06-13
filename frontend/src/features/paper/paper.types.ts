@@ -10,6 +10,7 @@ export interface PaperTrade {
   direction: 'LONG' | 'SHORT';
   signalBarTime: number;
   state: PaperState;
+  phase: 'backfill' | 'live'; // histórico rehidratado (contexto) vs forward-test real del gate
   entry: number;
   stopLoss: number;
   takeProfit: number;
@@ -51,6 +52,7 @@ export interface PaperStatusSymbol {
 export interface PaperStatus {
   enabled: boolean;
   engineVersion: string;
+  clockStart: number | null; // arranque del reloj del gate; null = aún no arranca (todo histórico)
   symbols: PaperStatusSymbol[];
 }
 

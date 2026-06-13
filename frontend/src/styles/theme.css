@@ -455,3 +455,12 @@ body {
 .rs-more > summary { cursor: pointer; color: var(--muted); font-size: 12px; padding: 6px 0; user-select: none; }
 .rs-more > summary:hover { color: var(--text); }
 .rs-more[open] > summary { color: var(--text); margin-bottom: 6px; }
+
+/* ─────────────── Separación histórico (backfill) vs live (gate #7) ─────────────── */
+.rl-backfill-toggle { display: flex; align-items: center; gap: 5px; padding: 4px 8px; font-size: 11px; color: var(--muted); border-bottom: 1px solid var(--border); }
+.rl-item.rl-backfill { opacity: 0.5; }
+.rl-hist { font-size: 9px; color: var(--muted); border: 1px solid var(--border); border-radius: 3px; padding: 0 4px; margin-left: 2px; }
+.pp-waiting { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; text-align: center; padding: 0 32px; }
+.pp-waiting-icon { font-size: 40px; }
+.pp-waiting-title { font-size: 16px; font-weight: 700; color: var(--text); margin: 0; }
+.pp-waiting-sub { color: var(--muted); max-width: 520px; margin: 0; }

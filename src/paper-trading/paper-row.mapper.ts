@@ -11,6 +11,7 @@ export interface PaperTradeRow {
   direction: string;
   signalBarTime: number;
   state: PaperState; // PENDING | FILLED | CLOSED (CANCELLED se modela como CLOSED+cancelReason)
+  phase: 'backfill' | 'live'; // histórico rehidratado vs forward-test real (gate #7)
   entry: number;
   stopLoss: number;
   takeProfit: number;
@@ -70,13 +71,18 @@ export function computePenetrations(
   return { entryPenetration, tpPenetration };
 }
 
-/** Convierte el estado actual de una posición del engine a su fila persistible (upsert idempotente). */
+/**
+ * Convierte el estado actual de una posición del engine a su fila persistible (upsert idempotente).
+ * `clockStart` (epoch ms) decide la fase: señal anterior = 'backfill' (contexto), posterior = 'live'
+ * (cuenta en el gate). Default 0 = todo 'live' (para tests); el servicio pasa MAX si el reloj no arrancó.
+ */
 export function toPaperTradeRow(
   p: PaperPosition,
   candles: PaperCandle[],
   engineVersion: string,
   paramsHash: string,
   now: number,
+  clockStart = 0,
 ): PaperTradeRow {
   const it = p.intent;
   // CLOSED usa el trade definitivo; FILLED usa el provisional (fill real, sin salida aún).
@@ -103,6 +109,7 @@ export function toPaperTradeRow(
     direction: it.direction,
     signalBarTime: it.signalBarTime,
     state: p.state,
+    phase: it.signalBarTime >= clockStart ? 'live' : 'backfill',
     entry: it.entry,
     stopLoss: it.stopLoss,
     takeProfit: it.takeProfit,

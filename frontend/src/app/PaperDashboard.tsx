@@ -35,6 +35,7 @@ export function PaperDashboard() {
   const [windowStatus, setWindowStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [showObs, setShowObs] = useState(true);
   const [showLiq, setShowLiq] = useState(true);
+  const [showBackfill, setShowBackfill] = useState(false); // ver histórico rehidratado (contexto)
 
   const tfMs = tfToMs('15m');
   const tradesRef = useRef(trades);
@@ -124,21 +125,28 @@ export function PaperDashboard() {
   // ── Derivados ──
   const focused = trades.find((t) => t.intentId === focusedId) ?? null;
   const symbols = useMemo(() => ['ALL', ...new Set(trades.map((t) => t.symbol))], [trades]);
+
+  // SEPARACIÓN CLAVE (gate #7): 'live' = forward-test real (cuenta) · 'backfill' = histórico
+  // rehidratado al arrancar (contexto, NUNCA cuenta ni se mezcla en las estadísticas).
+  const liveTrades = useMemo(() => trades.filter((t) => t.phase === 'live'), [trades]);
+  const backfillCount = trades.length - liveTrades.length;
+
   const listed = useMemo(() => {
-    let xs = trades;
+    let xs = showBackfill ? trades : liveTrades;
     if (symbolFilter !== 'ALL') xs = xs.filter((t) => t.symbol === symbolFilter);
     if (listFilter === 'open') xs = xs.filter((t) => t.state !== 'CLOSED');
     else if (listFilter === 'closed') xs = xs.filter((t) => t.state === 'CLOSED' && t.rMultiple != null);
     else if (listFilter === 'cancelled') xs = xs.filter((t) => t.state === 'CLOSED' && t.cancelReason != null);
     return [...xs].sort((a, b) => b.signalBarTime - a.signalBarTime);
-  }, [trades, listFilter, symbolFilter]);
+  }, [trades, liveTrades, showBackfill, listFilter, symbolFilter]);
 
-  const metrics = useMemo(() => buildPaperMetrics(trades), [trades]);
-  const adaptedAll = useMemo(() => trades.map(paperToSignal), [trades]);
-  const equity = useMemo(() => equityCurve(adaptedAll), [adaptedAll]);
-  const bySymbol = useMemo(() => paperBySymbol(trades), [trades]);
+  // Las ESTADÍSTICAS usan SOLO 'live' (el cuadro del gate no se contamina con el histórico).
+  const metrics = useMemo(() => buildPaperMetrics(liveTrades), [liveTrades]);
+  const adaptedLive = useMemo(() => liveTrades.map(paperToSignal), [liveTrades]);
+  const equity = useMemo(() => equityCurve(adaptedLive), [adaptedLive]);
+  const bySymbol = useMemo(() => paperBySymbol(liveTrades), [liveTrades]);
   const pseudoRun = useMemo(() => {
-    const times = trades.map((t) => t.signalBarTime);
+    const times = liveTrades.map((t) => t.signalBarTime);
     return {
       id: 'paper',
       createdAt: 0,
@@ -155,7 +163,7 @@ export function PaperDashboard() {
       note: '',
       biasPoints: null,
     } as BacktestRunDetail;
-  }, [trades, metrics, status, symbols]);
+  }, [liveTrades, metrics, status, symbols]);
 
   // Señales del símbolo enfocado dentro de la ventana (la capa de marcadores de la gráfica).
   const chartSignals = useMemo(() => {
@@ -179,7 +187,10 @@ export function PaperDashboard() {
       <span className={`pp-ws ${wsOn ? 'on' : ''}`} title="Conexión al stream /paper">{wsOn ? '● EN VIVO' : '○ sin stream'}</span>
       {status && (
         <span className="rt-meta" title={status.symbols.map((s) => `${s.symbol} ${s.paramsHash}`).join('\n')}>
-          engine <code>{status.engineVersion}</code> · {status.symbols.length} símbolos · candidato CONGELADO
+          engine <code>{status.engineVersion}</code> · {status.symbols.length} símbolos ·{' '}
+          {status.clockStart
+            ? `reloj ▶ ${formatUtc(status.clockStart).slice(0, 10)} · ${liveTrades.length} en vivo`
+            : 'reloj ⏸ sin arrancar'}
         </span>
       )}
       <button className="rt-stats-btn" onClick={showStats} title="Estadísticas en vivo del paper">📊 estadísticas</button>
@@ -188,14 +199,15 @@ export function PaperDashboard() {
     </div>
   );
 
+  const pool = showBackfill ? trades : liveTrades;
   const left = (
     <div className="replay-list">
       <div className="rl-header">
         <select value={listFilter} onChange={(e) => setListFilter(e.target.value as ListFilter)}>
-          <option value="all">Todas ({trades.length})</option>
-          <option value="open">Vivas ({trades.filter((t) => t.state !== 'CLOSED').length})</option>
-          <option value="closed">Cerradas ({trades.filter((t) => t.state === 'CLOSED' && t.rMultiple != null).length})</option>
-          <option value="cancelled">Canceladas ({trades.filter((t) => t.state === 'CLOSED' && t.cancelReason != null).length})</option>
+          <option value="all">Todas ({pool.length})</option>
+          <option value="open">Vivas ({pool.filter((t) => t.state !== 'CLOSED').length})</option>
+          <option value="closed">Cerradas ({pool.filter((t) => t.state === 'CLOSED' && t.rMultiple != null).length})</option>
+          <option value="cancelled">Canceladas ({pool.filter((t) => t.state === 'CLOSED' && t.cancelReason != null).length})</option>
         </select>
         <select value={symbolFilter} onChange={(e) => setSymbolFilter(e.target.value)}>
           {symbols.map((s) => (
@@ -203,18 +215,34 @@ export function PaperDashboard() {
           ))}
         </select>
       </div>
+      {backfillCount > 0 && (
+        <label className="rl-backfill-toggle" title="El histórico rehidratado es CONTEXTO — no cuenta en el gate ni en las estadísticas">
+          <input type="checkbox" checked={showBackfill} onChange={() => setShowBackfill((v) => !v)} /> ver histórico ({backfillCount})
+        </label>
+      )}
       <ul>
         {listed.slice(0, 600).map((t) => (
-          <li key={t.intentId} className={`rl-item ${t.intentId === focusedId ? 'selected' : ''}`} onClick={() => focusTrade(t)}>
+          <li
+            key={t.intentId}
+            className={`rl-item ${t.intentId === focusedId ? 'selected' : ''} ${t.phase === 'backfill' ? 'rl-backfill' : ''}`}
+            onClick={() => focusTrade(t)}
+          >
             <span className="rl-sym">{t.symbol.replace('USDT', '')}</span>
             <span className={`rl-dir ${t.direction === 'LONG' ? 'long' : 'short'}`}>{t.direction === 'LONG' ? '▲' : '▼'}</span>
             <span className="rl-date">{formatUtc(t.signalBarTime).slice(2, 16)}</span>
             <span className={`rl-out ${t.state === 'CLOSED' && t.rMultiple != null ? rClass(t.rMultiple) : t.state === 'FILLED' ? 'pp-live' : ''}`}>
               {stateLabel(t)}
             </span>
+            {t.phase === 'backfill' && <span className="rl-hist" title="histórico rehidratado (no cuenta)">hist</span>}
           </li>
         ))}
-        {listed.length === 0 && <li className="rl-more">sin operaciones aún — el motor registra al cierre de cada vela 15m</li>}
+        {listed.length === 0 && (
+          <li className="rl-more">
+            {liveTrades.length === 0 && backfillCount > 0
+              ? 'sin operaciones del forward-test aún — activa "ver histórico" para el contexto'
+              : 'sin operaciones aún — el motor registra al cierre de cada vela 15m'}
+          </li>
+        )}
       </ul>
     </div>
   );
@@ -229,16 +257,30 @@ export function PaperDashboard() {
       </div>
     );
   } else if (!focused || windowStatus === 'idle') {
-    center = (
-      <div className="rs-scroll">
-        <RunStats run={pseudoRun} signals={adaptedAll} equity={equity} mode="paper" bySymbol={bySymbol}
-          onPickTrade={(intentId) => {
-            const t = trades.find((x) => x.intentId === intentId);
-            if (t) focusTrade(t);
-          }}
-        />
-      </div>
-    );
+    center =
+      liveTrades.length === 0 ? (
+        <div className="state pp-waiting">
+          <div className="pp-waiting-icon">⏳</div>
+          <p className="pp-waiting-title">El forward-test aún no tiene operaciones</p>
+          <p className="pp-waiting-sub">
+            {status?.clockStart
+              ? `El reloj del gate arrancó el ${formatUtc(status.clockStart).slice(0, 16)}. Las estadísticas se llenan a medida que el candidato genera señales NUEVAS (no las históricas).`
+              : 'El reloj del gate aún no arranca (PAPER_CLOCK_START sin fijar). Hasta encenderlo, todo lo registrado es histórico de contexto y no cuenta.'}
+          </p>
+          {backfillCount > 0 && (
+            <p className="hint">Hay {backfillCount} operaciones históricas (rehidratadas) — actívalas en la lista con "ver histórico" para usarlas como contexto. No se mezclan con el forward-test.</p>
+          )}
+        </div>
+      ) : (
+        <div className="rs-scroll">
+          <RunStats run={pseudoRun} signals={adaptedLive} equity={equity} mode="paper" bySymbol={bySymbol}
+            onPickTrade={(intentId) => {
+              const t = trades.find((x) => x.intentId === intentId);
+              if (t) focusTrade(t);
+            }}
+          />
+        </div>
+      );
   } else if (windowStatus === 'loading') {
     center = <div className="state state-loading">Cargando ventana de velas…</div>;
   } else if (windowStatus === 'error') {

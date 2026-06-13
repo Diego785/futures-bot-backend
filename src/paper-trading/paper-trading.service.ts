@@ -38,6 +38,7 @@ export class PaperTradingService implements OnModuleInit, OnModuleDestroy {
   private readonly enabled: boolean;
   private readonly symbols: string[];
   private readonly engineVersion: string;
+  private readonly clockStart: number; // arranque del reloj del gate (epoch ms); MAX = no arrancó
   private readonly states = new Map<string, SymbolState>();
   private readonly draining = new Set<string>();
   private readonly subs: Subscription[] = [];
@@ -63,6 +64,18 @@ export class PaperTradingService implements OnModuleInit, OnModuleDestroy {
       }
     }
     this.engineVersion = version;
+
+    // Reloj del gate: sin PAPER_CLOCK_START, NADA es 'live' (todo es histórico/contexto) — el deploy
+    // debe fijarlo para encender el forward-test limpio. Acepta fecha ISO o epoch ms.
+    const raw2 = this.config.get<string>('PAPER_CLOCK_START', '');
+    let cs = Number.MAX_SAFE_INTEGER;
+    if (raw2) {
+      const asNum = Number(raw2);
+      const ms = Number.isFinite(asNum) && asNum > 1e11 ? asNum : Date.parse(raw2);
+      if (Number.isFinite(ms)) cs = ms;
+      else this.logger.warn(`PAPER_CLOCK_START inválido ('${raw2}') — el reloj NO arranca (todo backfill).`);
+    }
+    this.clockStart = cs;
   }
 
   async onModuleInit(): Promise<void> {
@@ -170,7 +183,7 @@ export class PaperTradingService implements OnModuleInit, OnModuleDestroy {
           const sig = stateSig(p);
           if (st.prev.get(p.id) !== sig) {
             st.prev.set(p.id, sig);
-            changes.push(toPaperTradeRow(p, buffer, this.engineVersion, st.paramsHash, now));
+            changes.push(toPaperTradeRow(p, buffer, this.engineVersion, st.paramsHash, now, this.clockStart));
           }
         }
         if (changes.length > 0) {
@@ -186,11 +199,17 @@ export class PaperTradingService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /** Resumen para /api/paper/status. */
-  status(): { enabled: boolean; engineVersion: string; symbols: { symbol: string; cursor: number; open: number; paramsHash: string }[] } {
+  /** Resumen para /api/paper/status. clockStart=null si el reloj del gate aún no arrancó. */
+  status(): {
+    enabled: boolean;
+    engineVersion: string;
+    clockStart: number | null;
+    symbols: { symbol: string; cursor: number; open: number; paramsHash: string }[];
+  } {
     return {
       enabled: this.enabled,
       engineVersion: this.engineVersion,
+      clockStart: this.clockStart >= Number.MAX_SAFE_INTEGER ? null : this.clockStart,
       symbols: [...this.states.entries()].map(([symbol, st]) => ({
         symbol,
         cursor: st.cursor,

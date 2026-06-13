@@ -9,6 +9,7 @@ import { bigintToNumber } from '../../common/typeorm/bigint.transformer';
  */
 @Index('uq_paper_trades_sym_time_dir', ['symbol', 'signalBarTime', 'direction'], { unique: true })
 @Index('idx_paper_trades_state', ['state'])
+@Index('idx_paper_trades_phase', ['phase'])
 @Entity('paper_trades')
 export class PaperTradeEntity {
   @PrimaryColumn({ type: 'varchar', length: 80 })
@@ -28,6 +29,11 @@ export class PaperTradeEntity {
 
   @Column({ type: 'varchar', length: 10 })
   state: string; // PENDING | FILLED | CLOSED
+
+  // 'backfill' = histórico rehidratado al arrancar (CONTEXTO, no cuenta en el gate) ·
+  // 'live' = señal posterior al arranque del reloj (PAPER_CLOCK_START) = el forward-test real.
+  @Column({ type: 'varchar', length: 10, default: 'backfill' })
+  phase: string;
 
   @Column({ type: 'double precision' })
   entry: number;

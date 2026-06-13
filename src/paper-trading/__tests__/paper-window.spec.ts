@@ -167,4 +167,14 @@ describe('paper-row.mapper — penetraciones (touched-vs-crossed) y filas', () =
     const cancelled = toPaperTradeRow({ id: intent.id, intent, state: 'CLOSED', cancelReason: 'ranAway' }, candles, 'abc', 'hash', 5);
     expect(cancelled).toMatchObject({ state: 'CLOSED', cancelReason: 'ranAway', rMultiple: null, entryTime: null });
   });
+
+  it('phase: la señal anterior al reloj es backfill; la posterior, live', () => {
+    // signalBarTime del intent = 100. clockStart 200 ⇒ backfill · clockStart 50 ⇒ live.
+    const backfill = toPaperTradeRow({ id: intent.id, intent, state: 'PENDING' }, candles, 'abc', 'hash', 5, 200);
+    expect(backfill.phase).toBe('backfill');
+    const live = toPaperTradeRow({ id: intent.id, intent, state: 'PENDING' }, candles, 'abc', 'hash', 5, 50);
+    expect(live.phase).toBe('live');
+    // Sin clockStart (default 0) ⇒ todo es live (conveniencia de tests).
+    expect(toPaperTradeRow({ id: intent.id, intent, state: 'PENDING' }, candles, 'abc', 'hash', 5).phase).toBe('live');
+  });
 });
