@@ -16,7 +16,8 @@ services:
     env_file: .env
     environment:
       - TZ=America/La_Paz
-    # Instala, compila, migra el esquema (idempotente) y arranca el bot. En reinicio repite (robusto).
-    command: sh -c "npm ci && npm run build && npx typeorm migration:run -d dist/data-source.js && node dist/main"
+    # Instala (con devDeps: nest-cli compila), compila, migra (idempotente) y arranca. NODE_ENV=
+    # production omitiría las devDeps por defecto → --include=dev las fuerza para que 'nest build' exista.
+    command: sh -c "npm ci --include=dev && npm run build && npx typeorm migration:run -d dist/data-source.js && node dist/main"
     ports:
       - '${PORT}:${PORT}'
