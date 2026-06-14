@@ -17,17 +17,21 @@
 
 import {
   detectOrderBlocks,
+  detectSwings,
   computeStateTimeline,
   type BotOb,
   type ObCandle,
   type ObDirection,
+  type Swing,
 } from '../bot-analysis/ob.detector';
 import { detectSweeps } from '../bot-analysis/sweep.detector';
+import { detectStrictFvgs } from '../bot-analysis/fvg.detector';
 import { detectLiquidity, DEFAULT_LIQ_PARAMS, type BotLiquidity } from '../bot-analysis/liquidity.detector';
 import { biasAt, type BiasPoint } from './htf-bias';
 import type { IntentContext, TpSource, TradeDirection, TradeIntent } from './trade-simulator';
 
-export type Gatillo = 'A' | 'B' | 'C';
+// A/B/C ver Capa 4 de SMC-STRATEGY-MECHANICAL. D = Ciclo 3 (CYCLE-3-PREREG): sweep → CHoCH → FVG.
+export type Gatillo = 'A' | 'B' | 'C' | 'D';
 // 'fixedR' = 2R sintético (candidato congelado) · 'liquidity' = nivel de liquidez opuesto (Fase D)
 // · 'structural' = Ciclo 2 (CYCLE-2-PREREG Eje 1): el target del VIDEO — el más cercano entre el
 //   OB OPUESTO vigente (no invalidado a la señal) y la liquidez opuesta no barrida.
@@ -65,6 +69,7 @@ export interface SignalConfig {
   swingLookback: number; // pivotes para OB/sweep/liquidez (default 10)
   confirmProximityFrac: number; // modo B: la madre debe solapar o estar a ≤ frac×rango del OB de confirmación
   poolMode: 'lastSwing' | 'pools'; // gatillo C: qué liquidez se barre (Ciclo 2, CYCLE-2-PREREG Eje 2)
+  maxChochBars: number; // gatillo D: máx. velas tras el sweep para exigir el CHoCH (Ciclo 3, default 15)
 }
 
 // Defaults provisionales 🔴 (alineados con SMC-STRATEGY-MECHANICAL §5).
@@ -79,6 +84,7 @@ export const DEFAULT_SIGNAL_CONFIG: SignalConfig = {
   swingLookback: 10,
   confirmProximityFrac: 1,
   poolMode: 'lastSwing', // candidato congelado; 'pools' = Ciclo 2
+  maxChochBars: 15, // Ciclo 3 (gatillo D)
 };
 
 const round4 = (n: number) => Math.round(n * 1e4) / 1e4;
@@ -358,6 +364,92 @@ function intentsC(
   return out;
 }
 
+// Último swing (high/low) CONFIRMADO en/antes de la vela `barIdx` (índice ≤ barIdx − lookback).
+// `swings` viene ascendente por index. El más reciente que cumple = el "último lower high / higher
+// low" del CHoCH (Video externo BOSS+CHoCH).
+function lastConfirmedSwing(swings: Swing[], kind: 'high' | 'low', barIdx: number, lookback: number): Swing | null {
+  let res: Swing | null = null;
+  for (const s of swings) {
+    if (s.kind !== kind) continue;
+    if (s.index + lookback <= barIdx) res = s;
+    else if (s.index > barIdx) break;
+  }
+  return res;
+}
+
+// D · Sweep → CHoCH → entrada FVG (Ciclo 3, CYCLE-3-PREREG). Tras el sweep, exige un CAMBIO DE
+// CARÁCTER (cuerpo que cierra más allá del último swing opuesto confirmado, dentro de maxChochBars)
+// y entra en el FVG del desplazamiento (entrada precisa, stop corto). Causal de punta a punta.
+function intentsD(
+  symbol: string,
+  tf: string,
+  candles: ObCandle[],
+  liqs: BotLiquidity[],
+  obTargets: ObTargetInfo[],
+  cfg: SignalConfig,
+  idxOfTime: Map<number, number>,
+): { intents: TradeIntent[]; rejects: IntentReject[] } {
+  const out = { intents: [] as TradeIntent[], rejects: [] as IntentReject[] };
+  const lookback = cfg.swingLookback;
+  const sweeps = detectSweeps(symbol, tf, candles, { swingLookback: lookback, poolMode: cfg.poolMode });
+  const swings = detectSwings(candles, lookback);
+  const fvgs = detectStrictFvgs(symbol, tf, candles.map((c) => ({ openTime: c.openTime, high: c.high, low: c.low })));
+
+  for (const s of sweeps) {
+    const direction: TradeDirection = s.direction === 'bullish' ? 'LONG' : 'SHORT';
+    const sIdx = idxOfTime.get(s.sweepBarTime);
+    if (sIdx == null) continue;
+
+    // 1) Nivel del CHoCH = último swing OPUESTO confirmado (high para LONG, low para SHORT).
+    const level = lastConfirmedSwing(swings, direction === 'LONG' ? 'high' : 'low', sIdx, lookback);
+    if (!level) continue; // sin estructura previa → no es setup (no es un descarte "operable")
+
+    // 2) CHoCH = primer cuerpo que cierra más allá del nivel dentro de la ventana.
+    let chochIdx = -1;
+    const lastB = Math.min(sIdx + cfg.maxChochBars, candles.length - 1);
+    for (let b = sIdx + 1; b <= lastB; b++) {
+      const c = candles[b];
+      if (direction === 'LONG' ? c.close > level.price : c.close < level.price) {
+        chochIdx = b;
+        break;
+      }
+    }
+    if (chochIdx < 0) continue; // el sweep no confirmó (sin CHoCH) → no se opera (es el filtro del C3)
+
+    // 3) FVG del desplazamiento del CHoCH = FVG estricto de la dirección, el MÁS RECIENTE cuya 3ª
+    //    vela cae en (sweep, CHoCH+lag]. El FVG del impulso del CHoCH completa ~1 vela DESPUÉS del
+    //    CHoCH (su 3ª vela), por eso la ventana lo incluye. El gap se "conoce" al cierre de esa 3ª vela.
+    const FVG_LAG = 2;
+    const wantDir = direction === 'LONG' ? 'bullish' : 'bearish';
+    let fvg: (typeof fvgs)[number] | null = null;
+    let fvgC3Idx = -1;
+    for (const f of fvgs) {
+      if (f.direction !== wantDir) continue;
+      const c3i = idxOfTime.get(f.candle3Time);
+      if (c3i == null || c3i <= sIdx || c3i > chochIdx + FVG_LAG) continue;
+      if (!fvg || f.candle3Time > fvg.candle3Time) {
+        fvg = f;
+        fvgC3Idx = c3i;
+      }
+    }
+    if (!fvg) continue; // sin FVG en el desplazamiento → no hay entrada (el video la exige)
+
+    // La señal se conoce cuando AMBOS están: el CHoCH y el FVG completo (lo último de los dos).
+    const signalIdx = Math.max(chochIdx, fvgC3Idx);
+    const signalTime = candles[signalIdx].openTime;
+
+    // 4) Entrada en el FVG: zona = [gapLow, gapHigh] → buildIntent pone entry=CE, SL bajo/sobre el FVG.
+    const suffix = `${signalTime}_${direction === 'LONG' ? 'u' : 'd'}`;
+    const res = buildIntent(symbol, tf, suffix, direction, signalTime, fvg.gapLow, fvg.gapHigh, liqs, obTargets, cfg, idxOfTime, {
+      sweptLevel: s.sweptLevel,
+      wickExtreme: s.wickExtreme,
+      sweptSwingTime: s.sweptSwingTime,
+    });
+    collect(res, out, cfg, symbol, tf, suffix, direction, signalTime, fvg.gapLow, fvg.gapHigh);
+  }
+  return out;
+}
+
 /**
  * Versión DETALLADA: además de los intents emitidos devuelve las candidatas DESCARTADAS con su razón
  * (badZone/minStop/minRr/htfBias). El visor las registra para auditar el porqué-no de cada sweep.
@@ -388,8 +480,8 @@ export function generateIntentsDetailed(
     : [];
 
   // OBs: una sola detección sirve a los gatillos A/B (zonas de entrada) y al TP estructural
-  // (targets opuestos con su línea de tiempo causal de invalidación).
-  const needObs = cfg.gatillo !== 'C' || cfg.tpRule === 'structural';
+  // (targets opuestos con su línea de tiempo causal). C y D NO usan OBs de entrada (sweep/FVG).
+  const needObs = cfg.gatillo === 'A' || cfg.gatillo === 'B' || cfg.tpRule === 'structural';
   const obs: BotOb[] = needObs
     ? detectOrderBlocks(symbol, tf, candles, {
         swingLookback: cfg.swingLookback,
@@ -414,6 +506,8 @@ export function generateIntentsDetailed(
   let result: { intents: TradeIntent[]; rejects: IntentReject[] };
   if (cfg.gatillo === 'C') {
     result = intentsC(symbol, tf, candles, liqs, obTargets, cfg, idxOfTime);
+  } else if (cfg.gatillo === 'D') {
+    result = intentsD(symbol, tf, candles, liqs, obTargets, cfg, idxOfTime);
   } else {
     result =
       cfg.gatillo === 'A'

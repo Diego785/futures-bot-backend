@@ -144,6 +144,7 @@ async function main(): Promise<void> {
       minStopPct: parseFloat(getArg('min-stop-pct', '0.003')), // fee-aware: salta stops micro (<0.3%)
       cancelDistanceFrac: parseFloat(getArg('cancel-dist', '1')),
       poolMode: hasFlag('pools') ? 'pools' : 'lastSwing', // Ciclo 2 Eje 2 (--pools)
+      maxChochBars: parseInt(getArg('max-choch', '15'), 10), // Ciclo 3 (gatillo D)
     };
     // Costes: por defecto maker/taker realista (entrada límite maker, SL taker). --fee fuerza tarifa única.
     const feeArg = getArg('fee', '');

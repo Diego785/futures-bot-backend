@@ -273,3 +273,58 @@ describe('TP estructural (Ciclo 2 — CYCLE-2-PREREG Eje 1)', () => {
     expect(intents[0].takeProfit).toBeCloseTo(114, 6);
   });
 });
+
+describe('generateIntents — modo D (sweep → CHoCH → entrada FVG, Ciclo 3)', () => {
+  // Serie construida para un setup D LONG completo:
+  // - swing high 110 (idx1) y swing low 95 (idx3), ambos confirmados con lookback 2.
+  // - idx7 barre el low 95 (low 90 < 95) y reclama (close 99 > 95) = sweep alcista.
+  // - idx8 cierra 112 > 110 (el último swing high) = CHoCH alcista, con un FVG alcista en el impulso
+  //   (idx7.high 100 < idx9.low 104 → gap [100,104]).
+  const oc2 = (openTime: number, open: number, high: number, low: number, close: number): ObCandle => ({
+    openTime, open, high, low, close,
+  });
+  const D_SERIES: ObCandle[] = [
+    oc2(0, 105, 108, 102, 105),
+    oc2(1, 105, 110, 103, 106), // swing high 110
+    oc2(2, 106, 107, 100, 101),
+    oc2(3, 101, 103, 95, 98), // swing low 95
+    oc2(4, 98, 104, 96, 102),
+    oc2(5, 102, 106, 99, 103),
+    oc2(6, 103, 105, 98, 100),
+    oc2(7, 100, 100, 90, 99), // sweep: low 90 < 95, reclama close 99 > 95 (high 100 = c1 del FVG)
+    oc2(8, 99, 113, 99, 112), // CHoCH: close 112 > 110 (impulso; c2 del FVG)
+    oc2(9, 112, 116, 104, 110), // c3 del FVG: low 104 > c1.high 100 → FVG alcista [100, 104]
+    oc2(10, 110, 112, 101, 103), // retest hacia el FVG
+  ];
+  const LBD = { swingLookback: 2, slBufferFrac: 0.1, rMultipleTp: 2, minRr: 1, maxChochBars: 10 } as const;
+
+  it('emite una entrada LONG en el CE del FVG tras el sweep + CHoCH', () => {
+    const intents = generateIntents('BTCUSDT', '15m', D_SERIES, { gatillo: 'D', tpRule: 'fixedR', ...LBD });
+    expect(intents).toHaveLength(1);
+    const it = intents[0];
+    expect(it.direction).toBe('LONG');
+    expect(it.signalBarTime).toBe(9); // CHoCH en idx8, el FVG del impulso completa en idx9 → se conoce ahí
+    expect(it.entry).toBeCloseTo((100 + 104) / 2, 6); // CE del FVG [100,104]
+    expect(it.stopLoss).toBeCloseTo(100 - 0.1 * 4, 6); // borde inferior del FVG − buffer
+    expect(it.context).toMatchObject({ zoneLow: 100, zoneHigh: 104 });
+  });
+
+  it('SIN CHoCH dentro de la ventana → no hay entrada (el filtro del Ciclo 3)', () => {
+    // maxChochBars 0 ⇒ no se busca CHoCH ⇒ ningún sweep confirma.
+    const intents = generateIntents('BTCUSDT', '15m', D_SERIES, { gatillo: 'D', tpRule: 'fixedR', ...LBD, maxChochBars: 0 });
+    expect(intents).toHaveLength(0);
+  });
+
+  it('es CAUSAL: el intent se conoce en el CHoCH, no antes del sweep', () => {
+    const intents = generateIntents('BTCUSDT', '15m', D_SERIES, { gatillo: 'D', tpRule: 'fixedR', ...LBD });
+    // signalBarTime (8) es POSTERIOR al sweep (7) — nunca se adelanta.
+    expect(intents[0].signalBarTime).toBeGreaterThan(7);
+  });
+
+  it('respeta el sesgo HTF: un setup D LONG se filtra si el 4H es bajista', () => {
+    const conBear = generateIntents('BTCUSDT', '15m', D_SERIES, { gatillo: 'D', tpRule: 'fixedR', ...LBD }, [
+      { time: 0, bias: 'bearish' },
+    ]);
+    expect(conBear).toHaveLength(0);
+  });
+});
