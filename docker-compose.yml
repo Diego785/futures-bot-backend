@@ -1,5 +1,10 @@
+# v2 (copiloto SMC) — paper-test del gate #7. Reusa el MISMO contenedor/puerto/proyecto que el v1.
+# Sin Redis (el v2 no usa BullMQ). La base de datos es externa (postgres-db existente, database
+# 'futures_bot_v2' propia → ver .env). Regla Cero: shadow read-only, mercado público (sin credenciales).
+#
+#   cp .env.paper.example .env   # y rellenar DB_PASS (= el del postgres-db) y símbolos
+#   docker compose up -d         # instala, compila, migra (idempotente) y arranca el paper
 services:
-
   futures-bot-backend:
     image: node:22
     container_name: futures-bot-backend
@@ -8,17 +13,10 @@ services:
     volumes:
       - ./:/app
     working_dir: /app
+    env_file: .env
     environment:
       - TZ=America/La_Paz
-    command: >
-      sh -c "npm run build && npm run start:dev"
+    # Instala, compila, migra el esquema (idempotente) y arranca el bot. En reinicio repite (robusto).
+    command: sh -c "npm ci && npm run build && npx typeorm migration:run -d dist/data-source.js && node dist/main"
     ports:
-      - "${PORT}:${PORT}"
-
-  redis:
-    image: redis:7
-    container_name: futures-ai-redis
-    # ports:
-      # - "6380:6379"
-    # volumes:
-    #   - redisdata:/data
+      - '${PORT}:${PORT}'
