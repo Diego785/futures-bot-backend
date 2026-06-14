@@ -35,7 +35,6 @@ export function PaperDashboard() {
   const [windowStatus, setWindowStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [showObs, setShowObs] = useState(true);
   const [showLiq, setShowLiq] = useState(true);
-  const [showBackfill, setShowBackfill] = useState(false); // ver histórico rehidratado (contexto)
 
   const tfMs = tfToMs('15m');
   const tradesRef = useRef(trades);
@@ -126,21 +125,18 @@ export function PaperDashboard() {
   const focused = trades.find((t) => t.intentId === focusedId) ?? null;
   const symbols = useMemo(() => ['ALL', ...new Set(trades.map((t) => t.symbol))], [trades]);
 
-  // SEPARACIÓN CLAVE (gate #7): 'live' = forward-test real (cuenta) · 'backfill' = histórico
-  // rehidratado al arrancar (contexto, NUNCA cuenta ni se mezcla en las estadísticas).
-  const liveTrades = useMemo(() => trades.filter((t) => t.phase === 'live'), [trades]);
-  const backfillCount = trades.length - liveTrades.length;
-
+  // El backend SOLO persiste operaciones 'live' (el forward-test real); el histórico rehidratado
+  // nunca se guarda. Así el historial del paper está siempre limpio: solo las nuevas operaciones.
+  const liveTrades = trades; // (defensivo: ya vienen todas live del API)
   const listed = useMemo(() => {
-    let xs = showBackfill ? trades : liveTrades;
+    let xs = liveTrades;
     if (symbolFilter !== 'ALL') xs = xs.filter((t) => t.symbol === symbolFilter);
     if (listFilter === 'open') xs = xs.filter((t) => t.state !== 'CLOSED');
     else if (listFilter === 'closed') xs = xs.filter((t) => t.state === 'CLOSED' && t.rMultiple != null);
     else if (listFilter === 'cancelled') xs = xs.filter((t) => t.state === 'CLOSED' && t.cancelReason != null);
     return [...xs].sort((a, b) => b.signalBarTime - a.signalBarTime);
-  }, [trades, liveTrades, showBackfill, listFilter, symbolFilter]);
+  }, [liveTrades, listFilter, symbolFilter]);
 
-  // Las ESTADÍSTICAS usan SOLO 'live' (el cuadro del gate no se contamina con el histórico).
   const metrics = useMemo(() => buildPaperMetrics(liveTrades), [liveTrades]);
   const adaptedLive = useMemo(() => liveTrades.map(paperToSignal), [liveTrades]);
   const equity = useMemo(() => equityCurve(adaptedLive), [adaptedLive]);
@@ -199,15 +195,14 @@ export function PaperDashboard() {
     </div>
   );
 
-  const pool = showBackfill ? trades : liveTrades;
   const left = (
     <div className="replay-list">
       <div className="rl-header">
         <select value={listFilter} onChange={(e) => setListFilter(e.target.value as ListFilter)}>
-          <option value="all">Todas ({pool.length})</option>
-          <option value="open">Vivas ({pool.filter((t) => t.state !== 'CLOSED').length})</option>
-          <option value="closed">Cerradas ({pool.filter((t) => t.state === 'CLOSED' && t.rMultiple != null).length})</option>
-          <option value="cancelled">Canceladas ({pool.filter((t) => t.state === 'CLOSED' && t.cancelReason != null).length})</option>
+          <option value="all">Todas ({liveTrades.length})</option>
+          <option value="open">Vivas ({liveTrades.filter((t) => t.state !== 'CLOSED').length})</option>
+          <option value="closed">Cerradas ({liveTrades.filter((t) => t.state === 'CLOSED' && t.rMultiple != null).length})</option>
+          <option value="cancelled">Canceladas ({liveTrades.filter((t) => t.state === 'CLOSED' && t.cancelReason != null).length})</option>
         </select>
         <select value={symbolFilter} onChange={(e) => setSymbolFilter(e.target.value)}>
           {symbols.map((s) => (
@@ -215,16 +210,11 @@ export function PaperDashboard() {
           ))}
         </select>
       </div>
-      {backfillCount > 0 && (
-        <label className="rl-backfill-toggle" title="El histórico rehidratado es CONTEXTO — no cuenta en el gate ni en las estadísticas">
-          <input type="checkbox" checked={showBackfill} onChange={() => setShowBackfill((v) => !v)} /> ver histórico ({backfillCount})
-        </label>
-      )}
       <ul>
         {listed.slice(0, 600).map((t) => (
           <li
             key={t.intentId}
-            className={`rl-item ${t.intentId === focusedId ? 'selected' : ''} ${t.phase === 'backfill' ? 'rl-backfill' : ''}`}
+            className={`rl-item ${t.intentId === focusedId ? 'selected' : ''}`}
             onClick={() => focusTrade(t)}
           >
             <span className="rl-sym">{t.symbol.replace('USDT', '')}</span>
@@ -233,15 +223,10 @@ export function PaperDashboard() {
             <span className={`rl-out ${t.state === 'CLOSED' && t.rMultiple != null ? rClass(t.rMultiple) : t.state === 'FILLED' ? 'pp-live' : ''}`}>
               {stateLabel(t)}
             </span>
-            {t.phase === 'backfill' && <span className="rl-hist" title="histórico rehidratado (no cuenta)">hist</span>}
           </li>
         ))}
         {listed.length === 0 && (
-          <li className="rl-more">
-            {liveTrades.length === 0 && backfillCount > 0
-              ? 'sin operaciones del forward-test aún — activa "ver histórico" para el contexto'
-              : 'sin operaciones aún — el motor registra al cierre de cada vela 15m'}
-          </li>
+          <li className="rl-more">sin operaciones del forward-test aún — el motor registra al cierre de cada vela 15m</li>
         )}
       </ul>
     </div>
@@ -264,12 +249,9 @@ export function PaperDashboard() {
           <p className="pp-waiting-title">El forward-test aún no tiene operaciones</p>
           <p className="pp-waiting-sub">
             {status?.clockStart
-              ? `El reloj del gate arrancó el ${formatUtc(status.clockStart).slice(0, 16)}. Las estadísticas se llenan a medida que el candidato genera señales NUEVAS (no las históricas).`
-              : 'El reloj del gate aún no arranca (PAPER_CLOCK_START sin fijar). Hasta encenderlo, todo lo registrado es histórico de contexto y no cuenta.'}
+              ? `El reloj del gate arrancó el ${formatUtc(status.clockStart).slice(0, 16)}. Aquí aparecerán SOLO las operaciones nuevas a medida que el candidato genere señales. El pasado se audita en la pestaña Backtests.`
+              : 'El reloj del gate aún no arranca (PAPER_CLOCK_START sin fijar). El historial empezará limpio en cuanto lo enciendas en el deploy.'}
           </p>
-          {backfillCount > 0 && (
-            <p className="hint">Hay {backfillCount} operaciones históricas (rehidratadas) — actívalas en la lista con "ver histórico" para usarlas como contexto. No se mezclan con el forward-test.</p>
-          )}
         </div>
       ) : (
         <div className="rs-scroll">

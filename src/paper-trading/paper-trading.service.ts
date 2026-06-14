@@ -183,7 +183,11 @@ export class PaperTradingService implements OnModuleInit, OnModuleDestroy {
           const sig = stateSig(p);
           if (st.prev.get(p.id) !== sig) {
             st.prev.set(p.id, sig);
-            changes.push(toPaperTradeRow(p, buffer, this.engineVersion, st.paramsHash, now, this.clockStart));
+            const row = toPaperTradeRow(p, buffer, this.engineVersion, st.paramsHash, now, this.clockStart);
+            // SOLO el forward-test real (live) se persiste/emite. El histórico rehidratado es CONTEXTO:
+            // vive solo en el motor (para continuidad) y NUNCA ensucia el historial del paper — el
+            // pasado se audita en Backtests. (El reloj NO arrancado ⇒ todo backfill ⇒ no se guarda nada.)
+            if (row.phase === 'live') changes.push(row);
           }
         }
         if (changes.length > 0) {
