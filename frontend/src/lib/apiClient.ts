@@ -1,5 +1,9 @@
 // Cliente HTTP mínimo hacia el backend (Market Data API). El backend tiene CORS abierto.
-const BASE: string = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3300';
+// En producción el dashboard lo sirve el propio backend (mismo origen) → BASE vacío = URLs
+// relativas (HTTP a /api/* y WS a /paper,/market en el mismo puerto, sin CORS ni IP hardcodeada).
+// En dev (vite, :5173) cae a localhost:3300. VITE_API_BASE_URL lo sobreescribe si se despliega aparte.
+const BASE: string =
+  import.meta.env.VITE_API_BASE_URL ?? (import.meta.env.PROD ? '' : 'http://localhost:3300');
 
 export const API_BASE_URL = BASE;
 
