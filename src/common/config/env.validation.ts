@@ -44,9 +44,10 @@ const baseSchema = z.object({
 
   // ─── Exchange URLs y credenciales (read-only; opcionales en skeleton) ───
   // Las credenciales sólo se necesitan para endpoints privados (journal, userTrades);
-  // datos de mercado públicos no las requieren.
-  BINANCE_FUTURES_BASE_URL: z.string().url().optional(),
-  BINANCE_FUTURES_WS_URL: z.string().optional(),
+  // datos de mercado públicos no las requieren. Las URLs son constantes públicas → con default
+  // (el bot funciona out-of-the-box para Binance USDT-M; se pueden sobreescribir por .env si hace falta).
+  BINANCE_FUTURES_BASE_URL: z.string().url().default('https://fapi.binance.com'),
+  BINANCE_FUTURES_WS_URL: z.string().default('wss://fstream.binance.com'),
   BINANCE_API_KEY: z.string().optional(),
   BINANCE_API_SECRET: z.string().optional(),
   BYBIT_BASE_URL: z.string().url().optional(),
