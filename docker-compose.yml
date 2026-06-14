@@ -16,8 +16,13 @@ services:
     env_file: .env
     environment:
       - TZ=America/La_Paz
-    # Instala (con devDeps: nest-cli compila), compila, migra (idempotente) y arranca. NODE_ENV=
-    # production omitiría las devDeps por defecto → --include=dev las fuerza para que 'nest build' exista.
-    command: sh -c "npm ci --include=dev && npm run build && npx typeorm migration:run -d dist/data-source.js && node dist/main"
+    # Instala (con devDeps: nest-cli compila), compila, migra (idempotente) y arranca. --include=dev
+    # fuerza devDeps pese a NODE_ENV=production (sin ellas 'nest build' no existe). Si npm ci falla
+    # (lock con alguna versión que el registro público no tenga), cae a un install fresco que se auto-cura.
+    command: >
+      sh -c "(npm ci --include=dev --no-audit --no-fund || (rm -f package-lock.json && npm install --include=dev --no-audit --no-fund))
+      && npm run build
+      && npx typeorm migration:run -d dist/data-source.js
+      && node dist/main"
     ports:
       - '${PORT}:${PORT}'
