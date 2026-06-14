@@ -1,6 +1,8 @@
 # Ciclo 3 — PRE-REGISTRO: gatillo D (sweep → CHoCH → entrada FVG)
 
-> **Estado:** 🔴 PRE-REGISTRO para construir y correr — NADA mirado aún. Fecha: 2026-06-13.
+> **Estado: ⬛ CERRADO (2026-06-13) — D NO supera al candidato. Por §4, el congelado va al paper TAL
+> CUAL.** 3ª confirmación de que añadir capas SMC a esta mecanización la EMPEORA. Ver §7.
+> Fecha pre-registro: 2026-06-13 (NADA mirado al fijarlo).
 > Fuentes: `transcripts/VIDEO-EXTERNAL-BOSS-CHOCH.md` (2ª fuente SMC independiente) + el "por
 > confirmación" del Video 2 (`SMC-SPEC-VIDEO-2.md`). Objetivo del usuario: **fortalecer el edge**
 > (menos SL, mayor expectancy) — el último lever claramente motivado de las fuentes.
@@ -95,3 +97,44 @@ inducement · killzones · parciales (ninguna fuente los trae). Cada uno exigir�
 - **C3.d** — held-out + walk-forward + veredicto contra §4.
 - **C3.e** — si reemplaza: congelar D, re-registrar canónicas, actualizar el paper; si no, el candidato
   sigue. **En ambos casos: STOP tuneo → paper-test.**
+
+## 7. RESULTADOS (2026-06-13) — D NO supera al candidato (screening full-history, 10 símbolos)
+
+**totalR / N / SL-rate por símbolo:**
+
+| símbolo | C+2R (benchmark) | D+2R | D+estructural |
+|---|---|---|---|
+| BTC | +37.0 / 112 / 24 % | +3.8 / 35 / 43 % | +2.1 / 34 / 62 % |
+| ETH | +1.3 / 192 / 41 % | −1.6 / 44 / 50 % | −15.0 / 42 / 62 % |
+| XRP | +30.5 / 176 / 34 % | −3.6 / 34 / 38 % | −8.9 / 33 / 64 % |
+| SOL | +32.1 / 247 / 35 % | +15.1 / 49 / 35 % | +1.9 / 49 / 61 % |
+| BNB | +8.9 / 100 / 25 % | −11.8 / 33 / 52 % | −9.5 / 32 / 62 % |
+| DOGE | +41.9 / 220 / 36 % | +5.7 / 44 / 41 % | −1.4 / 41 / 61 % |
+| ADA | +33.0 / 222 / 33 % | −7.8 / 40 / 48 % | −16.4 / 40 / 72 % |
+| LINK | +32.5 / 243 / 33 % | +4.7 / 49 / 43 % | +9.7 / 47 / 72 % |
+| AVAX | +1.2 / 248 / 38 % | −2.0 / 54 / 41 % | −5.5 / 52 / 65 % |
+| DOT | −4.8 / 208 / 38 % | +4.5 / 36 / 36 % | −17.8 / 36 / 58 % |
+| **Σ** | **+213.6 / 1968 / pooled +0.109R · 9/10 pos** | **+7.1 / 418 / pooled +0.017R · 5/10 pos** | **≈ −60.6 / 405 · negativo** |
+
+**Veredicto contra §4 — D+2R FALLA en todos los gates:**
+1. Expectancy ≥ candidato + 0.05R? **NO** (+0.017R vs +0.109R — 6× más débil). ✗
+2. ≥7/10 positivo y ninguno < −0.05R? **NO** (5/10; BNB −0.36R, ADA −0.19R). ✗
+3. SL-rate < 30 %? **NO** — D la SUBE (40-52 % en la mayoría) en vez de bajarla. ✗ (lo contrario del objetivo)
+4. N ≥ 40 % del candidato? **NO** (418 = 21 % de 1968). ✗
+> D+estructural aún peor (≈ −60.6R). El screening full-history (incluye held-out) es tan inequívoco
+> que el split formal sería teatro: no hay escenario donde el held-out revierta una brecha de 6× en
+> expectancy + 5/10 robustez.
+
+**Diagnóstico (importante):** la confirmación CHoCH SÍ sube algo el win-rate (BTC 48→51 %), pero:
+(a) el stop ajustado al FVG lo barre el ruido MÁS seguido → SL-rate SUBE, no baja; (b) exigir
+CHoCH+FVG filtra ~80 % de los trades y los que sobreviven NO son de mejor calidad, solo más tardíos
+y con stop más fino. **3ª confirmación del mismo patrón:** gatillo B perdió contra C (rejilla original);
+C2 (estructural/pools) perdió; ahora C3 (CHoCH/FVG) pierde. **El sweep+reclaim crudo con 2R+BE es el
+óptimo ROBUSTO** — cada capa "de libro" que añadimos (confirmación, TP estructural, pools, CHoCH, FVG)
+RESTA. La discrecionalidad de los videos (elegir el CHoCH/FVG/target bueno con el ojo) no mecaniza en
+mejora; mecanizada ingenuamente, daña.
+
+**Decisión (§4, automática): el candidato CONGELADO va al gate #7 TAL CUAL. STOP tuneo.** El gatillo D
+queda como herramienta (`--gatillo D`), no default. No se prueban más variantes ad-hoc (= data-dredging);
+un eventual hito futuro (p. ej. una capa discrecional asistida) exigiría su propio pre-registro y, sobre
+todo, iría DESPUÉS del paper-test. La lección rectora: la mecanización simple es la robusta.

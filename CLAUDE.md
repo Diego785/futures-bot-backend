@@ -133,6 +133,17 @@ adverse selection). v2 mueve la decisión al humano y usa el software como ojos 
   checklist SAFETY-V2 + backups DB/.env ANTES; PAPER_TRADING=true + MARKET_DATA_LIVE=true +
   10 símbolos) → encender el reloj del gate (evaluación a N≥50, ~2,5-3 meses).
 
+- **Ciclo 3 EJECUTADO y CERRADO (2026-06-13): D NO supera al candidato** (`CYCLE-3-PREREG.md` §7).
+  2ª fuente SMC (BOSS+CHoCH, `transcripts/VIDEO-EXTERNAL-BOSS-CHOCH.md`) → gatillo D = sweep → CHoCH
+  → entrada FVG. Screening 10 símbolos: **C+2R +213.6R/N=1968/pooled +0.109R/9-10 pos vs D+2R +7.1R/
+  N=418/pooled +0.017R/5-10 pos** (D+estructural ≈ −60.6R). D falla TODOS los gates del §4 (incl.
+  sube el SL-rate en vez de bajarlo). **3ª confirmación: añadir capas de libro (confirmación/estructural/
+  pools/CHoCH/FVG) EMPEORA esta mecanización; el sweep crudo 2R+BE es el óptimo robusto.** STOP tuneo.
+  El candidato congelado va al gate #7 tal cual; `--gatillo D` queda como herramienta, no default.
+- **Separación histórico/live del paper ✅ + historial LIMPIO** (`PAPER_CLOCK_START`, `paper_trades.phase`):
+  solo se persiste el forward-test real; el rehidratado es contexto en memoria. UI: 3 pestañas + stats
+  densas. Reporte capital $30: minNotional Binance real $5-50 (no $100); ~$0.25-0.30/mes (simbólico).
+
 ## Documentación (fuente de verdad — leer antes de codear)
 - `docs/PRODUCT-VISION.md` — **EL NORTE**: objetivo final (bot rentable y autónomo) + qué debe poder VER el usuario (dashboard en vivo + historial/reportes + replay visual de backtests). El "para qué" innegociable
 - `docs/VISION-V2.md` — filosofía copiloto + definición de éxito
