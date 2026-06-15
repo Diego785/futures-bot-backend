@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppShell } from '../components/layout/AppShell';
 import { ReplayChart } from '../components/replay/ReplayChart';
 import { RunStats } from '../components/replay/RunStats';
+import { PaperLive } from '../components/paper/PaperLive';
 import { fetchPaperStatus, fetchPaperTrades, fetchPaperContext } from '../features/paper/paper.api';
 import type { PaperStatus, PaperTrade } from '../features/paper/paper.types';
 import { buildPaperMetrics, paperBySymbol, paperToSignal } from '../features/paper/paperAdapter';
@@ -16,15 +17,24 @@ import { formatUtc, tfToMs } from '../lib/time';
 
 const PRE_BARS = 300;
 const POST_BARS = 100;
+const GATE_TARGET = 50; // N de operaciones cerradas para la evaluación del gate (#7)
 type ListFilter = 'open' | 'closed' | 'cancelled' | 'all';
+type PaperView = 'resumen' | 'envivo' | 'historial';
 
 /**
- * PESTAÑA PAPER (P.3) — la ventana al gate #7: qué está HACIENDO el candidato congelado en vivo.
- * Registro mecánico sin filtro humano (PAPER-TEST-SPEC §4): estadísticas en vivo, historial
- * completo y cada posición sobre la gráfica con su porqué causal. REUSA la capa visual del visor
- * de backtests (misma causalidad, mismos componentes). Observable, no operable (Regla Cero).
+ * PESTAÑA PAPER (gate #7) — la ventana al forward-test. Tres sub-vistas claras:
+ *  · Resumen   → ¿vamos rentables? capital simulado en $ + estadísticas (SIEMPRE visible).
+ *  · En vivo   → la gráfica del par en tiempo real con el análisis y las entradas del bot.
+ *  · Historial → cada operación cerrada/viva, con su gráfica y porqué causal.
+ * Registro mecánico sin filtro humano. Observable, no operable (Regla Cero).
  */
 export function PaperDashboard() {
+  const [view, setView] = useState<PaperView>(() => {
+    const s = localStorage.getItem('paper.view');
+    return s === 'envivo' || s === 'historial' ? s : 'resumen';
+  });
+  useEffect(() => localStorage.setItem('paper.view', view), [view]);
+
   const [status, setStatus] = useState<PaperStatus | null>(null);
   const [trades, setTrades] = useState<PaperTrade[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -86,7 +96,6 @@ export function PaperDashboard() {
       onConnected: setWsOn,
       onPosition: (row) => {
         upsertTrade(row);
-        // Si el cambio afecta a la posición enfocada, refrescar su ventana de velas.
         if (focusedRef.current === row.intentId) {
           const t = tradesRef.current.find((x) => x.intentId === row.intentId) ?? row;
           void loadWindow({ ...t, ...row });
@@ -97,7 +106,7 @@ export function PaperDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Ventana de velas + contexto SMC de la posición enfocada ──
+  // ── Ventana de velas + contexto SMC de la posición enfocada (Historial) ──
   const loadWindow = useCallback(
     async (t: PaperTrade) => {
       setWindowStatus('loading');
@@ -120,13 +129,14 @@ export function PaperDashboard() {
 
   const focusTrade = useCallback(
     (t: PaperTrade) => {
+      setView('historial');
       setFocusedId(t.intentId);
       void loadWindow(t);
     },
     [loadWindow],
   );
 
-  // Refresco suave de la gráfica de una posición VIVA (la vela nueva aparece sin eventos).
+  // Refresco suave de la gráfica de una posición VIVA enfocada.
   useEffect(() => {
     if (!focusedId) return;
     const t = setInterval(() => {
@@ -136,21 +146,12 @@ export function PaperDashboard() {
     return () => clearInterval(t);
   }, [focusedId, loadWindow]);
 
-  const showStats = () => {
-    setFocusedId(null);
-    setCandles([]);
-    setContext(null);
-    setWindowStatus('idle');
-  };
-
   // ── Derivados ──
   const focused = trades.find((t) => t.intentId === focusedId) ?? null;
+  const liveSymbols = useMemo(() => status?.symbols.map((s) => s.symbol) ?? [], [status]);
   const symbols = useMemo(() => ['ALL', ...new Set(trades.map((t) => t.symbol))], [trades]);
+  const liveTrades = trades; // el backend solo persiste 'live' → historial siempre limpio
 
-  // El backend SOLO persiste operaciones 'live' (el forward-test real); el histórico rehidratado
-  // nunca se guarda. Así el historial del paper está siempre limpio: solo las nuevas operaciones.
-  const liveTrades = trades; // (defensivo: ya vienen todas live del API)
-  const capital = useMemo(() => computeCapital(liveTrades, capitalConfig), [liveTrades, capitalConfig]);
   const listed = useMemo(() => {
     let xs = liveTrades;
     if (symbolFilter !== 'ALL') xs = xs.filter((t) => t.symbol === symbolFilter);
@@ -161,6 +162,7 @@ export function PaperDashboard() {
   }, [liveTrades, listFilter, symbolFilter]);
 
   const metrics = useMemo(() => buildPaperMetrics(liveTrades), [liveTrades]);
+  const capital = useMemo(() => computeCapital(liveTrades, capitalConfig), [liveTrades, capitalConfig]);
   const adaptedLive = useMemo(() => liveTrades.map(paperToSignal), [liveTrades]);
   const equity = useMemo(() => equityCurve(adaptedLive), [adaptedLive]);
   const bySymbol = useMemo(() => paperBySymbol(liveTrades), [liveTrades]);
@@ -169,7 +171,7 @@ export function PaperDashboard() {
     return {
       id: 'paper',
       createdAt: 0,
-      symbol: symbols.length > 2 ? `${symbols.length - 1} símbolos` : (symbols[1] ?? '—'),
+      symbol: liveSymbols.length > 1 ? `${liveSymbols.length} símbolos` : (liveSymbols[0] ?? '—'),
       tf: '15m',
       fromTime: times.length ? Math.min(...times) : null,
       toTime: times.length ? Math.max(...times) : null,
@@ -182,9 +184,9 @@ export function PaperDashboard() {
       note: '',
       biasPoints: null,
     } as BacktestRunDetail;
-  }, [liveTrades, metrics, status, symbols]);
+  }, [liveTrades, metrics, status, liveSymbols]);
 
-  // Señales del símbolo enfocado dentro de la ventana (la capa de marcadores de la gráfica).
+  // Señales del símbolo enfocado dentro de la ventana (Historial).
   const chartSignals = useMemo(() => {
     if (!focused || candles.length === 0) return [];
     const from = candles[0].openTime;
@@ -197,28 +199,71 @@ export function PaperDashboard() {
   const fmtR = (r: number | null | undefined) => (r == null ? '—' : `${r >= 0 ? '+' : ''}${r.toFixed(2)}R`);
   const rClass = (r: number | null) => (r == null ? '' : r > 0.05 ? 'r-pos' : r < -0.05 ? 'r-neg' : 'r-zero');
   const stateLabel = (t: PaperTrade) =>
-    t.state === 'PENDING' ? 'pendiente' : t.state === 'FILLED' ? 'EN POSICIÓN' : t.cancelReason ? `✕ ${t.cancelReason}` : `${t.exitReason} ${fmtR(t.rMultiple)}`;
+    t.state === 'PENDING'
+      ? 'pendiente'
+      : t.state === 'FILLED'
+        ? 'EN POSICIÓN'
+        : t.cancelReason
+          ? `✕ ${t.cancelReason}`
+          : `${t.exitReason} ${fmtR(t.rMultiple)}`;
 
-  // ── Render ──
-  const topBar = (
-    <div className="replay-topbar">
-      <span className="rt-title">Paper-test (gate #7)</span>
-      <span className={`pp-ws ${wsOn ? 'on' : ''}`} title="Conexión al stream /paper">{wsOn ? '● EN VIVO' : '○ sin stream'}</span>
+  // ── Barra superior: estado del gate + sub-pestañas ──
+  const subtabs: { id: PaperView; label: string; sub: string }[] = [
+    { id: 'resumen', label: 'Resumen', sub: '¿vamos rentables?' },
+    { id: 'envivo', label: 'En vivo', sub: 'gráfica + análisis' },
+    { id: 'historial', label: 'Historial', sub: `${liveTrades.length} operaciones` },
+  ];
+  const topBarContent = (
+    <>
+      <div className="pp-subtabs">
+        {subtabs.map((t) => (
+          <button key={t.id} className={view === t.id ? 'on' : ''} onClick={() => setView(t.id)}>
+            <span className="pp-st-label">{t.label}</span>
+            <span className="pp-st-sub">{t.sub}</span>
+          </button>
+        ))}
+      </div>
+      <span className={`pp-ws ${wsOn ? 'on' : ''}`} title="Conexión al stream /paper">
+        {wsOn ? '● EN VIVO' : '○ sin stream'}
+      </span>
       {status && (
         <span className="rt-meta" title={status.symbols.map((s) => `${s.symbol} ${s.paramsHash}`).join('\n')}>
-          engine <code>{status.engineVersion}</code> · {status.symbols.length} símbolos ·{' '}
-          {status.clockStart
-            ? `reloj ▶ ${formatUtc(status.clockStart).slice(0, 10)} · ${liveTrades.length} en vivo`
-            : 'reloj ⏸ sin arrancar'}
+          engine <code>{status.engineVersion}</code> ·{' '}
+          {status.clockStart ? `reloj ▶ ${formatUtc(status.clockStart).slice(0, 10)}` : 'reloj ⏸'}
         </span>
       )}
-      <button className="rt-stats-btn" onClick={showStats} title="Estadísticas en vivo del paper">📊 estadísticas</button>
-      <label className="rt-toggle"><input type="checkbox" checked={showObs} onChange={() => setShowObs((v) => !v)} /> OBs</label>
-      <label className="rt-toggle"><input type="checkbox" checked={showLiq} onChange={() => setShowLiq((v) => !v)} /> liquidez</label>
+    </>
+  );
+  const topBar = <div className="pp-topbar">{topBarContent}</div>;
+
+  // ── Banner del gate (Resumen) ──
+  const gateBanner = (
+    <div className="pp-gate">
+      <div className="pp-gate-row">
+        <span className="pp-gate-title">Gate #7 · forward-test en vivo (Regla Cero — no opera)</span>
+        <span className="pp-gate-clock">
+          {status?.clockStart ? `reloj ▶ ${formatUtc(status.clockStart).slice(0, 16)} UTC` : 'reloj ⏸ sin arrancar'}
+        </span>
+      </div>
+      <div className="pp-gate-prog">
+        <div className="pp-gate-bar">
+          <div className="pp-gate-fill" style={{ width: `${Math.min(100, (metrics.trades / GATE_TARGET) * 100)}%` }} />
+        </div>
+        <span className="pp-gate-n">
+          <b>{metrics.trades}</b>/{GATE_TARGET} operaciones cerradas hacia la evaluación
+        </span>
+      </div>
+      {metrics.trades === 0 && (
+        <p className="pp-gate-note">
+          Aún sin operaciones cerradas. El candidato genera señales al cierre de cada vela 15m y son poco frecuentes
+          (~1 cada varios días por par), así que las primeras tardan días. El pasado se audita en la pestaña Backtests.
+        </p>
+      )}
     </div>
   );
 
-  const left = (
+  // ── Lista del historial (izquierda) ──
+  const histList = (
     <div className="replay-list">
       <div className="rl-header">
         <select value={listFilter} onChange={(e) => setListFilter(e.target.value as ListFilter)}>
@@ -252,69 +297,17 @@ export function PaperDashboard() {
           </li>
         ))}
         {listed.length === 0 && (
-          <li className="rl-more">sin operaciones del forward-test aún — el motor registra al cierre de cada vela 15m</li>
+          <li className="rl-more">sin operaciones aún — el motor registra al cierre de cada vela 15m</li>
         )}
       </ul>
     </div>
   );
 
-  let center: React.ReactNode;
-  if (error) {
-    center = (
-      <div className="state state-error">
-        <p>Error del paper</p>
-        <code>{error}</code>
-        <p className="hint">¿Backend con DB_ENABLED=true y PAPER_TRADING=true?</p>
-      </div>
-    );
-  } else if (!focused || windowStatus === 'idle') {
-    center =
-      liveTrades.length === 0 ? (
-        <div className="state pp-waiting">
-          <div className="pp-waiting-icon">⏳</div>
-          <p className="pp-waiting-title">El forward-test aún no tiene operaciones</p>
-          <p className="pp-waiting-sub">
-            {status?.clockStart
-              ? `El reloj del gate arrancó el ${formatUtc(status.clockStart).slice(0, 16)}. Aquí aparecerán SOLO las operaciones nuevas a medida que el candidato genere señales. El pasado se audita en la pestaña Backtests.`
-              : 'El reloj del gate aún no arranca (PAPER_CLOCK_START sin fijar). El historial empezará limpio en cuanto lo enciendas en el deploy.'}
-          </p>
-        </div>
-      ) : (
-        <div className="rs-scroll">
-          <CapitalPanel summary={capital} onConfig={onCapitalConfig} />
-          <RunStats run={pseudoRun} signals={adaptedLive} equity={equity} mode="paper" bySymbol={bySymbol}
-            onPickTrade={(intentId) => {
-              const t = trades.find((x) => x.intentId === intentId);
-              if (t) focusTrade(t);
-            }}
-          />
-        </div>
-      );
-  } else if (windowStatus === 'loading') {
-    center = <div className="state state-loading">Cargando ventana de velas…</div>;
-  } else if (windowStatus === 'error') {
-    center = <div className="state state-error">No se pudo cargar la ventana de velas.</div>;
-  } else {
-    center = (
-      <div className="replay-center">
-        <ReplayChart
-          candles={candles}
-          cursorIdx={candles.length - 1} // el cursor del paper ES el presente
-          tfMs={tfMs}
-          signals={chartSignals}
-          focused={focused ? paperToSignal(focused) : null}
-          context={context}
-          showObs={showObs}
-          showLiq={showLiq}
-        />
-      </div>
-    );
-  }
-
-  const right = (
+  // ── Inspector del trade enfocado (Historial, derecha) ──
+  const histInspector = (
     <div className="replay-inspector">
       {!focused ? (
-        <p className="ri-empty">Sin posición enfocada — elige una de la lista o haz click en la equity.</p>
+        <p className="ri-empty">Elige una operación de la lista para ver su gráfica y su porqué causal.</p>
       ) : (
         <>
           <div className="ri-head">
@@ -406,5 +399,128 @@ export function PaperDashboard() {
     </div>
   );
 
-  return <AppShell topBar={topBar} left={left} center={center} right={right} bottom={bottom} leftOpen={true} rightOpen={true} bottomOpen={true} />;
+  if (error) {
+    return (
+      <AppShell
+        topBar={topBar}
+        left={null}
+        center={
+          <div className="state state-error">
+            <p>Error del paper</p>
+            <code>{error}</code>
+            <p className="hint">¿Backend con DB_ENABLED=true y PAPER_TRADING=true?</p>
+          </div>
+        }
+        right={null}
+        bottom={bottom}
+        leftOpen={false}
+        rightOpen={false}
+        bottomOpen={true}
+      />
+    );
+  }
+
+  // ── RESUMEN: capital + estadísticas, SIEMPRE visible ──
+  if (view === 'resumen') {
+    return (
+      <AppShell
+        topBar={topBar}
+        left={null}
+        center={
+          <div className="rs-scroll">
+            <div className="pp-resumen">
+              {gateBanner}
+              <CapitalPanel summary={capital} onConfig={onCapitalConfig} />
+              <RunStats
+                run={pseudoRun}
+                signals={adaptedLive}
+                equity={equity}
+                mode="paper"
+                bySymbol={bySymbol}
+                onPickTrade={(intentId) => {
+                  const t = trades.find((x) => x.intentId === intentId);
+                  if (t) focusTrade(t);
+                }}
+              />
+            </div>
+          </div>
+        }
+        right={null}
+        bottom={bottom}
+        leftOpen={false}
+        rightOpen={false}
+        bottomOpen={true}
+      />
+    );
+  }
+
+  // ── EN VIVO: la gráfica del par en tiempo real ──
+  if (view === 'envivo') {
+    return (
+      <AppShell
+        topBar={topBar}
+        left={null}
+        center={<PaperLive symbols={liveSymbols} trades={trades} />}
+        right={null}
+        bottom={bottom}
+        leftOpen={false}
+        rightOpen={false}
+        bottomOpen={true}
+      />
+    );
+  }
+
+  // ── HISTORIAL: lista + gráfica de la operación enfocada + inspector ──
+  let histCenter: React.ReactNode;
+  if (!focused || windowStatus === 'idle') {
+    histCenter = (
+      <div className="state pp-waiting">
+        <div className="pp-waiting-icon">📜</div>
+        <p className="pp-waiting-title">{liveTrades.length === 0 ? 'Sin operaciones todavía' : 'Elige una operación de la lista'}</p>
+        <p className="pp-waiting-sub">
+          {liveTrades.length === 0
+            ? 'Cuando el candidato genere su primera señal, aparecerá aquí con su gráfica. El resumen y el capital están en la pestaña Resumen.'
+            : 'A la izquierda está cada operación del forward-test. Haz click para ver su gráfica con niveles, contexto SMC y el porqué causal.'}
+        </p>
+      </div>
+    );
+  } else if (windowStatus === 'loading') {
+    histCenter = <div className="state state-loading">Cargando ventana de velas…</div>;
+  } else if (windowStatus === 'error') {
+    histCenter = <div className="state state-error">No se pudo cargar la ventana de velas.</div>;
+  } else {
+    histCenter = (
+      <div className="replay-center">
+        <ReplayChart
+          candles={candles}
+          cursorIdx={candles.length - 1}
+          tfMs={tfMs}
+          signals={chartSignals}
+          focused={focused ? paperToSignal(focused) : null}
+          context={context}
+          showObs={showObs}
+          showLiq={showLiq}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <AppShell
+      topBar={
+        <div className="pp-topbar">
+          {topBarContent}
+          <label className="rt-toggle"><input type="checkbox" checked={showObs} onChange={() => setShowObs((v) => !v)} /> OBs</label>
+          <label className="rt-toggle"><input type="checkbox" checked={showLiq} onChange={() => setShowLiq((v) => !v)} /> liquidez</label>
+        </div>
+      }
+      left={histList}
+      center={histCenter}
+      right={histInspector}
+      bottom={bottom}
+      leftOpen={true}
+      rightOpen={true}
+      bottomOpen={true}
+    />
+  );
 }
