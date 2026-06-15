@@ -34,6 +34,7 @@ interface Props {
   showLiq: boolean;
   sweeps?: BotSweep[]; // barridos de liquidez (gatillo del bot) — opcional (vista En vivo)
   fvgs?: BotFvg[]; // Fair Value Gaps — opcional (vista En vivo)
+  liveTail?: boolean; // En vivo: la última vela se actualiza en tiempo real sin resetear el zoom
 }
 
 const MAX_OBS = 12; // anti-ruido: OBs visibles más recientes
@@ -46,7 +47,7 @@ const SWEPT_LINGER_BARS = 10; // una liquidez barrida se sigue viendo N velas (p
  * desde la confirmación de su pivote). Nada se pinta hacia atrás: si un detector tuviera lookahead,
  * AQUÍ se vería.
  */
-export function ReplayChart({ candles, cursorIdx, tfMs, signals, focused, context, showObs, showLiq, sweeps = [], fvgs = [] }: Props) {
+export function ReplayChart({ candles, cursorIdx, tfMs, signals, focused, context, showObs, showLiq, sweeps = [], fvgs = [], liveTail = false }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
@@ -120,9 +121,16 @@ export function ReplayChart({ candles, cursorIdx, tfMs, signals, focused, contex
     const chart = chartRef.current;
     if (!series || !chart || candles.length === 0) return;
     const idx = Math.min(Math.max(cursorIdx, 0), candles.length - 1);
-    const newWindow = prevCandlesRef.current !== candles;
+    const prev = prevCandlesRef.current;
+    const newWindow = prev !== candles;
+    const sameStart = prev != null && prev.length > 0 && prev[0].openTime === candles[0].openTime;
     if (!newWindow && idx === prevIdxRef.current + 1) {
       series.update(toBar(candles[idx]));
+    } else if (newWindow && liveTail && sameStart) {
+      // Cola VIVA (vista En vivo): el inicio de la ventana NO cambió → solo cambió/creció el final
+      // (vela en formación o cierre). Actualiza por el final con series.update SIN resetear el
+      // timescale → se ve el movimiento en tiempo real y se preserva el zoom/pan del usuario.
+      for (let i = Math.max(prevIdxRef.current, 0); i <= idx; i++) series.update(toBar(candles[i]));
     } else {
       series.setData(candles.slice(0, idx + 1).map(toBar));
       if (newWindow) {
@@ -134,7 +142,7 @@ export function ReplayChart({ candles, cursorIdx, tfMs, signals, focused, contex
     refPricesRef.current = [candles[0].l, candles[0].h];
     prevCandlesRef.current = candles;
     prevIdxRef.current = idx;
-  }, [candles, cursorIdx]);
+  }, [candles, cursorIdx, liveTail]);
 
   // ── Marcadores y niveles CAUSALES según el cursor ──
   useEffect(() => {

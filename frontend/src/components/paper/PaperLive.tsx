@@ -15,8 +15,9 @@ import type { ReplayContextResponse } from '../../features/backtest-viewer/backt
 import { LiveClient, type MarketStatus } from '../../lib/liveClient';
 import { tfToMs } from '../../lib/time';
 
-const TF = '15m' as Timeframe;
-const WINDOW = 400;
+// El bot OPERA en 15m (gatillo) y mira 4H (sesgo). Son las únicas dos TF que ingesta el backend y
+// que el candidato usa; por eso la vista solo ofrece esas dos (otras TF no son parte de su lógica).
+const VIEW_TFS: Timeframe[] = ['15m' as Timeframe, '4h' as Timeframe];
 
 interface Props {
   symbols: string[]; // los 10 del gate
@@ -49,10 +50,11 @@ const agoLabel = (ms: number) => {
 };
 
 /**
- * Vista EN VIVO del paper: la gráfica del par en tiempo real + el análisis del bot, y el panel
- * "¿qué mira el bot ahora?" (sesgo 4H, qué busca, liquidez objetivo) que explica POR QUÉ entra o no.
- * 🎯 Lo que OPERA: barrido de liquidez (a favor del sesgo HTF) → entrada en el CE. 📐 Contexto: OB/FVG.
- * Avanza al CIERRE de la vela 15m (cuando el motor decide). Observable, no operable (Regla Cero).
+ * Vista EN VIVO del paper: la gráfica del par EN TIEMPO REAL (la vela en formación se mueve con el
+ * precio) + el análisis del bot, y el panel "¿qué mira el bot ahora?" (sesgo 4H, qué busca, liquidez
+ * objetivo) que explica POR QUÉ entra o no. 🎯 Lo que OPERA: barrido (a favor del sesgo) → entrada en
+ * el CE. 📐 Contexto: OB/FVG. OJO: el motor DECIDE al CIERRE de la vela 15m (no intra-vela) — la vela
+ * viva es solo visual. Observable, no operable (Regla Cero).
  */
 export function PaperLive({ symbols, trades }: Props) {
   const list = symbols.length ? symbols : ['BTCUSDT'];
@@ -60,50 +62,64 @@ export function PaperLive({ symbols, trades }: Props) {
     const s = localStorage.getItem('paper.live.symbol');
     return s && list.includes(s) ? s : list[0];
   });
+  const [tf, setTf] = useState<Timeframe>(() => {
+    const s = localStorage.getItem('paper.live.tf');
+    return s === '4h' ? ('4h' as Timeframe) : ('15m' as Timeframe);
+  });
   const [candles, setCandles] = useState<Candle[]>([]);
   const [context, setContext] = useState<ReplayContextResponse | null>(null);
   const [sweeps, setSweeps] = useState<BotSweep[]>([]);
   const [fvgs, setFvgs] = useState<BotFvg[]>([]);
   const [bias, setBias] = useState<BotBiasResponse | null>(null);
+  const [livePrice, setLivePrice] = useState<number | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [market, setMarket] = useState<MarketStatus>('OFFLINE');
   const [showObs, setShowObs] = useState(true);
   const [showLiq, setShowLiq] = useState(true);
   const [showSweeps, setShowSweeps] = useState(true);
   const [showFvg, setShowFvg] = useState(false);
-  const tfMs = tfToMs(TF);
+
+  const is15m = tf === '15m';
+  const tfMs = tfToMs(tf);
   const liveRef = useRef<LiveClient | null>(null);
   const symRef = useRef(symbol);
   symRef.current = symbol;
+  const tfRef = useRef(tf);
+  tfRef.current = tf;
+  const lastTickRef = useRef(0);
 
   useEffect(() => localStorage.setItem('paper.live.symbol', symbol), [symbol]);
+  useEffect(() => localStorage.setItem('paper.live.tf', tf), [tf]);
 
-  // Re-deriva todo el análisis del bot para el símbolo actual (contexto OB/liquidez + barridos + FVG + sesgo).
-  const refreshAnalysis = useCallback(
-    (cs: Candle[]) => {
-      const sym = symRef.current;
-      if (cs.length) {
-        const from = cs[0].openTime;
-        const to = cs[cs.length - 1].openTime + tfMs;
-        fetchPaperContext(sym, from, to).then(setContext).catch(() => setContext(null));
-      }
-      fetchBotSweeps(sym, TF).then((r) => setSweeps(r.sweeps)).catch(() => setSweeps([]));
-      fetchBotFvgs(sym, TF).then((r) => setFvgs(r.fvgs)).catch(() => setFvgs([]));
-      fetchBotBias(sym).then(setBias).catch(() => setBias(null));
-    },
-    [tfMs],
-  );
+  // Re-deriva el análisis del bot (sesgo 4H siempre; contexto/barridos/FVG solo en la vista 15m).
+  const refreshAnalysis = useCallback((cs: Candle[]) => {
+    const sym = symRef.current;
+    fetchBotBias(sym).then(setBias).catch(() => setBias(null));
+    if (tfRef.current !== '15m') {
+      setContext(null);
+      setSweeps([]);
+      setFvgs([]);
+      return;
+    }
+    if (cs.length) {
+      const from = cs[0].openTime;
+      const to = cs[cs.length - 1].openTime + tfToMs('15m');
+      fetchPaperContext(sym, from, to).then(setContext).catch(() => setContext(null));
+    }
+    fetchBotSweeps(sym, '15m' as Timeframe).then((r) => setSweeps(r.sweeps)).catch(() => setSweeps([]));
+    fetchBotFvgs(sym, '15m' as Timeframe).then((r) => setFvgs(r.fvgs)).catch(() => setFvgs([]));
+  }, []);
 
-  // Carga inicial (y al cambiar símbolo).
+  // Carga inicial (y al cambiar símbolo o TF).
   useEffect(() => {
     let cancelled = false;
     setStatus('loading');
     setContext(null);
     setSweeps([]);
     setFvgs([]);
-    setBias(null);
     setCandles([]);
-    fetchCandles(symbol, TF, WINDOW)
+    setLivePrice(null);
+    fetchCandles(symbol, tf, tf === '15m' ? 400 : 300)
       .then((res) => {
         if (cancelled) return;
         setCandles(res.candles);
@@ -116,23 +132,41 @@ export function PaperLive({ symbols, trades }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [symbol, refreshAnalysis]);
+  }, [symbol, tf, refreshAnalysis]);
 
-  // Conexión live: la gráfica + el análisis avanzan al CIERRE de cada vela 15m.
+  // Conexión live: la vela en FORMACIÓN se mueve con el precio (visual); al CIERRE el motor decide
+  // y se re-deriva el análisis.
   useEffect(() => {
     const client = new LiveClient();
     liveRef.current = client;
+    const applyCandle = (c: Candle): boolean => c.symbol === symRef.current && c.tf === tfRef.current;
     client.connect({
-      onPrice: () => {},
-      onLiveUpdate: () => {},
+      onPrice: (sym, price) => {
+        if (sym === symRef.current) setLivePrice(price);
+      },
+      onLiveUpdate: (c) => {
+        if (!applyCandle(c)) return;
+        setLivePrice(c.c);
+        const t = Date.now();
+        if (t - lastTickRef.current < 700) return; // throttle visual (no recalcular en cada tick)
+        lastTickRef.current = t;
+        setCandles((prev) => {
+          if (prev.length === 0) return prev;
+          const last = prev[prev.length - 1];
+          if (c.openTime === last.openTime) return [...prev.slice(0, -1), c];
+          if (c.openTime > last.openTime) return [...prev, c];
+          return prev;
+        });
+      },
       onClosed: (c) => {
-        if (c.symbol !== symRef.current || c.tf !== TF) return;
+        if (!applyCandle(c)) return;
+        setLivePrice(c.c);
         setCandles((prev) => {
           if (prev.length === 0) return prev;
           const last = prev[prev.length - 1];
           let next: Candle[];
           if (c.openTime === last.openTime) next = [...prev.slice(0, -1), c];
-          else if (c.openTime > last.openTime) next = [...prev, c].slice(-WINDOW);
+          else if (c.openTime > last.openTime) next = [...prev, c];
           else return prev;
           refreshAnalysis(next);
           return next;
@@ -140,7 +174,7 @@ export function PaperLive({ symbols, trades }: Props) {
       },
       onStatus: setMarket,
     });
-    client.setStream(symRef.current, TF);
+    client.setStream(symRef.current, tfRef.current);
     return () => {
       client.disconnect();
       liveRef.current = null;
@@ -148,10 +182,13 @@ export function PaperLive({ symbols, trades }: Props) {
   }, [refreshAnalysis]);
 
   useEffect(() => {
-    liveRef.current?.setStream(symbol, TF);
-  }, [symbol]);
+    liveRef.current?.setStream(symbol, tf);
+  }, [symbol, tf]);
 
-  const signals = useMemo(() => trades.filter((t) => t.symbol === symbol).map(paperToSignal), [trades, symbol]);
+  const signals = useMemo(
+    () => (is15m ? trades.filter((t) => t.symbol === symbol).map(paperToSignal) : []),
+    [trades, symbol, is15m],
+  );
   const liveIntent = useMemo(
     () =>
       trades
@@ -159,17 +196,16 @@ export function PaperLive({ symbols, trades }: Props) {
         .sort((a, b) => b.signalBarTime - a.signalBarTime)[0] ?? null,
     [trades, symbol],
   );
-  const focused = useMemo(() => (liveIntent ? paperToSignal(liveIntent) : null), [liveIntent]);
+  const focused = useMemo(() => (is15m && liveIntent ? paperToSignal(liveIntent) : null), [is15m, liveIntent]);
 
   // ── Panel "¿qué mira el bot ahora?" ──
-  const price = candles.length ? candles[candles.length - 1].c : 0;
+  const price = livePrice ?? (candles.length ? candles[candles.length - 1].c : 0);
   const seeking: 'LONG' | 'SHORT' | null =
     bias?.bias === 'bullish' ? 'LONG' : bias?.bias === 'bearish' ? 'SHORT' : null;
   const targetLiq = useMemo(() => {
     if (!context || !seeking || price === 0) return null;
     const unswept = context.liquidity.filter((l) => l.sweptAtTime == null);
     if (seeking === 'LONG') {
-      // El bot busca BARRER un low por DEBAJO del precio y reclamar → LONG.
       return unswept
         .filter((l) => (l.type === 'swingLow' || l.type === 'equalLow') && l.level < price)
         .sort((a, b) => b.level - a.level)[0] ?? null;
@@ -192,16 +228,25 @@ export function PaperLive({ symbols, trades }: Props) {
             <option key={s} value={s}>{s.replace('USDT', '')}</option>
           ))}
         </select>
-        <span className="pl-tf">15m</span>
-        <span className={`badge mkt ${mktClass[market]}`}>{market === 'LIVE' ? '● en vivo' : market.toLowerCase()}</span>
-        <span className="pl-toggles">
-          <label className="rt-toggle"><input type="checkbox" checked={showObs} onChange={() => setShowObs((v) => !v)} /> OB</label>
-          <label className="rt-toggle"><input type="checkbox" checked={showLiq} onChange={() => setShowLiq((v) => !v)} /> liquidez</label>
-          <label className="rt-toggle"><input type="checkbox" checked={showSweeps} onChange={() => setShowSweeps((v) => !v)} /> barridos</label>
-          <label className="rt-toggle"><input type="checkbox" checked={showFvg} onChange={() => setShowFvg((v) => !v)} /> FVG</label>
+        <span className="pl-tfsel">
+          {VIEW_TFS.map((t) => (
+            <button key={t} className={tf === t ? 'on' : ''} onClick={() => setTf(t)} title={t === '15m' ? 'gatillo del bot' : 'sesgo del bot'}>
+              {t === '15m' ? '15m' : '4H'}
+            </button>
+          ))}
         </span>
-        <span className="pl-legend" title="🎯 Lo que el bot OPERA: barrido de liquidez (a favor del sesgo 4H) → entrada en el CE (entry/SL/TP). 📐 Contexto de estudio: OB, FVG. Los puntos ámbar son barridos. El motor decide al cierre de la vela 15m.">
-          🎯 entrada (líneas) · ⬤ barrido · 📐 OB/FVG
+        <span className={`badge mkt ${mktClass[market]}`}>{market === 'LIVE' ? '● en vivo' : market.toLowerCase()}</span>
+        {livePrice != null && <span className="pl-price">{livePrice.toLocaleString('en-US')}</span>}
+        {is15m && (
+          <span className="pl-toggles">
+            <label className="rt-toggle"><input type="checkbox" checked={showObs} onChange={() => setShowObs((v) => !v)} /> OB</label>
+            <label className="rt-toggle"><input type="checkbox" checked={showLiq} onChange={() => setShowLiq((v) => !v)} /> liquidez</label>
+            <label className="rt-toggle"><input type="checkbox" checked={showSweeps} onChange={() => setShowSweeps((v) => !v)} /> barridos</label>
+            <label className="rt-toggle"><input type="checkbox" checked={showFvg} onChange={() => setShowFvg((v) => !v)} /> FVG</label>
+          </span>
+        )}
+        <span className="pl-legend" title="🎯 Lo que el bot OPERA: barrido de liquidez (a favor del sesgo 4H) → entrada en el CE (entry/SL/TP). 📐 Contexto de estudio: OB, FVG. ⬤ ámbar = barrido. El motor DECIDE al cierre de la vela 15m; la vela viva es solo visual.">
+          {is15m ? '🎯 entrada · ⬤ barrido · 📐 OB/FVG' : 'vista 4H = el sesgo del bot (decide en 15m)'}
         </span>
       </div>
 
@@ -237,8 +282,8 @@ export function PaperLive({ symbols, trades }: Props) {
       </div>
 
       <div className="pl-chart">
-        {status === 'loading' && <div className="state state-loading">Cargando {symbol.replace('USDT', '')}…</div>}
-        {status === 'error' && <div className="state state-error">No se pudieron cargar las velas de {symbol}.</div>}
+        {status === 'loading' && <div className="state state-loading">Cargando {symbol.replace('USDT', '')} {tf}…</div>}
+        {status === 'error' && <div className="state state-error">No se pudieron cargar las velas de {symbol} {tf}.</div>}
         {status === 'ready' && candles.length > 0 && (
           <ReplayChart
             candles={candles}
@@ -246,11 +291,12 @@ export function PaperLive({ symbols, trades }: Props) {
             tfMs={tfMs}
             signals={signals}
             focused={focused}
-            context={context}
+            context={is15m ? context : null}
             showObs={showObs}
             showLiq={showLiq}
-            sweeps={showSweeps ? sweeps : []}
-            fvgs={showFvg ? fvgs : []}
+            sweeps={is15m && showSweeps ? sweeps : []}
+            fvgs={is15m && showFvg ? fvgs : []}
+            liveTail
           />
         )}
       </div>
