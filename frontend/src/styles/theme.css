@@ -464,3 +464,47 @@ body {
 .pp-waiting-icon { font-size: 40px; }
 .pp-waiting-title { font-size: 16px; font-weight: 700; color: var(--text); margin: 0; }
 .pp-waiting-sub { color: var(--muted); max-width: 520px; margin: 0; }
+
+/* ─────────────── D.1: capital simulado ($) en la pestaña Paper ─────────────── */
+.cap-panel { max-width: 1000px; margin: 0 auto 14px; padding: 14px 16px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; }
+.cap-hero { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.cap-bal { display: flex; flex-direction: column; }
+.cap-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--muted); }
+.cap-bal-val { font-size: 38px; font-weight: 900; line-height: 1; color: var(--text); font-variant-numeric: tabular-nums; }
+.cap-pnl { display: flex; flex-direction: column; align-items: flex-end; }
+.cap-pnl-val { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.cap-pnl-pct { font-size: 11px; color: var(--muted); }
+.cap-pnl.r-pos .cap-pnl-val, .cap-pnl.r-pos .cap-pnl-pct { color: var(--up); }
+.cap-pnl.r-neg .cap-pnl-val, .cap-pnl.r-neg .cap-pnl-pct { color: var(--down); }
+
+.cap-config { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin: 12px 0 6px; font-size: 11px; color: var(--muted); }
+.cap-field { display: flex; align-items: center; gap: 6px; }
+.cap-input { display: inline-flex; align-items: center; gap: 2px; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; }
+.cap-input input { width: 56px; background: transparent; color: var(--text); border: none; font: inherit; text-align: right; font-variant-numeric: tabular-nums; }
+.cap-input input:focus { outline: none; }
+.cap-risk { color: var(--text); font-weight: 600; }
+
+.cap-spark { display: block; width: 100%; height: 64px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; margin: 4px 0 10px; }
+.cap-spark-empty { color: var(--muted); font-size: 12px; padding: 18px 0; text-align: center; border: 1px dashed var(--border); border-radius: 4px; margin: 4px 0 10px; }
+
+.cap-stats { display: flex; gap: 24px; flex-wrap: wrap; }
+.cap-stat { display: flex; flex-direction: column; }
+.cap-s-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--muted); }
+.cap-s-val { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.cap-months { margin-top: 12px; }
+.cap-month-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; margin-top: 6px; }
+.cap-month { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 48px; }
+.cap-month-bar-wrap { height: 28px; display: flex; align-items: flex-end; }
+.cap-month-bar { width: 16px; border-radius: 2px 2px 0 0; }
+.cap-month-bar.pos { background: var(--up); }
+.cap-month-bar.neg { background: var(--down); }
+.cap-month-lbl { font-size: 10px; color: var(--muted); }
+.cap-month-val { font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.cap-note { color: var(--muted); font-size: 10px; line-height: 1.4; margin: 12px 0 0; }
+
+/* $ por operación en la lista e inspector del paper */
+.rl-usd { font-size: 11px; font-variant-numeric: tabular-nums; min-width: 58px; text-align: right; }
+.ri-usd { text-align: center; font-size: 16px; font-weight: 800; font-variant-numeric: tabular-nums; margin-top: 2px; }
+.ri-usd-sub { font-size: 10px; font-weight: 400; color: var(--muted); }

@@ -5,6 +5,8 @@ import { RunStats } from '../components/replay/RunStats';
 import { fetchPaperStatus, fetchPaperTrades, fetchPaperContext } from '../features/paper/paper.api';
 import type { PaperStatus, PaperTrade } from '../features/paper/paper.types';
 import { buildPaperMetrics, paperBySymbol, paperToSignal } from '../features/paper/paperAdapter';
+import { CapitalPanel } from '../components/paper/CapitalPanel';
+import { computeCapital, DEFAULT_CAPITAL_CONFIG, formatUsd, type CapitalConfig } from '../features/paper/capital';
 import { equityCurve, type BacktestRunDetail } from '../features/backtest-viewer/backtestRuns.types';
 import type { ReplayContextResponse } from '../features/backtest-viewer/backtestContext.types';
 import { fetchCandles } from '../features/candles/candles.api';
@@ -35,6 +37,26 @@ export function PaperDashboard() {
   const [windowStatus, setWindowStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [showObs, setShowObs] = useState(true);
   const [showLiq, setShowLiq] = useState(true);
+  const [capitalConfig, setCapitalConfig] = useState<CapitalConfig>(() => {
+    try {
+      const s = localStorage.getItem('paper.capital');
+      if (s) return { ...DEFAULT_CAPITAL_CONFIG, ...(JSON.parse(s) as Partial<CapitalConfig>) };
+    } catch {
+      /* default */
+    }
+    return DEFAULT_CAPITAL_CONFIG;
+  });
+  const onCapitalConfig = useCallback((patch: Partial<CapitalConfig>) => {
+    setCapitalConfig((c) => {
+      const next = { ...c, ...patch };
+      try {
+        localStorage.setItem('paper.capital', JSON.stringify(next));
+      } catch {
+        /* sin persistencia */
+      }
+      return next;
+    });
+  }, []);
 
   const tfMs = tfToMs('15m');
   const tradesRef = useRef(trades);
@@ -128,6 +150,7 @@ export function PaperDashboard() {
   // El backend SOLO persiste operaciones 'live' (el forward-test real); el histórico rehidratado
   // nunca se guarda. Así el historial del paper está siempre limpio: solo las nuevas operaciones.
   const liveTrades = trades; // (defensivo: ya vienen todas live del API)
+  const capital = useMemo(() => computeCapital(liveTrades, capitalConfig), [liveTrades, capitalConfig]);
   const listed = useMemo(() => {
     let xs = liveTrades;
     if (symbolFilter !== 'ALL') xs = xs.filter((t) => t.symbol === symbolFilter);
@@ -223,6 +246,9 @@ export function PaperDashboard() {
             <span className={`rl-out ${t.state === 'CLOSED' && t.rMultiple != null ? rClass(t.rMultiple) : t.state === 'FILLED' ? 'pp-live' : ''}`}>
               {stateLabel(t)}
             </span>
+            {t.state === 'CLOSED' && t.rMultiple != null && (
+              <span className={`rl-usd ${rClass(t.rMultiple)}`}>{formatUsd(t.rMultiple * capital.riskPerTrade, true)}</span>
+            )}
           </li>
         ))}
         {listed.length === 0 && (
@@ -255,6 +281,7 @@ export function PaperDashboard() {
         </div>
       ) : (
         <div className="rs-scroll">
+          <CapitalPanel summary={capital} onConfig={onCapitalConfig} />
           <RunStats run={pseudoRun} signals={adaptedLive} equity={equity} mode="paper" bySymbol={bySymbol}
             onPickTrade={(intentId) => {
               const t = trades.find((x) => x.intentId === intentId);
@@ -313,6 +340,10 @@ export function PaperDashboard() {
                   </div>
                 </div>
                 <div className={`ri-rnet ${rClass(focused.rMultiple)}`}>{fmtR(focused.rMultiple)}</div>
+                <div className={`ri-usd ${rClass(focused.rMultiple)}`}>
+                  {formatUsd(focused.rMultiple * capital.riskPerTrade, true)}
+                  <span className="ri-usd-sub"> · riesgo {formatUsd(capital.riskPerTrade)}/op</span>
+                </div>
                 <div className="ri-rbreak">bruto {fmtR(focused.grossR)} · comisiones+slip −{(focused.costR ?? 0).toFixed(2)}R</div>
               </>
             ) : (
