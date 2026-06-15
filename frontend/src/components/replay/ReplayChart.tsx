@@ -19,6 +19,8 @@ import {
   type BacktestSignal,
 } from '../../features/backtest-viewer/backtestRuns.types';
 import type { ReplayContextResponse } from '../../features/backtest-viewer/backtestContext.types';
+import type { BotSweep } from '../../features/bot-analysis/botSweep.types';
+import type { BotFvg } from '../../features/bot-analysis/botFvg.types';
 import { msToUtcSeconds } from '../../lib/time';
 
 interface Props {
@@ -30,6 +32,8 @@ interface Props {
   context: ReplayContextResponse | null; // contexto SMC re-derivado (OBs + liquidez) con tiempos causales
   showObs: boolean;
   showLiq: boolean;
+  sweeps?: BotSweep[]; // barridos de liquidez (gatillo del bot) — opcional (vista En vivo)
+  fvgs?: BotFvg[]; // Fair Value Gaps — opcional (vista En vivo)
 }
 
 const MAX_OBS = 12; // anti-ruido: OBs visibles más recientes
@@ -42,7 +46,7 @@ const SWEPT_LINGER_BARS = 10; // una liquidez barrida se sigue viendo N velas (p
  * desde la confirmación de su pivote). Nada se pinta hacia atrás: si un detector tuviera lookahead,
  * AQUÍ se vería.
  */
-export function ReplayChart({ candles, cursorIdx, tfMs, signals, focused, context, showObs, showLiq }: Props) {
+export function ReplayChart({ candles, cursorIdx, tfMs, signals, focused, context, showObs, showLiq, sweeps = [], fvgs = [] }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
@@ -200,6 +204,16 @@ export function ReplayChart({ candles, cursorIdx, tfMs, signals, focused, contex
         });
       }
     }
+    // Barridos de liquidez (gatillo del bot): marcador ámbar en la vela del barrido (los recientes).
+    for (const sw of sweeps.filter((s) => s.sweepBarTime <= cursorOpen).slice(-12)) {
+      markers.push({
+        time: msToUtcSeconds(sw.sweepBarTime),
+        position: sw.direction === 'bullish' ? 'belowBar' : 'aboveBar',
+        shape: 'circle',
+        color: '#d6a23b',
+        size: 1,
+      });
+    }
     markers.sort((a, b) => (a.time as number) - (b.time as number));
     series.setMarkers(markers);
 
@@ -234,7 +248,7 @@ export function ReplayChart({ candles, cursorIdx, tfMs, signals, focused, contex
         }
       }
     }
-  }, [candles, cursorIdx, tfMs, signals, focused]);
+  }, [candles, cursorIdx, tfMs, signals, focused, sweeps]);
 
   // ── Overlay de CONTEXTO SMC (rectángulos/niveles), proyectado al viewport actual ──
   const chart = chartRef.current;
@@ -313,7 +327,9 @@ export function ReplayChart({ candles, cursorIdx, tfMs, signals, focused, contex
         const y = yOf(l.level);
         if (left == null || right == null || y == null || y < 0 || y > paneHeight) continue;
         const swept = l.sweptAtTime != null && cursorOpen >= l.sweptAtTime;
-        const tag = l.type === 'equalHigh' ? 'EQH' : l.type === 'equalLow' ? 'EQL' : l.type === 'swingHigh' ? 'SH' : 'SL';
+        // Etiquetas de liquidez SMC: EQH/EQL (equal highs/lows) · BSL/SSL (buy/sell-side liquidity en
+        // swings). NO usar "SL" suelto: se confunde con Stop-Loss.
+        const tag = l.type === 'equalHigh' ? 'EQH' : l.type === 'equalLow' ? 'EQL' : l.type === 'swingHigh' ? 'BSL' : 'SSL';
         items.push(
           <div
             key={l.id}
@@ -321,6 +337,31 @@ export function ReplayChart({ candles, cursorIdx, tfMs, signals, focused, contex
             style={{ left, top: y, width: Math.max(right - left, 8) }}
           >
             <span className="rx-liq-label">{tag}{swept ? ' ✕' : ''}</span>
+          </div>,
+        );
+      }
+    }
+
+    // FVG (Fair Value Gaps) sin llenar — contexto de estudio (no es el gatillo). Cian/rosa.
+    if (fvgs.length) {
+      const visibles = fvgs
+        .filter((f) => f.state !== 'filled' && f.timeStart <= cursorOpen)
+        .sort((a, b) => b.timeStart - a.timeStart)
+        .slice(0, 8);
+      for (const f of visibles) {
+        const left = xOf(f.timeStart);
+        const right = xOf(cursorOpen + tfMs);
+        const top = yOf(f.gapHigh);
+        const bottom = yOf(f.gapLow);
+        if (left == null || right == null || top == null || bottom == null) continue;
+        if (right < 0 || left > (host?.clientWidth ?? 0)) continue;
+        items.push(
+          <div
+            key={f.id}
+            className={`rx-fvg ${f.direction === 'bullish' ? 'bull' : 'bear'}`}
+            style={{ left, top, width: Math.max(right - left, 2), height: Math.max(bottom - top, 2) }}
+          >
+            {right - left > 40 && <span className="rx-fvg-label">FVG</span>}
           </div>,
         );
       }

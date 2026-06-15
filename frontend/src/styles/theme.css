@@ -544,10 +544,37 @@ body {
 .pl-legend { margin-left: auto; color: var(--muted); font-size: 11px; cursor: help; white-space: nowrap; }
 .pl-chart { position: relative; flex: 1 1 auto; }
 
+/* FVG en la gráfica (En vivo) — contexto de estudio, cian/rosa, distinto del OB */
+.rx-fvg { position: absolute; border: 1px dashed; border-radius: 2px; }
+.rx-fvg.bull { border-color: rgba(34, 211, 238, 0.8); background: rgba(34, 211, 238, 0.08); }
+.rx-fvg.bear { border-color: rgba(244, 114, 182, 0.8); background: rgba(244, 114, 182, 0.08); }
+.rx-fvg-label { position: absolute; top: 1px; left: 3px; font-size: 9px; font-weight: 700; opacity: 0.85; }
+.rx-fvg.bull .rx-fvg-label { color: #22d3ee; }
+.rx-fvg.bear .rx-fvg-label { color: #f472b6; }
+
+/* Barra "¿qué mira el bot ahora?" (En vivo): sesgo 4H + qué busca + liquidez objetivo + última señal */
+.pl-stance { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 5px 10px; border-bottom: 1px solid var(--border); background: var(--panel-2); font-size: 12px; flex: 0 0 auto; }
+.pls-item { display: flex; align-items: baseline; gap: 5px; }
+.pls-k { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.3px; }
+.pls-sep { color: var(--border); }
+.pls-bias { font-weight: 800; }
+.pls-bias.bullish { color: var(--up); }
+.pls-bias.bearish { color: var(--down); }
+.pls-bias.neutral { color: var(--muted); }
+.pls-seek { font-weight: 700; }
+.pls-seek.long { color: var(--up); }
+.pls-seek.short { color: var(--down); }
+.pls-seek.none { color: var(--muted); }
+.pls-target { font-weight: 700; color: #d6a23b; font-variant-numeric: tabular-nums; }
+.pls-ago { color: var(--text); font-variant-numeric: tabular-nums; }
+.pl-toggles { display: flex; gap: 8px; align-items: center; }
+
 @media (max-width: 820px) {
   .pp-subtabs button { padding: 4px 9px; }
   .pp-st-sub { display: none; }
   .pl-legend { display: none; }
   .pp-resumen { padding: 10px 8px 30px; }
   .rt-meta { display: none; }
+  .pls-k { display: none; }
+  .pls-sep { display: none; }
 }

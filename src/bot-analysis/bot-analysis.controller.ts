@@ -8,6 +8,7 @@ import { detectLiquidity } from './liquidity.detector';
 import { scoreConfluence } from './confluence.scorer';
 import { detectSetups } from './setup.detector';
 import { generateTradePlans } from './trade-plan.generator';
+import { computeHtfBias, biasAt } from '../backtest/htf-bias';
 
 /**
  * Lectura automática del bot (Fase 5A/5B). Read-only sobre las velas locales: NO llama al
@@ -73,6 +74,31 @@ export class BotAnalysisController {
     }));
     const levels = detectLiquidity(q.symbol, q.tf, closed);
     return { symbol: q.symbol, tf: q.tf, count: levels.length, levels };
+  }
+
+  // Sesgo HTF (4H por defecto): el MISMO que filtra al candidato congelado (BOS por CUERPO sobre el
+  // último swing confirmado, causal). El bot solo busca LONGs con sesgo alcista y SHORTs con bajista.
+  // Read-only (Regla Cero). El front lo usa en la vista En vivo para explicar el porqué de cada decisión.
+  @Get('bias')
+  async bias(@Query() q: GetBotQueryDto) {
+    const closed = (await this.closedCandles(q.symbol, q.tf, q.limit)).map((c) => ({
+      openTime: c.openTime,
+      closeTime: c.closeTime,
+      open: c.open,
+      high: c.high,
+      low: c.low,
+      close: c.close,
+    }));
+    const points = computeHtfBias(closed);
+    const lastTime = closed.length ? (closed[closed.length - 1].closeTime ?? closed[closed.length - 1].openTime) : 0;
+    const lastChange = points.length ? points[points.length - 1] : null;
+    return {
+      symbol: q.symbol,
+      tf: q.tf,
+      bias: biasAt(points, lastTime),
+      changedAt: lastChange?.time ?? null,
+      points,
+    };
   }
 
   @Get('confluence')
