@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppShell } from '../components/layout/AppShell';
 import { ReplayChart } from '../components/replay/ReplayChart';
+import { ReplayControls } from '../components/replay/ReplayControls';
 import { RunStats } from '../components/replay/RunStats';
 import { PaperLive } from '../components/paper/PaperLive';
 import { fetchPaperStatus, fetchPaperTrades, fetchPaperContext } from '../features/paper/paper.api';
@@ -17,15 +18,16 @@ import { formatUtc, tfToMs } from '../lib/time';
 
 const PRE_BARS = 300;
 const POST_BARS = 100;
+const CURSOR_BACK = 30; // el replay arranca N velas antes de la señal (como el visor)
 const GATE_TARGET = 50; // N de operaciones cerradas para la evaluación del gate (#7)
 type ListFilter = 'open' | 'closed' | 'cancelled' | 'all';
 type PaperView = 'resumen' | 'envivo' | 'historial';
 
 /**
- * PESTAÑA PAPER (gate #7) — la ventana al forward-test. Tres sub-vistas claras:
+ * PESTAÑA PAPER (gate #7) — la ventana al forward-test. Tres sub-vistas:
  *  · Resumen   → ¿vamos rentables? capital simulado en $ + estadísticas (SIEMPRE visible).
  *  · En vivo   → la gráfica del par en tiempo real con el análisis y las entradas del bot.
- *  · Historial → cada operación cerrada/viva, con su gráfica y porqué causal.
+ *  · Historial → tabla de cada operación; clic = replay vela a vela con su porqué causal.
  * Registro mecánico sin filtro humano. Observable, no operable (Regla Cero).
  */
 export function PaperDashboard() {
@@ -47,6 +49,9 @@ export function PaperDashboard() {
   const [windowStatus, setWindowStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [showObs, setShowObs] = useState(true);
   const [showLiq, setShowLiq] = useState(true);
+  const [cursorIdx, setCursorIdx] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [speed, setSpeed] = useState(4);
   const [capitalConfig, setCapitalConfig] = useState<CapitalConfig>(() => {
     try {
       const s = localStorage.getItem('paper.capital');
@@ -106,16 +111,20 @@ export function PaperDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Ventana de velas + contexto SMC de la posición enfocada (Historial) ──
+  // ── Ventana de velas + contexto SMC de la operación enfocada (Historial) ──
   const loadWindow = useCallback(
     async (t: PaperTrade) => {
       setWindowStatus('loading');
+      setPlaying(false);
       try {
         const endRef = t.exitTime ?? Date.now();
         const to = endRef + POST_BARS * tfMs;
         const from = Math.max(t.signalBarTime - PRE_BARS * tfMs, to - 1499 * tfMs);
         const res = await fetchCandles(t.symbol, '15m' as Timeframe, 1500, { from, to });
         setCandles(res.candles);
+        // El replay arranca unas velas ANTES de la señal (para ver formarse el barrido).
+        const sigIdx = res.candles.findIndex((c) => c.openTime >= t.signalBarTime);
+        setCursorIdx(Math.max((sigIdx < 0 ? res.candles.length - 1 : sigIdx) - CURSOR_BACK, 0));
         setWindowStatus('ready');
         fetchPaperContext(t.symbol, from, Math.min(to, Date.now()))
           .then(setContext)
@@ -136,6 +145,14 @@ export function PaperDashboard() {
     [loadWindow],
   );
 
+  const backToList = () => {
+    setFocusedId(null);
+    setPlaying(false);
+    setCandles([]);
+    setContext(null);
+    setWindowStatus('idle');
+  };
+
   // Refresco suave de la gráfica de una posición VIVA enfocada.
   useEffect(() => {
     if (!focusedId) return;
@@ -145,6 +162,22 @@ export function PaperDashboard() {
     }, 60_000);
     return () => clearInterval(t);
   }, [focusedId, loadWindow]);
+
+  // ── Play del replay: avanza por velas cerradas a `speed` velas/s ──
+  const maxIdx = Math.max(candles.length - 1, 0);
+  useEffect(() => {
+    if (!playing) return;
+    const t = setInterval(() => {
+      setCursorIdx((c) => {
+        if (c >= maxIdx) {
+          setPlaying(false);
+          return c;
+        }
+        return c + 1;
+      });
+    }, 1000 / speed);
+    return () => clearInterval(t);
+  }, [playing, speed, maxIdx]);
 
   // ── Derivados ──
   const focused = trades.find((t) => t.intentId === focusedId) ?? null;
@@ -197,15 +230,16 @@ export function PaperDashboard() {
   }, [trades, focused, candles]);
 
   const fmtR = (r: number | null | undefined) => (r == null ? '—' : `${r >= 0 ? '+' : ''}${r.toFixed(2)}R`);
-  const rClass = (r: number | null) => (r == null ? '' : r > 0.05 ? 'r-pos' : r < -0.05 ? 'r-neg' : 'r-zero');
-  const stateLabel = (t: PaperTrade) =>
+  const rClass = (r: number | null | undefined) => (r == null ? '' : r > 0.05 ? 'r-pos' : r < -0.05 ? 'r-neg' : 'r-zero');
+  // Resultado legible de una operación (para la tabla y el chip de estado).
+  const outcomeText = (t: PaperTrade) =>
     t.state === 'PENDING'
       ? 'pendiente'
       : t.state === 'FILLED'
         ? 'EN POSICIÓN'
         : t.cancelReason
           ? `✕ ${t.cancelReason}`
-          : `${t.exitReason} ${fmtR(t.rMultiple)}`;
+          : (t.exitReason ?? '—');
 
   // ── Barra superior: estado del gate + sub-pestañas ──
   const subtabs: { id: PaperView; label: string; sub: string }[] = [
@@ -253,143 +287,17 @@ export function PaperDashboard() {
           <b>{metrics.trades}</b>/{GATE_TARGET} operaciones cerradas hacia la evaluación
         </span>
       </div>
-      {metrics.trades === 0 && (
+      {metrics.trades < GATE_TARGET && (
         <p className="pp-gate-note">
-          Aún sin operaciones cerradas. El candidato genera señales al cierre de cada vela 15m y son poco frecuentes
-          (~1 cada varios días por par), así que las primeras tardan días. El pasado se audita en la pestaña Backtests.
+          {metrics.trades === 0
+            ? 'Aún sin operaciones cerradas. El candidato genera señales al cierre de cada vela 15m y son poco frecuentes; las primeras tardan días.'
+            : `Con ${metrics.trades} operaciones el resultado es RUIDO, no veredicto: la banda de incertidumbre es enorme a esta N. El gate se evalúa a N≥${GATE_TARGET} (paridad sim↔live + no-colapso). Hasta entonces, esto NO confirma rentabilidad.`}
         </p>
       )}
     </div>
   );
 
-  // ── Lista del historial (izquierda) ──
-  const histList = (
-    <div className="replay-list">
-      <div className="rl-header">
-        <select value={listFilter} onChange={(e) => setListFilter(e.target.value as ListFilter)}>
-          <option value="all">Todas ({liveTrades.length})</option>
-          <option value="open">Vivas ({liveTrades.filter((t) => t.state !== 'CLOSED').length})</option>
-          <option value="closed">Cerradas ({liveTrades.filter((t) => t.state === 'CLOSED' && t.rMultiple != null).length})</option>
-          <option value="cancelled">Canceladas ({liveTrades.filter((t) => t.state === 'CLOSED' && t.cancelReason != null).length})</option>
-        </select>
-        <select value={symbolFilter} onChange={(e) => setSymbolFilter(e.target.value)}>
-          {symbols.map((s) => (
-            <option key={s} value={s}>{s}</option>
-          ))}
-        </select>
-      </div>
-      <ul>
-        {listed.slice(0, 600).map((t) => (
-          <li
-            key={t.intentId}
-            className={`rl-item ${t.intentId === focusedId ? 'selected' : ''}`}
-            onClick={() => focusTrade(t)}
-          >
-            <span className="rl-sym">{t.symbol.replace('USDT', '')}</span>
-            <span className={`rl-dir ${t.direction === 'LONG' ? 'long' : 'short'}`}>{t.direction === 'LONG' ? '▲' : '▼'}</span>
-            <span className="rl-date">{formatUtc(t.signalBarTime).slice(2, 16)}</span>
-            <span className={`rl-out ${t.state === 'CLOSED' && t.rMultiple != null ? rClass(t.rMultiple) : t.state === 'FILLED' ? 'pp-live' : ''}`}>
-              {stateLabel(t)}
-            </span>
-            {t.state === 'CLOSED' && t.rMultiple != null && (
-              <span className={`rl-usd ${rClass(t.rMultiple)}`}>{formatUsd(t.rMultiple * capital.riskPerTrade, true)}</span>
-            )}
-          </li>
-        ))}
-        {listed.length === 0 && (
-          <li className="rl-more">sin operaciones aún — el motor registra al cierre de cada vela 15m</li>
-        )}
-      </ul>
-    </div>
-  );
-
-  // ── Inspector del trade enfocado (Historial, derecha) ──
-  const histInspector = (
-    <div className="replay-inspector">
-      {!focused ? (
-        <p className="ri-empty">Elige una operación de la lista para ver su gráfica y su porqué causal.</p>
-      ) : (
-        <>
-          <div className="ri-head">
-            <b className={focused.direction === 'LONG' ? 'long' : 'short'}>{focused.direction}</b>
-            <span className="ri-phase">{focused.state}</span>
-            <span className="ri-out">{focused.symbol}</span>
-          </div>
-
-          <div className="ri-levels">
-            {focused.state === 'CLOSED' && focused.rMultiple != null ? (
-              <>
-                <div className="ri-flow">
-                  <div>
-                    <span className="lv-label">ENTRADA</span>
-                    <span className="lv-price">{focused.entryPrice}</span>
-                    <span className="lv-sub">límite {focused.entry}</span>
-                  </div>
-                  <span className="lv-arrow">→</span>
-                  <div>
-                    <span className="lv-label">SALIDA ({focused.exitReason})</span>
-                    <span className="lv-price">{focused.exitPrice}</span>
-                    <span className="lv-sub">{focused.exitTime != null ? formatUtc(focused.exitTime).slice(2, 16) : ''}</span>
-                  </div>
-                </div>
-                <div className={`ri-rnet ${rClass(focused.rMultiple)}`}>{fmtR(focused.rMultiple)}</div>
-                <div className={`ri-usd ${rClass(focused.rMultiple)}`}>
-                  {formatUsd(focused.rMultiple * capital.riskPerTrade, true)}
-                  <span className="ri-usd-sub"> · riesgo {formatUsd(capital.riskPerTrade)}/op</span>
-                </div>
-                <div className="ri-rbreak">bruto {fmtR(focused.grossR)} · comisiones+slip −{(focused.costR ?? 0).toFixed(2)}R</div>
-              </>
-            ) : (
-              <div className="ri-flow">
-                <div>
-                  <span className="lv-label">{focused.state === 'FILLED' ? 'EN POSICIÓN desde' : 'LÍMITE programado'}</span>
-                  <span className="lv-price">{focused.state === 'FILLED' ? focused.entryPrice : focused.entry}</span>
-                  <span className="lv-sub">{focused.state === 'FILLED' && focused.entryTime ? formatUtc(focused.entryTime).slice(2, 16) : focused.cancelReason ?? ''}</span>
-                </div>
-              </div>
-            )}
-            <div className="ri-grid">
-              <div><span className="lv-label">SL</span><span className="lv-val sl">{focused.stopLoss}</span></div>
-              <div><span className="lv-label">TP{focused.tpSource ? ` (${focused.tpSource})` : ''}</span><span className="lv-val tp">{focused.takeProfit}</span></div>
-              <div><span className="lv-label">riesgo</span><span className="lv-val">{Math.abs(focused.entry - focused.stopLoss).toFixed(4)}</span></div>
-              <div><span className="lv-label">BE</span><span className="lv-val">{focused.movedToBE ? 'armado' : 'no'}</span></div>
-            </div>
-          </div>
-
-          <h4>Porqué causal</h4>
-          <table className="ri-table">
-            <tbody>
-              <tr><td>señal (cierre de vela)</td><td>{formatUtc(focused.signalBarTime)}</td></tr>
-              {focused.sweptSwingTime != null && <tr><td>swing barrido (origen)</td><td>{formatUtc(focused.sweptSwingTime)}</td></tr>}
-              {focused.sweptLevel != null && <tr><td>liquidez barrida</td><td>{focused.sweptLevel}</td></tr>}
-              <tr><td>zona de reacción</td><td>{focused.zoneLow} ↔ {focused.zoneHigh}</td></tr>
-              {focused.cancelBeyond != null && <tr><td>cancelBeyond</td><td>{focused.cancelBeyond}</td></tr>}
-            </tbody>
-          </table>
-
-          <h4>Ejecución (touched-vs-crossed)</h4>
-          <table className="ri-table">
-            <tbody>
-              <tr><td>penetración del fill</td><td>{focused.entryPenetration != null ? `cruzó +${focused.entryPenetration}` : '—'}</td></tr>
-              <tr><td>penetración del TP</td><td>{focused.tpPenetration != null ? `cruzó +${focused.tpPenetration}` : '—'}</td></tr>
-              <tr><td>velas hasta fill / dentro</td><td>{focused.barsToFill ?? '—'} / {focused.barsHeld ?? '—'}</td></tr>
-            </tbody>
-          </table>
-
-          <h4>Trazabilidad</h4>
-          <table className="ri-table">
-            <tbody>
-              <tr><td>paramsHash</td><td><code>{focused.paramsHash}</code></td></tr>
-              <tr><td>engine</td><td><code>{focused.engineVersion}</code></td></tr>
-              <tr><td>registrado</td><td>{formatUtc(focused.createdAt)}</td></tr>
-            </tbody>
-          </table>
-        </>
-      )}
-    </div>
-  );
-
-  const bottom = (
+  const bottomChips = (
     <div className="pp-bottom">
       {status?.symbols.map((s) => (
         <span key={s.symbol} className="pp-chip" title={`paramsHash ${s.paramsHash}`}>
@@ -399,6 +307,87 @@ export function PaperDashboard() {
     </div>
   );
 
+  // ── Inspector de la operación enfocada (Historial, derecha) ──
+  const histInspector = focused && (
+    <div className="replay-inspector">
+      <button className="ph-back" onClick={backToList}>← volver al historial</button>
+      <div className="ri-head">
+        <b className={focused.direction === 'LONG' ? 'long' : 'short'}>{focused.direction}</b>
+        <span className="ri-phase">{focused.state}</span>
+        <span className="ri-out">{focused.symbol}</span>
+      </div>
+
+      <div className="ri-levels">
+        {focused.state === 'CLOSED' && focused.rMultiple != null ? (
+          <>
+            <div className="ri-flow">
+              <div>
+                <span className="lv-label">ENTRADA</span>
+                <span className="lv-price">{focused.entryPrice}</span>
+                <span className="lv-sub">límite {focused.entry}</span>
+              </div>
+              <span className="lv-arrow">→</span>
+              <div>
+                <span className="lv-label">SALIDA ({focused.exitReason})</span>
+                <span className="lv-price">{focused.exitPrice}</span>
+                <span className="lv-sub">{focused.exitTime != null ? formatUtc(focused.exitTime).slice(2, 16) : ''}</span>
+              </div>
+            </div>
+            <div className={`ri-rnet ${rClass(focused.rMultiple)}`}>{fmtR(focused.rMultiple)}</div>
+            <div className={`ri-usd ${rClass(focused.rMultiple)}`}>
+              {formatUsd(focused.rMultiple * capital.riskPerTrade, true)}
+              <span className="ri-usd-sub"> · riesgo {formatUsd(capital.riskPerTrade)}/op</span>
+            </div>
+            <div className="ri-rbreak">bruto {fmtR(focused.grossR)} · comisiones+slip −{(focused.costR ?? 0).toFixed(2)}R</div>
+          </>
+        ) : (
+          <div className="ri-flow">
+            <div>
+              <span className="lv-label">{focused.state === 'FILLED' ? 'EN POSICIÓN desde' : 'LÍMITE programado'}</span>
+              <span className="lv-price">{focused.state === 'FILLED' ? focused.entryPrice : focused.entry}</span>
+              <span className="lv-sub">{focused.state === 'FILLED' && focused.entryTime ? formatUtc(focused.entryTime).slice(2, 16) : focused.cancelReason ?? ''}</span>
+            </div>
+          </div>
+        )}
+        <div className="ri-grid">
+          <div><span className="lv-label">SL</span><span className="lv-val sl">{focused.stopLoss}</span></div>
+          <div><span className="lv-label">TP{focused.tpSource ? ` (${focused.tpSource})` : ''}</span><span className="lv-val tp">{focused.takeProfit}</span></div>
+          <div><span className="lv-label">riesgo</span><span className="lv-val">{Math.abs(focused.entry - focused.stopLoss).toFixed(4)}</span></div>
+          <div><span className="lv-label">BE</span><span className="lv-val">{focused.movedToBE ? 'armado' : 'no'}</span></div>
+        </div>
+      </div>
+
+      <h4>Porqué causal</h4>
+      <table className="ri-table">
+        <tbody>
+          <tr><td>señal (cierre de vela)</td><td>{formatUtc(focused.signalBarTime)}</td></tr>
+          {focused.sweptSwingTime != null && <tr><td>swing barrido (origen)</td><td>{formatUtc(focused.sweptSwingTime)}</td></tr>}
+          {focused.sweptLevel != null && <tr><td>liquidez barrida</td><td>{focused.sweptLevel}</td></tr>}
+          <tr><td>zona de reacción</td><td>{focused.zoneLow} ↔ {focused.zoneHigh}</td></tr>
+          {focused.cancelBeyond != null && <tr><td>cancelBeyond</td><td>{focused.cancelBeyond}</td></tr>}
+        </tbody>
+      </table>
+
+      <h4>Ejecución (touched-vs-crossed)</h4>
+      <table className="ri-table">
+        <tbody>
+          <tr><td>penetración del fill</td><td>{focused.entryPenetration != null ? `cruzó +${focused.entryPenetration}` : '—'}</td></tr>
+          <tr><td>penetración del TP</td><td>{focused.tpPenetration != null ? `cruzó +${focused.tpPenetration}` : '—'}</td></tr>
+          <tr><td>velas hasta fill / dentro</td><td>{focused.barsToFill ?? '—'} / {focused.barsHeld ?? '—'}</td></tr>
+        </tbody>
+      </table>
+
+      <h4>Trazabilidad</h4>
+      <table className="ri-table">
+        <tbody>
+          <tr><td>paramsHash</td><td><code>{focused.paramsHash}</code></td></tr>
+          <tr><td>engine</td><td><code>{focused.engineVersion}</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+  );
+
+  // ── ERROR ──
   if (error) {
     return (
       <AppShell
@@ -412,7 +401,7 @@ export function PaperDashboard() {
           </div>
         }
         right={null}
-        bottom={bottom}
+        bottom={bottomChips}
         leftOpen={false}
         rightOpen={false}
         bottomOpen={true}
@@ -420,7 +409,7 @@ export function PaperDashboard() {
     );
   }
 
-  // ── RESUMEN: capital + estadísticas, SIEMPRE visible ──
+  // ── RESUMEN ──
   if (view === 'resumen') {
     return (
       <AppShell
@@ -446,7 +435,7 @@ export function PaperDashboard() {
           </div>
         }
         right={null}
-        bottom={bottom}
+        bottom={bottomChips}
         leftOpen={false}
         rightOpen={false}
         bottomOpen={true}
@@ -454,7 +443,7 @@ export function PaperDashboard() {
     );
   }
 
-  // ── EN VIVO: la gráfica del par en tiempo real ──
+  // ── EN VIVO ──
   if (view === 'envivo') {
     return (
       <AppShell
@@ -462,7 +451,7 @@ export function PaperDashboard() {
         left={null}
         center={<PaperLive symbols={liveSymbols} trades={trades} />}
         right={null}
-        bottom={bottom}
+        bottom={bottomChips}
         leftOpen={false}
         rightOpen={false}
         bottomOpen={true}
@@ -470,21 +459,84 @@ export function PaperDashboard() {
     );
   }
 
-  // ── HISTORIAL: lista + gráfica de la operación enfocada + inspector ──
-  let histCenter: React.ReactNode;
-  if (!focused || windowStatus === 'idle') {
-    histCenter = (
-      <div className="state pp-waiting">
-        <div className="pp-waiting-icon">📜</div>
-        <p className="pp-waiting-title">{liveTrades.length === 0 ? 'Sin operaciones todavía' : 'Elige una operación de la lista'}</p>
-        <p className="pp-waiting-sub">
-          {liveTrades.length === 0
-            ? 'Cuando el candidato genere su primera señal, aparecerá aquí con su gráfica. El resumen y el capital están en la pestaña Resumen.'
-            : 'A la izquierda está cada operación del forward-test. Haz click para ver su gráfica con niveles, contexto SMC y el porqué causal.'}
-        </p>
+  // ── HISTORIAL ──
+  // Sin operación enfocada: TABLA ancha y legible (sin scroll horizontal).
+  if (!focused) {
+    const histTable = (
+      <div className="ph-wrap">
+        <div className="ph-filters">
+          <select value={listFilter} onChange={(e) => setListFilter(e.target.value as ListFilter)}>
+            <option value="all">Todas ({liveTrades.length})</option>
+            <option value="closed">Cerradas ({liveTrades.filter((t) => t.state === 'CLOSED' && t.rMultiple != null).length})</option>
+            <option value="open">Vivas ({liveTrades.filter((t) => t.state !== 'CLOSED').length})</option>
+            <option value="cancelled">Canceladas ({liveTrades.filter((t) => t.state === 'CLOSED' && t.cancelReason != null).length})</option>
+          </select>
+          <select value={symbolFilter} onChange={(e) => setSymbolFilter(e.target.value)}>
+            {symbols.map((s) => (
+              <option key={s} value={s}>{s === 'ALL' ? 'Todos los pares' : s.replace('USDT', '')}</option>
+            ))}
+          </select>
+          <span className="ph-count">{listed.length} operaciones · clic para el replay</span>
+        </div>
+        {listed.length === 0 ? (
+          <div className="state pp-waiting">
+            <div className="pp-waiting-icon">📜</div>
+            <p className="pp-waiting-title">Sin operaciones todavía</p>
+            <p className="pp-waiting-sub">Cuando el candidato genere su primera señal, aparecerá aquí. El resumen y el capital están en la pestaña Resumen.</p>
+          </div>
+        ) : (
+          <div className="ph-tablewrap">
+            <table className="ph-table">
+              <thead>
+                <tr>
+                  <th>Par</th>
+                  <th>Dir</th>
+                  <th>Fecha (UTC)</th>
+                  <th>Resultado</th>
+                  <th className="ph-num">R</th>
+                  <th className="ph-num">$</th>
+                </tr>
+              </thead>
+              <tbody>
+                {listed.slice(0, 600).map((t) => {
+                  const closed = t.state === 'CLOSED' && t.rMultiple != null;
+                  const cancelled = t.state === 'CLOSED' && t.cancelReason != null;
+                  return (
+                    <tr key={t.intentId} onClick={() => focusTrade(t)}>
+                      <td className="ph-sym">{t.symbol.replace('USDT', '')}</td>
+                      <td className={t.direction === 'LONG' ? 'long' : 'short'}>{t.direction === 'LONG' ? '▲ LONG' : '▼ SHORT'}</td>
+                      <td className="ph-date">{formatUtc(t.signalBarTime).slice(0, 16).replace('T', ' ')}</td>
+                      <td className={`ph-out ${closed ? rClass(t.rMultiple) : t.state === 'FILLED' ? 'pp-live' : cancelled ? 'r-zero' : ''}`}>{outcomeText(t)}</td>
+                      <td className={`ph-num ${rClass(t.rMultiple)}`}>{closed ? fmtR(t.rMultiple) : '—'}</td>
+                      <td className={`ph-num ${rClass(t.rMultiple)}`}>{closed ? formatUsd((t.rMultiple as number) * capital.riskPerTrade, true) : '—'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     );
-  } else if (windowStatus === 'loading') {
+    return (
+      <AppShell
+        topBar={topBar}
+        left={null}
+        center={histTable}
+        right={null}
+        bottom={bottomChips}
+        leftOpen={false}
+        rightOpen={false}
+        bottomOpen={true}
+      />
+    );
+  }
+
+  // Operación enfocada: REPLAY vela a vela (gráfica + controles) + inspector.
+  const cursorTime = candles.length > 0 ? candles[Math.min(cursorIdx, maxIdx)].openTime : null;
+  const replayBias = focused.direction === 'LONG' ? 'bullish' : 'bearish';
+  let histCenter: React.ReactNode;
+  if (windowStatus === 'loading') {
     histCenter = <div className="state state-loading">Cargando ventana de velas…</div>;
   } else if (windowStatus === 'error') {
     histCenter = <div className="state state-error">No se pudo cargar la ventana de velas.</div>;
@@ -493,10 +545,10 @@ export function PaperDashboard() {
       <div className="replay-center">
         <ReplayChart
           candles={candles}
-          cursorIdx={candles.length - 1}
+          cursorIdx={cursorIdx}
           tfMs={tfMs}
           signals={chartSignals}
-          focused={focused ? paperToSignal(focused) : null}
+          focused={paperToSignal(focused)}
           context={context}
           showObs={showObs}
           showLiq={showLiq}
@@ -514,11 +566,26 @@ export function PaperDashboard() {
           <label className="rt-toggle"><input type="checkbox" checked={showLiq} onChange={() => setShowLiq((v) => !v)} /> liquidez</label>
         </div>
       }
-      left={histList}
+      left={null}
       center={histCenter}
       right={histInspector}
-      bottom={bottom}
-      leftOpen={true}
+      bottom={
+        <div className="replay-bottom">
+          <ReplayControls
+            cursorIdx={cursorIdx}
+            maxIdx={maxIdx}
+            cursorTime={cursorTime}
+            playing={playing}
+            speed={speed}
+            bias={replayBias}
+            onSeek={(i) => setCursorIdx(i)}
+            onStep={(d) => setCursorIdx((c) => Math.min(Math.max(c + d, 0), maxIdx))}
+            onPlayPause={() => setPlaying((p) => !p)}
+            onSpeed={setSpeed}
+          />
+        </div>
+      }
+      leftOpen={false}
       rightOpen={true}
       bottomOpen={true}
     />
