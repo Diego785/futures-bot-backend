@@ -82,23 +82,16 @@ export function ReplayChart({ candles, cursorIdx, tfMs, signals, focused, contex
     chartRef.current = chart;
     seriesRef.current = series;
 
+    // El overlay (OB/BSL/SSL/FVG) son divs HTML que hay que RE-PROYECTAR cada vez que el chart se mueve
+    // (pan horizontal, pan del eje de precio, zoom, autoescala). Lightweight-charts NO emite evento para
+    // la escala de precio, así que en vez de adivinar con una "firma" del viewport —frágil: en ciertos
+    // pan/zoom no cambiaba y el overlay se quedaba ESTÁTICO— re-proyectamos en CADA frame mientras el
+    // chart está montado/visible. Coste mínimo: solo recalcula ~12 divs; React no toca el DOM si las
+    // posiciones no cambiaron; y `requestAnimationFrame` se pausa solo cuando la pestaña está oculta.
     let raf = 0;
-    let lastSig = '';
     const tick = () => {
       raf = requestAnimationFrame(tick);
-      const lr = chart.timeScale().getVisibleLogicalRange();
-      // Firma VERTICAL robusta: el precio en el borde superior e inferior del pane. `coordinateToPrice`
-      // de coordenadas dentro del pane SIEMPRE devuelve un valor; antes usábamos `priceToCoordinate` de
-      // precios fijos que, tras un pan vertical extremo, salen de rango → null → la firma se congelaba
-      // y el overlay (OB/BSL/SSL) dejaba de re-proyectarse (se quedaba estático).
-      const h = host.clientHeight;
-      const pTop = series.coordinateToPrice(0);
-      const pBot = series.coordinateToPrice(h);
-      const sig = `${lr?.from ?? ''}:${lr?.to ?? ''}|${pTop ?? ''}:${pBot ?? ''}|${host.clientWidth}x${h}`;
-      if (sig !== lastSig) {
-        lastSig = sig;
-        setViewNonce((n) => n + 1);
-      }
+      setViewNonce((n) => (n + 1) & 0xffff); // cambia siempre → fuerza el re-render que re-proyecta el overlay
     };
     raf = requestAnimationFrame(tick);
 
