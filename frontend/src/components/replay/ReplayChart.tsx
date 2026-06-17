@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import {
   createChart,
   ColorType,
@@ -41,25 +41,36 @@ const MAX_OBS = 12; // anti-ruido: OBs visibles más recientes
 const MAX_LIQ = 8; // niveles de liquidez más cercanos al precio del cursor
 const SWEPT_LINGER_BARS = 10; // una liquidez barrida se sigue viendo N velas (para VER el barrido)
 
+// Modelo de un item del overlay: QUÉ dibujar (datos), sin posición. La posición la fija el rAF.
+interface OvItem {
+  id: string;
+  cls: string;
+  kind: 'box' | 'line';
+  tstart: number; // tiempo del borde izquierdo
+  tend: number; // tiempo del borde derecho
+  ptop?: number; // box: precio del borde superior
+  pbottom?: number; // box: precio del borde inferior
+  price?: number; // line: precio del nivel
+  label?: string;
+  labelCls?: string;
+}
+
 /**
  * Gráfica del REPLAY — read-only y CAUSAL: solo se dibujan las velas hasta el cursor y los objetos
- * que el motor ya conocía en ese instante (señal al cierre de su vela; OB desde su BOS; liquidez
- * desde la confirmación de su pivote). Nada se pinta hacia atrás: si un detector tuviera lookahead,
- * AQUÍ se vería.
+ * que el motor ya conocía en ese instante. El overlay SMC (OB/BSL/SSL/FVG/zona) son divs HTML cuya
+ * POSICIÓN se recalcula IMPERATIVAMENTE en un requestAnimationFrame (leyendo las coordenadas vivas
+ * del chart) → siguen al gráfico en cualquier pan/zoom/escala, sin depender del re-render de React.
  */
 export function ReplayChart({ candles, cursorIdx, tfMs, signals, focused, context, showObs, showLiq, sweeps = [], fvgs = [], liveTail = false }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const priceLinesRef = useRef<IPriceLine[]>([]);
   const prevIdxRef = useRef(-1);
   const prevCandlesRef = useRef<Candle[] | null>(null);
-  // Precios de referencia (constantes por ventana) para detectar cambios de la escala VERTICAL.
-  const refPricesRef = useRef<[number, number] | null>(null);
-  // El overlay se re-proyecta ante CUALQUIER cambio de viewport: pan, zoom horizontal, zoom del eje
-  // de precio, autoescala y resize. Como la escala de precio no emite eventos en v4, un loop rAF
-  // compara una FIRMA del viewport y solo re-renderiza cuando cambió (en reposo no hace nada).
-  const [viewNonce, setViewNonce] = useState(0);
+  // Geometría causal vigente (para la proyección del overlay en el rAF, fuera del render de React).
+  const geomRef = useRef({ first: 0, cursorOpen: 0, cursorClose: 0, tfMs });
 
   useEffect(() => {
     const host = hostRef.current;
@@ -82,18 +93,81 @@ export function ReplayChart({ candles, cursorIdx, tfMs, signals, focused, contex
     chartRef.current = chart;
     seriesRef.current = series;
 
-    // El overlay (OB/BSL/SSL/FVG) son divs HTML que hay que RE-PROYECTAR cada vez que el chart se mueve
-    // (pan horizontal, pan del eje de precio, zoom, autoescala). Lightweight-charts NO emite evento para
-    // la escala de precio, así que en vez de adivinar con una "firma" del viewport —frágil: en ciertos
-    // pan/zoom no cambiaba y el overlay se quedaba ESTÁTICO— re-proyectamos en CADA frame mientras el
-    // chart está montado/visible. Coste mínimo: solo recalcula ~12 divs; React no toca el DOM si las
-    // posiciones no cambiaron; y `requestAnimationFrame` se pausa solo cuando la pestaña está oculta.
+    // ── Posicionamiento IMPERATIVO del overlay, cada frame mientras el chart está visible ──
+    // Lee las coordenadas VIVAS (logicalToCoordinate / priceToCoordinate) y mueve los divs por DOM.
+    // Garantiza que OB/BSL/SSL/FVG sigan al gráfico en cualquier pan/zoom/escala (el rAF se pausa
+    // solo cuando la pestaña está oculta). No re-renderiza React: solo toca style de ~12 nodos.
     let raf = 0;
-    const tick = () => {
-      raf = requestAnimationFrame(tick);
-      setViewNonce((n) => (n + 1) & 0xffff); // cambia siempre → fuerza el re-render que re-proyecta el overlay
+    const position = () => {
+      raf = requestAnimationFrame(position);
+      const ch = chartRef.current;
+      const se = seriesRef.current;
+      const ho = hostRef.current;
+      const ov = overlayRef.current;
+      if (!ch || !se || !ho || !ov) return;
+      const g = geomRef.current;
+      if (!g.first) return;
+      let paneRight = 0;
+      let paneBottom = 0;
+      try {
+        paneRight = ch.priceScale('right').width();
+        paneBottom = ch.timeScale().height();
+      } catch {
+        /* chart sin layout aún */
+      }
+      ov.style.right = `${paneRight}px`;
+      ov.style.bottom = `${paneBottom}px`;
+      const hostW = ho.clientWidth;
+      const paneHeight = Math.max(ho.clientHeight - paneBottom, 0);
+      const tscale = ch.timeScale();
+      const xOf = (t: number): number | null => {
+        const c = tscale.logicalToCoordinate((((Math.min(t, g.cursorOpen) - g.first) / g.tfMs) as unknown) as Logical);
+        return c == null ? null : c;
+      };
+      const yOf = (price: number): number | null => {
+        const c = se.priceToCoordinate(price);
+        if (c != null) return c;
+        return price > g.cursorClose ? -20 : paneHeight + 20;
+      };
+      const kids = ov.children;
+      for (let i = 0; i < kids.length; i++) {
+        const el = kids[i] as HTMLElement;
+        const ds = el.dataset;
+        const left = xOf(Number(ds.tstart));
+        const right = xOf(Number(ds.tend));
+        if (left == null || right == null || right < 0 || left > hostW) {
+          el.style.display = 'none';
+          continue;
+        }
+        if (ds.kind === 'box') {
+          const top = yOf(Number(ds.ptop));
+          const bottom = yOf(Number(ds.pbottom));
+          if (top == null || bottom == null) {
+            el.style.display = 'none';
+            continue;
+          }
+          const w = Math.max(right - left, 2);
+          el.style.display = 'block';
+          el.style.left = `${left}px`;
+          el.style.top = `${top}px`;
+          el.style.width = `${w}px`;
+          el.style.height = `${Math.max(bottom - top, 2)}px`;
+          const lbl = el.firstElementChild as HTMLElement | null;
+          if (lbl) lbl.style.display = w > 44 ? '' : 'none';
+        } else {
+          const y = yOf(Number(ds.price));
+          if (y == null || y < 0 || y > paneHeight) {
+            el.style.display = 'none';
+            continue;
+          }
+          el.style.display = 'block';
+          el.style.left = `${left}px`;
+          el.style.top = `${y}px`;
+          el.style.width = `${Math.max(right - left, 8)}px`;
+        }
+      }
     };
-    raf = requestAnimationFrame(tick);
+    raf = requestAnimationFrame(position);
 
     return () => {
       cancelAnimationFrame(raf);
@@ -124,9 +198,7 @@ export function ReplayChart({ candles, cursorIdx, tfMs, signals, focused, contex
     if (!newWindow && idx === prevIdxRef.current + 1) {
       series.update(toBar(candles[idx]));
     } else if (newWindow && liveTail && sameStart) {
-      // Cola VIVA (vista En vivo): el inicio de la ventana NO cambió → solo cambió/creció el final
-      // (vela en formación o cierre). Actualiza por el final con series.update SIN resetear el
-      // timescale → se ve el movimiento en tiempo real y se preserva el zoom/pan del usuario.
+      // Cola VIVA (vista En vivo): el inicio de la ventana NO cambió → solo cambió/creció el final.
       for (let i = Math.max(prevIdxRef.current, 0); i <= idx; i++) series.update(toBar(candles[i]));
     } else {
       series.setData(candles.slice(0, idx + 1).map(toBar));
@@ -135,11 +207,19 @@ export function ReplayChart({ candles, cursorIdx, tfMs, signals, focused, contex
         chart.timeScale().scrollToRealTime();
       }
     }
-    // Referencias verticales de la firma del viewport (constantes por ventana).
-    refPricesRef.current = [candles[0].l, candles[0].h];
     prevCandlesRef.current = candles;
     prevIdxRef.current = idx;
   }, [candles, cursorIdx, liveTail]);
+
+  // ── Geometría causal vigente (para el rAF del overlay) ──
+  useEffect(() => {
+    if (candles.length === 0) {
+      geomRef.current = { first: 0, cursorOpen: 0, cursorClose: 0, tfMs };
+      return;
+    }
+    const idx = Math.min(Math.max(cursorIdx, 0), candles.length - 1);
+    geomRef.current = { first: candles[0].openTime, cursorOpen: candles[idx].openTime, cursorClose: candles[idx].c, tfMs };
+  }, [candles, cursorIdx, tfMs]);
 
   // ── Marcadores y niveles CAUSALES según el cursor ──
   useEffect(() => {
@@ -255,40 +335,13 @@ export function ReplayChart({ candles, cursorIdx, tfMs, signals, focused, contex
     }
   }, [candles, cursorIdx, tfMs, signals, focused, sweeps]);
 
-  // ── Overlay de CONTEXTO SMC (rectángulos/niveles), proyectado al viewport actual ──
-  const chart = chartRef.current;
-  const series = seriesRef.current;
-  let overlay: React.ReactNode = null;
-  void viewNonce; // el nonce solo fuerza el re-render en pan/zoom/resize
-  let paneRight = 0;
-  let paneBottom = 0;
-  if (chart && series && candles.length > 0) {
+  // ── Modelo del overlay (qué dibujar): cambia con los datos/cursor, NO con el pan/zoom ──
+  const overlayItems = useMemo<OvItem[]>(() => {
+    if (candles.length === 0) return [];
     const idx = Math.min(Math.max(cursorIdx, 0), candles.length - 1);
     const cursorOpen = candles[idx].openTime;
     const cursorClose = candles[idx].c;
-    const first = candles[0].openTime;
-    const host = hostRef.current;
-    // El overlay se recorta al PANE de velas (sin invadir el eje de precio ni el de tiempo).
-    try {
-      paneRight = chart.priceScale('right').width();
-      paneBottom = chart.timeScale().height();
-    } catch {
-      /* chart aún sin layout: 0 */
-    }
-    const paneHeight = Math.max((host?.clientHeight ?? 0) - paneBottom, 0);
-
-    const xOf = (t: number): number | null => {
-      const logical = (Math.min(t, cursorOpen) - first) / tfMs;
-      const coord = chart.timeScale().logicalToCoordinate(logical as Logical);
-      return coord == null ? null : coord;
-    };
-    const yOf = (price: number): number | null => {
-      const c = series.priceToCoordinate(price);
-      if (c != null) return c;
-      return price > cursorClose ? -20 : paneHeight + 20; // fuera del rango visible: clamp recortado
-    };
-
-    const items: React.ReactNode[] = [];
+    const items: OvItem[] = [];
 
     if (showObs && context) {
       const visibles = context.obs
@@ -296,23 +349,19 @@ export function ReplayChart({ candles, cursorIdx, tfMs, signals, focused, contex
         .sort((a, b) => b.confirmedAtTime - a.confirmedAtTime)
         .slice(0, MAX_OBS);
       for (const o of visibles) {
-        const left = xOf(o.originTime);
-        const right = xOf(cursorOpen + tfMs); // proyección viva hasta el cursor
-        const top = yOf(o.obHigh);
-        const bottom = yOf(o.obLow);
-        if (left == null || right == null || top == null || bottom == null) continue;
-        if (right < 0 || left > (host?.clientWidth ?? 0)) continue;
         const mitigated = o.mitigatedAt != null && cursorOpen >= o.mitigatedAt;
         const bull = o.direction === 'bullish';
-        items.push(
-          <div
-            key={o.id}
-            className={`rx-ob ${bull ? 'bull' : 'bear'} ${mitigated ? 'mitigated' : ''}`}
-            style={{ left, top, width: Math.max(right - left, 2), height: Math.max(bottom - top, 2) }}
-          >
-            {right - left > 46 && <span className="rx-ob-label">OB {bull ? '▲' : '▼'}</span>}
-          </div>,
-        );
+        items.push({
+          id: o.id,
+          kind: 'box',
+          cls: `rx-ob ${bull ? 'bull' : 'bear'} ${mitigated ? 'mitigated' : ''}`,
+          tstart: o.originTime,
+          tend: cursorOpen + tfMs,
+          ptop: o.obHigh,
+          pbottom: o.obLow,
+          label: `OB ${bull ? '▲' : '▼'}`,
+          labelCls: 'rx-ob-label',
+        });
       }
     }
 
@@ -327,83 +376,80 @@ export function ReplayChart({ candles, cursorIdx, tfMs, signals, focused, contex
         .sort((a, b) => Math.abs(a.level - cursorClose) - Math.abs(b.level - cursorClose))
         .slice(0, MAX_LIQ);
       for (const l of visibles) {
-        const left = xOf(l.timeStart);
-        const right = xOf(l.sweptAtTime != null ? Math.min(l.sweptAtTime, cursorOpen) : cursorOpen + tfMs);
-        const y = yOf(l.level);
-        if (left == null || right == null || y == null || y < 0 || y > paneHeight) continue;
         const swept = l.sweptAtTime != null && cursorOpen >= l.sweptAtTime;
-        // Etiquetas de liquidez SMC: EQH/EQL (equal highs/lows) · BSL/SSL (buy/sell-side liquidity en
-        // swings). NO usar "SL" suelto: se confunde con Stop-Loss.
         const tag = l.type === 'equalHigh' ? 'EQH' : l.type === 'equalLow' ? 'EQL' : l.type === 'swingHigh' ? 'BSL' : 'SSL';
-        items.push(
-          <div
-            key={l.id}
-            className={`rx-liq ${swept ? 'swept' : ''}`}
-            style={{ left, top: y, width: Math.max(right - left, 8) }}
-          >
-            <span className="rx-liq-label">{tag}{swept ? ' ✕' : ''}</span>
-          </div>,
-        );
+        items.push({
+          id: l.id,
+          kind: 'line',
+          cls: `rx-liq ${swept ? 'swept' : ''}`,
+          tstart: l.timeStart,
+          tend: l.sweptAtTime != null ? Math.min(l.sweptAtTime, cursorOpen) : cursorOpen + tfMs,
+          price: l.level,
+          label: `${tag}${swept ? ' ✕' : ''}`,
+          labelCls: 'rx-liq-label',
+        });
       }
     }
 
-    // FVG (Fair Value Gaps) sin llenar — contexto de estudio (no es el gatillo). Cian/rosa.
     if (fvgs.length) {
       const visibles = fvgs
         .filter((f) => f.state !== 'filled' && f.timeStart <= cursorOpen)
         .sort((a, b) => b.timeStart - a.timeStart)
         .slice(0, 8);
       for (const f of visibles) {
-        const left = xOf(f.timeStart);
-        const right = xOf(cursorOpen + tfMs);
-        const top = yOf(f.gapHigh);
-        const bottom = yOf(f.gapLow);
-        if (left == null || right == null || top == null || bottom == null) continue;
-        if (right < 0 || left > (host?.clientWidth ?? 0)) continue;
-        items.push(
-          <div
-            key={f.id}
-            className={`rx-fvg ${f.direction === 'bullish' ? 'bull' : 'bear'}`}
-            style={{ left, top, width: Math.max(right - left, 2), height: Math.max(bottom - top, 2) }}
-          >
-            {right - left > 40 && <span className="rx-fvg-label">FVG</span>}
-          </div>,
-        );
+        items.push({
+          id: f.id,
+          kind: 'box',
+          cls: `rx-fvg ${f.direction === 'bullish' ? 'bull' : 'bear'}`,
+          tstart: f.timeStart,
+          tend: cursorOpen + tfMs,
+          ptop: f.gapHigh,
+          pbottom: f.gapLow,
+          label: 'FVG',
+          labelCls: 'rx-fvg-label',
+        });
       }
     }
 
-    // Banda de la zona del sweep de la señal enfocada (de la vela del sweep hasta su resolución).
     if (focused && focused.zoneLow != null && focused.zoneHigh != null) {
       const phase = signalPhaseAt(focused, cursorOpen, tfMs);
       if (phase !== 'future') {
         const endT = focused.exitTime ?? focused.endTime ?? cursorOpen + tfMs;
-        const left = xOf(focused.signalBarTime);
-        const right = xOf(Math.min(endT, cursorOpen + tfMs));
-        const top = yOf(focused.zoneHigh);
-        const bottom = yOf(focused.zoneLow);
-        if (left != null && right != null && top != null && bottom != null) {
-          items.push(
-            <div
-              key="focus-zone"
-              className={`rx-zone ${focused.direction === 'LONG' ? 'bull' : 'bear'} ${phase === 'rejected' ? 'rejected' : ''}`}
-              style={{ left, top, width: Math.max(right - left, 2), height: Math.max(bottom - top, 2) }}
-            />,
-          );
-        }
+        items.push({
+          id: 'focus-zone',
+          kind: 'box',
+          cls: `rx-zone ${focused.direction === 'LONG' ? 'bull' : 'bear'} ${phase === 'rejected' ? 'rejected' : ''}`,
+          tstart: focused.signalBarTime,
+          tend: Math.min(endT, cursorOpen + tfMs),
+          ptop: focused.zoneHigh,
+          pbottom: focused.zoneLow,
+        });
       }
     }
 
-    overlay = (
-      <div className="replay-overlay" style={{ right: paneRight, bottom: paneBottom }}>
-        {items}
-      </div>
-    );
-  }
+    return items;
+  }, [candles, cursorIdx, tfMs, context, fvgs, focused, showObs, showLiq]);
 
   return (
     <div className="replay-chart-wrap">
       <div className="replay-chart" ref={hostRef} />
-      {overlay}
+      <div className="replay-overlay" ref={overlayRef}>
+        {overlayItems.map((it) => (
+          <div
+            key={it.id}
+            className={it.cls}
+            data-kind={it.kind}
+            data-tstart={it.tstart}
+            data-tend={it.tend}
+            data-ptop={it.ptop}
+            data-pbottom={it.pbottom}
+            data-price={it.price}
+            style={{ display: 'none' }}
+          >
+            {it.label && <span className={it.labelCls}>{it.label}</span>}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
