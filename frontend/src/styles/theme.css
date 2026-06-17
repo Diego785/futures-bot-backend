@@ -594,6 +594,41 @@ body {
 .ph-back { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 4px 10px; cursor: pointer; margin-bottom: 10px; width: 100%; }
 .ph-back:hover { border-color: var(--accent); }
 
+/* Watchlist de los 10 pares (panel izquierdo de En vivo) */
+.pw-wrap { display: flex; flex-direction: column; height: 100%; }
+.pw-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--muted); padding: 8px 10px; border-bottom: 1px solid var(--border); flex: 0 0 auto; }
+.pw-load { color: var(--accent); }
+.pw-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; }
+.pw-item { padding: 6px 10px; border-bottom: 1px solid var(--border); cursor: pointer; }
+.pw-item:hover { background: var(--panel-2); }
+.pw-item.sel { background: #1b2335; border-left: 2px solid var(--accent); padding-left: 8px; }
+.pw-item.has-live { background: rgba(59, 130, 246, 0.10); }
+.pw-row1 { display: flex; align-items: center; gap: 6px; }
+.pw-sym { font-weight: 700; color: var(--text); flex: 1; }
+.pw-bias { font-weight: 800; }
+.pw-bias.bullish { color: var(--up); }
+.pw-bias.bearish { color: var(--down); }
+.pw-bias.neutral { color: var(--muted); }
+.pw-seek { font-size: 10px; font-weight: 700; color: var(--muted); }
+.pw-seek.long { color: var(--up); }
+.pw-seek.short { color: var(--down); }
+.pw-live { font-size: 10px; font-weight: 800; }
+.pw-live.long { color: var(--up); }
+.pw-live.short { color: var(--down); }
+.pw-row2 { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: 2px; }
+.pw-target { font-size: 10px; color: #d6a23b; font-variant-numeric: tabular-nums; }
+.pw-ago { font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* Toast de alerta (entrada armada / ejecutada / cerrada) */
+.pp-toast { position: fixed; top: 52px; right: 14px; z-index: 100; max-width: 320px; background: var(--panel-2); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 8px; padding: 10px 14px; display: flex; flex-direction: column; gap: 2px; cursor: pointer; box-shadow: 0 6px 24px rgba(0,0,0,0.5); animation: toastIn 0.2s ease; }
+.pp-toast.pending { border-left-color: #d6a23b; }
+.pp-toast.filled { border-left-color: var(--accent); }
+.pp-toast.win { border-left-color: var(--up); }
+.pp-toast.loss { border-left-color: var(--down); }
+.pp-toast-title { font-weight: 800; font-size: 13px; color: var(--text); }
+.pp-toast-body { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+@keyframes toastIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+
 @media (max-width: 820px) {
   .pp-subtabs button { padding: 4px 9px; }
   .pp-st-sub { display: none; }

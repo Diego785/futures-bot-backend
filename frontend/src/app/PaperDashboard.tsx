@@ -4,6 +4,7 @@ import { ReplayChart } from '../components/replay/ReplayChart';
 import { ReplayControls } from '../components/replay/ReplayControls';
 import { RunStats } from '../components/replay/RunStats';
 import { PaperLive } from '../components/paper/PaperLive';
+import { PaperWatchlist } from '../components/paper/PaperWatchlist';
 import { fetchPaperStatus, fetchPaperTrades, fetchPaperContext } from '../features/paper/paper.api';
 import type { PaperStatus, PaperTrade } from '../features/paper/paper.types';
 import { buildPaperMetrics, paperBySymbol, paperToSignal } from '../features/paper/paperAdapter';
@@ -36,6 +37,38 @@ export function PaperDashboard() {
     return s === 'envivo' || s === 'historial' ? s : 'resumen';
   });
   useEffect(() => localStorage.setItem('paper.view', view), [view]);
+
+  // Símbolo de la vista En vivo (compartido entre el watchlist y la gráfica).
+  const [liveSymbol, setLiveSymbol] = useState(() => localStorage.getItem('paper.live.symbol') || 'BTCUSDT');
+  useEffect(() => localStorage.setItem('paper.live.symbol', liveSymbol), [liveSymbol]);
+
+  // Alertas (entrada armada / ejecutada): toast en pantalla + notificación del navegador.
+  const [toast, setToast] = useState<{ title: string; body: string; kind: string; id: number } | null>(null);
+  const alertsArmedRef = useRef(false);
+  const fireAlert = useCallback((title: string, body: string, kind: string) => {
+    setToast({ title, body, kind, id: Date.now() });
+    if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+      try {
+        new Notification(title, { body });
+      } catch {
+        /* el navegador puede bloquear notificaciones; el toast en pantalla basta */
+      }
+    }
+  }, []);
+  useEffect(() => {
+    if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => {});
+    }
+    const t = setTimeout(() => {
+      alertsArmedRef.current = true; // no disparar por la carga inicial / replay del WS al conectar
+    }, 4000);
+    return () => clearTimeout(t);
+  }, []);
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 9000);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   const [status, setStatus] = useState<PaperStatus | null>(null);
   const [trades, setTrades] = useState<PaperTrade[]>([]);
@@ -100,6 +133,18 @@ export function PaperDashboard() {
     client.connect({
       onConnected: setWsOn,
       onPosition: (row) => {
+        const prev = tradesRef.current.find((x) => x.intentId === row.intentId);
+        if (alertsArmedRef.current) {
+          const sym = row.symbol.replace('USDT', '');
+          if (!prev && row.state === 'PENDING') {
+            fireAlert(`◌ Nueva entrada · ${sym} ${row.direction}`, `Pendiente @ ${row.entry} · SL ${row.stopLoss} · TP ${row.takeProfit}`, 'pending');
+          } else if (prev && prev.state !== 'FILLED' && row.state === 'FILLED') {
+            fireAlert(`● EN POSICIÓN · ${sym} ${row.direction}`, `Entrada ejecutada @ ${row.entryPrice}`, 'filled');
+          } else if (prev && prev.state !== 'CLOSED' && row.state === 'CLOSED' && row.rMultiple != null) {
+            const r = row.rMultiple;
+            fireAlert(`${row.exitReason} · ${sym} ${r >= 0 ? '+' : ''}${r.toFixed(2)}R`, 'Operación cerrada', r >= 0 ? 'win' : 'loss');
+          }
+        }
         upsertTrade(row);
         if (focusedRef.current === row.intentId) {
           const t = tradesRef.current.find((x) => x.intentId === row.intentId) ?? row;
@@ -307,6 +352,13 @@ export function PaperDashboard() {
     </div>
   );
 
+  const toastEl = toast && (
+    <div className={`pp-toast ${toast.kind}`} key={toast.id} onClick={() => setToast(null)} role="alert">
+      <span className="pp-toast-title">{toast.title}</span>
+      <span className="pp-toast-body">{toast.body}</span>
+    </div>
+  );
+
   // ── Inspector de la operación enfocada (Historial, derecha) ──
   const histInspector = focused && (
     <div className="replay-inspector">
@@ -390,72 +442,81 @@ export function PaperDashboard() {
   // ── ERROR ──
   if (error) {
     return (
-      <AppShell
-        topBar={topBar}
-        left={null}
-        center={
-          <div className="state state-error">
-            <p>Error del paper</p>
-            <code>{error}</code>
-            <p className="hint">¿Backend con DB_ENABLED=true y PAPER_TRADING=true?</p>
-          </div>
-        }
-        right={null}
-        bottom={bottomChips}
-        leftOpen={false}
-        rightOpen={false}
-        bottomOpen={true}
-      />
+      <>
+        {toastEl}
+        <AppShell
+          topBar={topBar}
+          left={null}
+          center={
+            <div className="state state-error">
+              <p>Error del paper</p>
+              <code>{error}</code>
+              <p className="hint">¿Backend con DB_ENABLED=true y PAPER_TRADING=true?</p>
+            </div>
+          }
+          right={null}
+          bottom={bottomChips}
+          leftOpen={false}
+          rightOpen={false}
+          bottomOpen={true}
+        />
+      </>
     );
   }
 
   // ── RESUMEN ──
   if (view === 'resumen') {
     return (
-      <AppShell
-        topBar={topBar}
-        left={null}
-        center={
-          <div className="rs-scroll">
-            <div className="pp-resumen">
-              {gateBanner}
-              <CapitalPanel summary={capital} onConfig={onCapitalConfig} />
-              <RunStats
-                run={pseudoRun}
-                signals={adaptedLive}
-                equity={equity}
-                mode="paper"
-                bySymbol={bySymbol}
-                onPickTrade={(intentId) => {
-                  const t = trades.find((x) => x.intentId === intentId);
-                  if (t) focusTrade(t);
-                }}
-              />
+      <>
+        {toastEl}
+        <AppShell
+          topBar={topBar}
+          left={null}
+          center={
+            <div className="rs-scroll">
+              <div className="pp-resumen">
+                {gateBanner}
+                <CapitalPanel summary={capital} onConfig={onCapitalConfig} />
+                <RunStats
+                  run={pseudoRun}
+                  signals={adaptedLive}
+                  equity={equity}
+                  mode="paper"
+                  bySymbol={bySymbol}
+                  onPickTrade={(intentId) => {
+                    const t = trades.find((x) => x.intentId === intentId);
+                    if (t) focusTrade(t);
+                  }}
+                />
+              </div>
             </div>
-          </div>
-        }
-        right={null}
-        bottom={bottomChips}
-        leftOpen={false}
-        rightOpen={false}
-        bottomOpen={true}
-      />
+          }
+          right={null}
+          bottom={bottomChips}
+          leftOpen={false}
+          rightOpen={false}
+          bottomOpen={true}
+        />
+      </>
     );
   }
 
-  // ── EN VIVO ──
+  // ── EN VIVO (watchlist + gráfica del par seleccionado) ──
   if (view === 'envivo') {
     return (
-      <AppShell
-        topBar={topBar}
-        left={null}
-        center={<PaperLive symbols={liveSymbols} trades={trades} />}
-        right={null}
-        bottom={bottomChips}
-        leftOpen={false}
-        rightOpen={false}
-        bottomOpen={true}
-      />
+      <>
+        {toastEl}
+        <AppShell
+          topBar={topBar}
+          left={<PaperWatchlist symbols={liveSymbols} selected={liveSymbol} onSelect={setLiveSymbol} trades={trades} />}
+          center={<PaperLive symbols={liveSymbols} symbol={liveSymbol} onSymbol={setLiveSymbol} trades={trades} />}
+          right={null}
+          bottom={bottomChips}
+          leftOpen={true}
+          rightOpen={false}
+          bottomOpen={true}
+        />
+      </>
     );
   }
 
@@ -519,16 +580,19 @@ export function PaperDashboard() {
       </div>
     );
     return (
-      <AppShell
-        topBar={topBar}
-        left={null}
-        center={histTable}
-        right={null}
-        bottom={bottomChips}
-        leftOpen={false}
-        rightOpen={false}
-        bottomOpen={true}
-      />
+      <>
+        {toastEl}
+        <AppShell
+          topBar={topBar}
+          left={null}
+          center={histTable}
+          right={null}
+          bottom={bottomChips}
+          leftOpen={false}
+          rightOpen={false}
+          bottomOpen={true}
+        />
+      </>
     );
   }
 
@@ -558,36 +622,39 @@ export function PaperDashboard() {
   }
 
   return (
-    <AppShell
-      topBar={
-        <div className="pp-topbar">
-          {topBarContent}
-          <label className="rt-toggle"><input type="checkbox" checked={showObs} onChange={() => setShowObs((v) => !v)} /> OBs</label>
-          <label className="rt-toggle"><input type="checkbox" checked={showLiq} onChange={() => setShowLiq((v) => !v)} /> liquidez</label>
-        </div>
-      }
-      left={null}
-      center={histCenter}
-      right={histInspector}
-      bottom={
-        <div className="replay-bottom">
-          <ReplayControls
-            cursorIdx={cursorIdx}
-            maxIdx={maxIdx}
-            cursorTime={cursorTime}
-            playing={playing}
-            speed={speed}
-            bias={replayBias}
-            onSeek={(i) => setCursorIdx(i)}
-            onStep={(d) => setCursorIdx((c) => Math.min(Math.max(c + d, 0), maxIdx))}
-            onPlayPause={() => setPlaying((p) => !p)}
-            onSpeed={setSpeed}
-          />
-        </div>
-      }
-      leftOpen={false}
-      rightOpen={true}
-      bottomOpen={true}
-    />
+    <>
+      {toastEl}
+      <AppShell
+        topBar={
+          <div className="pp-topbar">
+            {topBarContent}
+            <label className="rt-toggle"><input type="checkbox" checked={showObs} onChange={() => setShowObs((v) => !v)} /> OBs</label>
+            <label className="rt-toggle"><input type="checkbox" checked={showLiq} onChange={() => setShowLiq((v) => !v)} /> liquidez</label>
+          </div>
+        }
+        left={null}
+        center={histCenter}
+        right={histInspector}
+        bottom={
+          <div className="replay-bottom">
+            <ReplayControls
+              cursorIdx={cursorIdx}
+              maxIdx={maxIdx}
+              cursorTime={cursorTime}
+              playing={playing}
+              speed={speed}
+              bias={replayBias}
+              onSeek={(i) => setCursorIdx(i)}
+              onStep={(d) => setCursorIdx((c) => Math.min(Math.max(c + d, 0), maxIdx))}
+              onPlayPause={() => setPlaying((p) => !p)}
+              onSpeed={setSpeed}
+            />
+          </div>
+        }
+        leftOpen={false}
+        rightOpen={true}
+        bottomOpen={true}
+      />
+    </>
   );
 }

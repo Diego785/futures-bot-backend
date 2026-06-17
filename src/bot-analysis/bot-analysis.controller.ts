@@ -4,11 +4,11 @@ import { GetBotQueryDto } from './dto/get-bot-query.dto';
 import { detectStrictFvgs } from './fvg.detector';
 import { detectOrderBlocks } from './ob.detector';
 import { detectSweeps } from './sweep.detector';
-import { detectLiquidity } from './liquidity.detector';
+import { detectLiquidity, DEFAULT_LIQ_PARAMS } from './liquidity.detector';
 import { scoreConfluence } from './confluence.scorer';
 import { detectSetups } from './setup.detector';
 import { generateTradePlans } from './trade-plan.generator';
-import { computeHtfBias, biasAt } from '../backtest/htf-bias';
+import { computeHtfBias, biasAt, type Bias } from '../backtest/htf-bias';
 
 /**
  * Lectura automática del bot (Fase 5A/5B). Read-only sobre las velas locales: NO llama al
@@ -99,6 +99,46 @@ export class BotAnalysisController {
       changedAt: lastChange?.time ?? null,
       points,
     };
+  }
+
+  // Watchlist: resumen por símbolo para monitorear los 10 de un vistazo (sesgo 4H + precio + la
+  // próxima liquidez que el bot querría barrer a favor del sesgo). Read-only (Regla Cero).
+  @Get('watchlist')
+  async watchlist(@Query('symbols') symbols: string) {
+    const syms = (symbols ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+    const items: { symbol: string; bias: Bias; price: number; target: { type: string; level: number; distPct: number } | null }[] = [];
+    for (const symbol of syms) {
+      const c4h = (await this.closedCandles(symbol, '4h', 600)).map((c) => ({
+        openTime: c.openTime,
+        closeTime: c.closeTime,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+      }));
+      const c15 = await this.closedCandles(symbol, '15m', 600);
+      const points = computeHtfBias(c4h);
+      const lastT = c4h.length ? (c4h[c4h.length - 1].closeTime ?? c4h[c4h.length - 1].openTime) : 0;
+      const bias = biasAt(points, lastT);
+      const price = c15.length ? c15[c15.length - 1].close : 0;
+      const liqs = detectLiquidity(
+        symbol,
+        '15m',
+        c15.map((c) => ({ openTime: c.openTime, high: c.high, low: c.low, close: c.close })),
+        { ...DEFAULT_LIQ_PARAMS, swingLookback: 10 },
+      );
+      let target: { type: string; level: number; distPct: number } | null = null;
+      if (bias !== 'neutral' && price > 0) {
+        const cands =
+          bias === 'bullish'
+            ? liqs.filter((l) => (l.type === 'swingLow' || l.type === 'equalLow') && l.level < price).sort((a, b) => b.level - a.level)
+            : liqs.filter((l) => (l.type === 'swingHigh' || l.type === 'equalHigh') && l.level > price).sort((a, b) => a.level - b.level);
+        const t = cands[0];
+        if (t) target = { type: t.type, level: t.level, distPct: Math.round(((t.level - price) / price) * 10000) / 100 };
+      }
+      items.push({ symbol, bias, price, target });
+    }
+    return { watchlist: items };
   }
 
   @Get('confluence')

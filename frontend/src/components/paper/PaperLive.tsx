@@ -21,6 +21,8 @@ const VIEW_TFS: Timeframe[] = ['15m' as Timeframe, '4h' as Timeframe];
 
 interface Props {
   symbols: string[]; // los 10 del gate
+  symbol: string; // controlado por el contenedor (compartido con el watchlist)
+  onSymbol: (s: string) => void;
   trades: PaperTrade[];
 }
 
@@ -56,12 +58,8 @@ const agoLabel = (ms: number) => {
  * el CE. 📐 Contexto: OB/FVG. OJO: el motor DECIDE al CIERRE de la vela 15m (no intra-vela) — la vela
  * viva es solo visual. Observable, no operable (Regla Cero).
  */
-export function PaperLive({ symbols, trades }: Props) {
+export function PaperLive({ symbols, symbol, onSymbol, trades }: Props) {
   const list = symbols.length ? symbols : ['BTCUSDT'];
-  const [symbol, setSymbol] = useState(() => {
-    const s = localStorage.getItem('paper.live.symbol');
-    return s && list.includes(s) ? s : list[0];
-  });
   const [tf, setTf] = useState<Timeframe>(() => {
     const s = localStorage.getItem('paper.live.tf');
     return s === '4h' ? ('4h' as Timeframe) : ('15m' as Timeframe);
@@ -88,7 +86,6 @@ export function PaperLive({ symbols, trades }: Props) {
   tfRef.current = tf;
   const lastTickRef = useRef(0);
 
-  useEffect(() => localStorage.setItem('paper.live.symbol', symbol), [symbol]);
   useEffect(() => localStorage.setItem('paper.live.tf', tf), [tf]);
 
   // Re-deriva el análisis del bot (sesgo 4H siempre; contexto/barridos/FVG solo en la vista 15m).
@@ -223,7 +220,7 @@ export function PaperLive({ symbols, trades }: Props) {
   return (
     <div className="pl-wrap">
       <div className="pl-header">
-        <select className="pl-symsel" value={symbol} onChange={(e) => setSymbol(e.target.value)}>
+        <select className="pl-symsel" value={symbol} onChange={(e) => onSymbol(e.target.value)}>
           {list.map((s) => (
             <option key={s} value={s}>{s.replace('USDT', '')}</option>
           ))}

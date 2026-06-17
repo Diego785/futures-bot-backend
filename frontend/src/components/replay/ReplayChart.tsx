@@ -87,10 +87,14 @@ export function ReplayChart({ candles, cursorIdx, tfMs, signals, focused, contex
     const tick = () => {
       raf = requestAnimationFrame(tick);
       const lr = chart.timeScale().getVisibleLogicalRange();
-      const refs = refPricesRef.current;
-      const y0 = refs ? series.priceToCoordinate(refs[0]) : null;
-      const y1 = refs ? series.priceToCoordinate(refs[1]) : null;
-      const sig = `${lr?.from ?? ''}:${lr?.to ?? ''}|${y0 ?? ''}:${y1 ?? ''}|${host.clientWidth}x${host.clientHeight}`;
+      // Firma VERTICAL robusta: el precio en el borde superior e inferior del pane. `coordinateToPrice`
+      // de coordenadas dentro del pane SIEMPRE devuelve un valor; antes usábamos `priceToCoordinate` de
+      // precios fijos que, tras un pan vertical extremo, salen de rango → null → la firma se congelaba
+      // y el overlay (OB/BSL/SSL) dejaba de re-proyectarse (se quedaba estático).
+      const h = host.clientHeight;
+      const pTop = series.coordinateToPrice(0);
+      const pBot = series.coordinateToPrice(h);
+      const sig = `${lr?.from ?? ''}:${lr?.to ?? ''}|${pTop ?? ''}:${pBot ?? ''}|${host.clientWidth}x${h}`;
       if (sig !== lastSig) {
         lastSig = sig;
         setViewNonce((n) => n + 1);
