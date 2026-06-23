@@ -79,6 +79,10 @@ export interface SimConfig {
   maxWaitFillBars: number; // cancelar pendiente si no llena en N velas (0 = sin límite)
   maxHoldBars: number; // cerrar a mercado si sigue abierta tras N velas (0 = sin límite)
   pessimisticSameBar: boolean; // SL y TP en la misma vela → asumir SL primero (true = conservador)
+  // Realismo de fill (análisis sim↔real): exige que el precio CRUCE el CE por fillStrictFrac×risk (no
+  // solo lo TOQUE) para llenar la límite. 0/undefined = toque (candidato congelado). >0 = más estricto
+  // (modela que una límite solo rozada por la mecha puede NO llenar en real). Solo herramienta, no default.
+  fillStrictFrac?: number;
 }
 
 // Defaults provisionales 🔴. feeRatePerSide ~0.05 % = taker Binance/Bitget futures (ver doc §6).
@@ -141,6 +145,8 @@ export function simulateTrade(
   const sign = intent.direction === 'LONG' ? 1 : -1;
   const risk = Math.abs(intent.entry - intent.stopLoss);
   if (risk <= 0) return { intentId: intent.id, outcome: 'cancelled', reason: 'badRisk' };
+  // Fill estricto (análisis): el precio debe CRUZAR el CE por esta distancia, no solo tocarlo.
+  const fillStrict = (cfg.fillStrictFrac ?? 0) * risk;
 
   // Primera vela EJECUTABLE: estrictamente posterior al cierre de la vela de señal (lookahead = 0).
   let start = -1;
@@ -212,7 +218,7 @@ export function simulateTrade(
       if (cfg.maxWaitFillBars > 0 && offset >= cfg.maxWaitFillBars) {
         return { intentId: intent.id, outcome: 'cancelled', reason: 'maxWaitFill', endTime: ct };
       }
-      const hitEntry = intent.direction === 'LONG' ? c.low <= intent.entry : c.high >= intent.entry;
+      const hitEntry = intent.direction === 'LONG' ? c.low <= intent.entry - fillStrict : c.high >= intent.entry + fillStrict;
       if (hitEntry) {
         filled = true;
         entryFill = intent.entry + sign * cfg.slippagePerSide; // entrada adversa
