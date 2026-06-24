@@ -70,6 +70,10 @@ export interface SignalConfig {
   confirmProximityFrac: number; // modo B: la madre debe solapar o estar a ≤ frac×rango del OB de confirmación
   poolMode: 'lastSwing' | 'pools'; // gatillo C: qué liquidez se barre (Ciclo 2, CYCLE-2-PREREG Eje 2)
   maxChochBars: number; // gatillo D: máx. velas tras el sweep para exigir el CHoCH (Ciclo 3, default 15)
+  // Entrada por CONFIRMACIÓN (experimento robustez-fill, gatillo C): 'ce'/undefined = límite en el CE
+  // (candidato congelado, frágil al fill) · 'confirm' = entrada a MERCADO en el reclaim (fill garantizado,
+  // sin pullback). El sim debe correr con entryAtMarket=true para 'confirm'. Solo herramienta, no default.
+  entryMode?: 'ce' | 'confirm';
 }
 
 // Defaults provisionales 🔴 (alineados con SMC-STRATEGY-MECHANICAL §5).
@@ -204,13 +208,14 @@ function buildIntent(
   cfg: SignalConfig,
   idxOfTime: Map<number, number>,
   extraContext: Partial<IntentContext> = {},
+  entryOverride?: number, // entrada por confirmación: usa este precio (reclaim) en vez del CE
 ): BuildResult {
   const range = zoneHigh - zoneLow;
   if (range <= 0) return { rejectReason: 'badZone' };
   const signalIdx = idxOfTime.get(signalBarTime);
   if (signalIdx == null) return { rejectReason: 'badZone' };
   const sign = direction === 'LONG' ? 1 : -1;
-  const entry = (zoneLow + zoneHigh) / 2; // CE
+  const entry = entryOverride ?? (zoneLow + zoneHigh) / 2; // CE, salvo override (entrada por confirmación)
   const buffer = cfg.slBufferFrac * range;
   const stopLoss = direction === 'LONG' ? zoneLow - buffer : zoneHigh + buffer;
   const risk = Math.abs(entry - stopLoss);
@@ -354,11 +359,11 @@ function intentsC(
     // El id lleva la dirección: una misma vela puede barrer un swing high Y un swing low (dos
     // intents opuestos) y el dedup por id del paper-trading no debe colapsarlos.
     const suffix = `${s.sweepBarTime}_${direction === 'LONG' ? 'u' : 'd'}`;
-    const res = buildIntent(symbol, tf, suffix, direction, s.sweepBarTime, zoneLow, zoneHigh, liqs, obTargets, cfg, idxOfTime, {
-      sweptLevel: s.sweptLevel,
-      wickExtreme: s.wickExtreme,
-      sweptSwingTime: s.sweptSwingTime,
-    });
+    const res = buildIntent(
+      symbol, tf, suffix, direction, s.sweepBarTime, zoneLow, zoneHigh, liqs, obTargets, cfg, idxOfTime,
+      { sweptLevel: s.sweptLevel, wickExtreme: s.wickExtreme, sweptSwingTime: s.sweptSwingTime },
+      cfg.entryMode === 'confirm' ? s.reclaimClose : undefined, // entrada por confirmación = reclaim
+    );
     collect(res, out, cfg, symbol, tf, suffix, direction, s.sweepBarTime, zoneLow, zoneHigh);
   }
   return out;

@@ -83,6 +83,10 @@ export interface SimConfig {
   // solo lo TOQUE) para llenar la límite. 0/undefined = toque (candidato congelado). >0 = más estricto
   // (modela que una límite solo rozada por la mecha puede NO llenar en real). Solo herramienta, no default.
   fillStrictFrac?: number;
+  // Entrada por CONFIRMACIÓN (mercado): si true, la entrada llena en la PRIMERA vela ejecutable a su
+  // OPEN (fill GARANTIZADO, sin pullback ni incertidumbre de fill ni cancelBeyond). Para comparar el
+  // edge de una entrada robusta-a-fill vs la límite-en-CE (frágil). Solo herramienta, no default.
+  entryAtMarket?: boolean;
 }
 
 // Defaults provisionales 🔴. feeRatePerSide ~0.05 % = taker Binance/Bitget futures (ver doc §6).
@@ -160,7 +164,8 @@ export function simulateTrade(
 
   // Resolución de fees: maker/taker diferenciados si ambos están definidos, si no tarifa única.
   const useMt = cfg.makerFee != null && cfg.takerFee != null;
-  const feeEntry = useMt ? (cfg.makerFee as number) : cfg.feeRatePerSide; // entrada = límite (maker)
+  // Entrada: límite (maker) por defecto; a MERCADO (taker) si es entrada por confirmación.
+  const feeEntry = useMt ? (cfg.entryAtMarket ? (cfg.takerFee as number) : (cfg.makerFee as number)) : cfg.feeRatePerSide;
   const feeExitTaker = useMt ? (cfg.takerFee as number) : cfg.feeRatePerSide;
   const feeExitMaker = useMt ? (cfg.makerFee as number) : cfg.feeRatePerSide;
 
@@ -215,29 +220,39 @@ export function simulateTrade(
 
     if (!filled) {
       const offset = b - start;
-      if (cfg.maxWaitFillBars > 0 && offset >= cfg.maxWaitFillBars) {
-        return { intentId: intent.id, outcome: 'cancelled', reason: 'maxWaitFill', endTime: ct };
-      }
-      const hitEntry = intent.direction === 'LONG' ? c.low <= intent.entry - fillStrict : c.high >= intent.entry + fillStrict;
-      if (hitEntry) {
+      if (cfg.entryAtMarket) {
+        // Entrada por CONFIRMACIÓN (mercado): llena GARANTIZADO en la 1ª vela ejecutable, en el precio
+        // del reclaim (= intent.entry, fijado al cierre de la señal) + slippage. Sin esperar pullback.
         filled = true;
-        entryFill = intent.entry + sign * cfg.slippagePerSide; // entrada adversa
+        entryFill = intent.entry + sign * cfg.slippagePerSide; // mercado adverso
         entryTime = c.openTime;
         barsToFill = offset;
-        // cae al bloque de posición abierta en ESTA misma vela (un knife puede llenar y pegar SL/TP ya)
+        // cae al bloque de posición abierta en ESTA misma vela
       } else {
-        // Sin fill: ¿se alejó el precio? ¿se invalidó el POI por cuerpo?
-        if (intent.cancelBeyond != null) {
-          const ranAway =
-            intent.direction === 'LONG' ? c.high >= intent.cancelBeyond : c.low <= intent.cancelBeyond;
-          if (ranAway) return { intentId: intent.id, outcome: 'cancelled', reason: 'ranAway', endTime: ct };
+        if (cfg.maxWaitFillBars > 0 && offset >= cfg.maxWaitFillBars) {
+          return { intentId: intent.id, outcome: 'cancelled', reason: 'maxWaitFill', endTime: ct };
         }
-        if (intent.invalidationPrice != null) {
-          const invalidated =
-            intent.direction === 'LONG' ? c.close < intent.invalidationPrice : c.close > intent.invalidationPrice;
-          if (invalidated) return { intentId: intent.id, outcome: 'cancelled', reason: 'invalidated', endTime: ct };
+        const hitEntry = intent.direction === 'LONG' ? c.low <= intent.entry - fillStrict : c.high >= intent.entry + fillStrict;
+        if (hitEntry) {
+          filled = true;
+          entryFill = intent.entry + sign * cfg.slippagePerSide; // entrada adversa
+          entryTime = c.openTime;
+          barsToFill = offset;
+          // cae al bloque de posición abierta en ESTA misma vela (un knife puede llenar y pegar SL/TP ya)
+        } else {
+          // Sin fill: ¿se alejó el precio? ¿se invalidó el POI por cuerpo?
+          if (intent.cancelBeyond != null) {
+            const ranAway =
+              intent.direction === 'LONG' ? c.high >= intent.cancelBeyond : c.low <= intent.cancelBeyond;
+            if (ranAway) return { intentId: intent.id, outcome: 'cancelled', reason: 'ranAway', endTime: ct };
+          }
+          if (intent.invalidationPrice != null) {
+            const invalidated =
+              intent.direction === 'LONG' ? c.close < intent.invalidationPrice : c.close > intent.invalidationPrice;
+            if (invalidated) return { intentId: intent.id, outcome: 'cancelled', reason: 'invalidated', endTime: ct };
+          }
+          continue;
         }
-        continue;
       }
     }
 
