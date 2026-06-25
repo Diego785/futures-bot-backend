@@ -66,3 +66,31 @@ export type PlanRejectReason =
 export type PlanResult =
   | { ok: true; plan: BracketPlan }
   | { ok: false; reason: PlanRejectReason; detail: string };
+
+// ─── Risk-guard (arnés de seguridad, EXECUTION-SPEC §5) ───
+
+// Topes duros. Se derivan de ExecutionConfig + la whitelist de símbolos + la franja de sanity de precio.
+export interface RiskLimits {
+  maxConcurrentPositions: number;
+  maxNotionalPerOrderUsd: number;
+  maxMarginUsedUsd: number;
+  maxDailyLossR: number; // pérdida diaria (R, positiva) que bloquea nuevas aperturas hasta el día UTC siguiente
+  circuitBreakerLossR: number; // pérdida acumulada (R) que activa el kill permanente
+  leverage: number;
+  symbols: string[]; // whitelist (solo el universo del candidato)
+  priceSanityFrac: number; // la entrada no puede estar a más de ±frac del precio de mercado (anti-bug)
+}
+
+// Estado vivo del guardián.
+export interface RiskState {
+  activeSlots: number; // intents en vuelo (límite resting u posición abierta)
+  marginUsedUsd: number; // margen comprometido (reservas + posiciones)
+  dailyLossR: number; // R perdida en el día UTC actual (≥0)
+  cumulativeLossR: number; // R perdida acumulada desde el arranque (≥0)
+  realizedR: number; // R neta realizada (informativo)
+  dayKey: string; // 'YYYY-MM-DD' UTC del día en curso
+  killed: boolean;
+  killReason: string | null;
+}
+
+export type RiskDecision = { allow: true } | { allow: false; reason: string };
