@@ -1,0 +1,136 @@
+// Executor de órdenes: envoltura DELGADA sobre IExchangeRest que coloca/cancela el bracket y aplana
+// posiciones. Sin lógica de estrategia (eso es el plan) ni de riesgo (eso es el risk-guard de P.5.3).
+// Es el building-block que usan el smoke (P.5.2) y el cableado al motor (P.5.3).
+
+import { Injectable, Logger } from '@nestjs/common';
+import {
+  IExchangeRest,
+  IExchangeInfoService,
+  OrderSide,
+  OrderType,
+  TimeInForce,
+  type OrderResult,
+  type ConditionalResult,
+  type Position,
+} from '../exchange/interfaces/exchange.interfaces';
+import type { PlannedOrder, SymbolFilters } from './execution.types';
+
+@Injectable()
+export class OrderExecutorService {
+  private readonly logger = new Logger(OrderExecutorService.name);
+
+  constructor(
+    private readonly rest: IExchangeRest,
+    private readonly info: IExchangeInfoService,
+  ) {}
+
+  filtersFor(symbol: string): SymbolFilters | undefined {
+    if (!this.info.getSymbolInfo(symbol)) return undefined;
+    return {
+      tickSize: this.info.getTickSize(symbol),
+      stepSize: this.info.getStepSize(symbol),
+      minNotional: this.info.getMinNotional(symbol),
+    };
+  }
+
+  async ensureLeverage(symbol: string, leverage: number): Promise<void> {
+    await this.rest.changeLeverage(symbol, leverage);
+  }
+
+  async getLastPrice(symbol: string): Promise<number> {
+    const k = await this.rest.getKlines(symbol, '1m', 1);
+    return k.length ? k[k.length - 1].close : 0;
+  }
+
+  async getOpenPosition(symbol: string): Promise<Position | null> {
+    const positions = await this.rest.getPositions(symbol);
+    return positions.find((p) => Math.abs(parseFloat(p.positionAmt)) > 0) ?? null;
+  }
+
+  getOpenConditionals(symbol: string): Promise<ConditionalResult[]> {
+    return this.rest.getOpenConditionals(symbol);
+  }
+
+  placeEntryLimit(o: PlannedOrder): Promise<OrderResult> {
+    return this.rest.placeOrder({
+      symbol: o.symbol,
+      side: toSide(o.side),
+      type: OrderType.LIMIT,
+      quantity: o.quantity,
+      price: o.price,
+      timeInForce: TimeInForce.GTC,
+      reduceOnly: false,
+      clientOrderId: o.clientOrderId,
+    });
+  }
+
+  // MARKET — usado para forzar fill en el smoke y para CERRAR (reduceOnly) al aplanar.
+  placeMarket(
+    symbol: string,
+    side: 'BUY' | 'SELL',
+    quantity: string,
+    reduceOnly: boolean,
+    clientOrderId?: string,
+  ): Promise<OrderResult> {
+    return this.rest.placeOrder({
+      symbol,
+      side: toSide(side),
+      type: OrderType.MARKET,
+      quantity,
+      reduceOnly,
+      clientOrderId,
+    });
+  }
+
+  placeStop(o: PlannedOrder): Promise<ConditionalResult> {
+    return this.rest.placeStopLoss({
+      symbol: o.symbol,
+      side: toSide(o.side),
+      triggerPrice: o.stopPrice as string,
+      quantity: o.quantity,
+      reduceOnly: true,
+      clientOrderId: o.clientOrderId,
+    });
+  }
+
+  placeTakeProfit(o: PlannedOrder): Promise<ConditionalResult> {
+    return this.rest.placeTakeProfit({
+      symbol: o.symbol,
+      side: toSide(o.side),
+      triggerPrice: o.stopPrice as string,
+      quantity: o.quantity,
+      reduceOnly: true,
+      clientOrderId: o.clientOrderId,
+    });
+  }
+
+  cancelOrder(symbol: string, clientOrderId: string): Promise<void> {
+    return this.rest.cancelOrder(symbol, clientOrderId);
+  }
+
+  // Aplana TODO el símbolo: cancela condicionales + órdenes abiertas y cierra la posición a mercado
+  // (reduceOnly). Best-effort en cada paso para que un fallo parcial no deje la posición a medio cerrar.
+  async flatten(symbol: string): Promise<void> {
+    await safe(() => this.rest.cancelAllConditionals(symbol), this.logger, 'cancelAllConditionals');
+    await safe(() => this.rest.cancelAllOpenOrders(symbol), this.logger, 'cancelAllOpenOrders');
+    const pos = await this.getOpenPosition(symbol);
+    if (pos) {
+      const amt = parseFloat(pos.positionAmt);
+      const closeSide = amt > 0 ? 'SELL' : 'BUY';
+      const qty = pos.positionAmt.startsWith('-') ? pos.positionAmt.slice(1) : pos.positionAmt;
+      await this.placeMarket(symbol, closeSide, qty, true);
+    }
+  }
+}
+
+function toSide(s: 'BUY' | 'SELL'): OrderSide {
+  return s === 'BUY' ? OrderSide.BUY : OrderSide.SELL;
+}
+
+async function safe(fn: () => Promise<unknown>, logger: Logger, label: string): Promise<void> {
+  try {
+    await fn();
+  } catch (e) {
+    logger.warn(`${label} falló (best-effort): ${e instanceof Error ? e.message : e}`);
+  }
+}

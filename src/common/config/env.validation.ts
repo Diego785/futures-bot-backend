@@ -55,6 +55,23 @@ const baseSchema = z.object({
   BYBIT_WS_PRIVATE_URL: z.string().optional(),
   BYBIT_API_KEY: z.string().optional(),
   BYBIT_API_SECRET: z.string().optional(),
+
+  // ─── Ejecución real ACOTADA (P.5, docs/EXECUTION-SPEC.md) ───
+  // Regla Cero acotada: ejecuta el candidato CONGELADO con tamaño minúsculo + topes duros para MEDIR
+  // fills reales. EXECUTION_ENABLED default 'false' → NADA se coloca sin activarlo conscientemente; y
+  // EXECUTION_TESTNET default 'true' → contra red de pruebas salvo que se apague a propósito. El sizing
+  // sale de EXECUTION_TEST_CAPITAL (NO del balance — §3). Para testnet: además poné
+  // BINANCE_FUTURES_BASE_URL=https://testnet.binancefuture.com + las API keys de testnet.
+  EXECUTION_ENABLED: z.enum(['true', 'false']).default('false'),
+  EXECUTION_TESTNET: z.enum(['true', 'false']).default('true'),
+  EXECUTION_TEST_CAPITAL: z.coerce.number().positive().default(100),
+  EXECUTION_RISK_PCT: z.coerce.number().positive().default(0.005),
+  EXECUTION_LEVERAGE: z.coerce.number().int().positive().default(5),
+  EXECUTION_MAX_POSITIONS: z.coerce.number().int().positive().default(3),
+  EXECUTION_MAX_NOTIONAL_USD: z.coerce.number().positive().default(400),
+  EXECUTION_MAX_MARGIN_USD: z.coerce.number().positive().default(80),
+  EXECUTION_MAX_DAILY_LOSS_R: z.coerce.number().positive().default(3),
+  EXECUTION_CIRCUIT_BREAKER_R: z.coerce.number().positive().default(10),
 });
 
 const envSchema = baseSchema.superRefine((data, ctx) => {
