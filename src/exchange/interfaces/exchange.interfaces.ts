@@ -101,6 +101,9 @@ export interface ConditionalOrderRequest {
   triggerPrice: string;
   quantity: string;
   reduceOnly?: boolean;
+  // Si true: cierra TODA la posición al disparar (sin quantity ni reduceOnly) — bracket OCO robusto
+  // (evita el rechazo por suma de reduceOnly y auto-cancela la hermana al cerrar). Preferido para SL/TP.
+  closePosition?: boolean;
   clientOrderId?: string;
 }
 

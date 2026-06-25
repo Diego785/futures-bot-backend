@@ -2,6 +2,7 @@ export const BINANCE_API = {
   EXCHANGE_INFO: '/fapi/v1/exchangeInfo',
   KLINES: '/fapi/v1/klines',
   ORDER: '/fapi/v1/order',
+  OPEN_ORDERS: '/fapi/v1/openOrders',
   ALL_OPEN_ORDERS: '/fapi/v1/allOpenOrders',
   // Algo Order API (STOP_MARKET, TAKE_PROFIT_MARKET, etc. migrated Dec 2025)
   ALGO_ORDER: '/fapi/v1/algoOrder',

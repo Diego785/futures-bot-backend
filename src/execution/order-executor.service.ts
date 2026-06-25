@@ -87,8 +87,8 @@ export class OrderExecutorService {
       symbol: o.symbol,
       side: toSide(o.side),
       triggerPrice: o.stopPrice as string,
-      quantity: o.quantity,
-      reduceOnly: true,
+      quantity: o.quantity, // ignorado: closePosition cierra toda la posición
+      closePosition: true,
       clientOrderId: o.clientOrderId,
     });
   }
@@ -98,8 +98,8 @@ export class OrderExecutorService {
       symbol: o.symbol,
       side: toSide(o.side),
       triggerPrice: o.stopPrice as string,
-      quantity: o.quantity,
-      reduceOnly: true,
+      quantity: o.quantity, // ignorado: closePosition cierra toda la posición
+      closePosition: true,
       clientOrderId: o.clientOrderId,
     });
   }

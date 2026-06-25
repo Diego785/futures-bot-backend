@@ -69,9 +69,10 @@ export interface BinanceOrderResponse {
   avgPrice: string;
   timeInForce: string;
   updateTime: number;
+  stopPrice?: string; // presente en órdenes condicionales (STOP_MARKET / TAKE_PROFIT_MARKET)
 }
 
-// ─── Algo Order (STOP_MARKET, TAKE_PROFIT_MARKET — migrated Dec 2025) ───
+// ─── Algo Order (legacy; SL/TP en v2 van por el endpoint estándar /fapi/v1/order) ───
 export interface BinanceAlgoOrderResponse {
   algoId: number;
   clientAlgoId: string;

@@ -117,6 +117,20 @@ export class BinanceRestService implements OnModuleInit {
     });
   }
 
+  async getOpenOrders(symbol: string): Promise<BinanceOrderResponse[]> {
+    return this.signedRequest('GET', BINANCE_API.OPEN_ORDERS, { symbol });
+  }
+
+  async cancelOrderById(
+    symbol: string,
+    orderId: number,
+  ): Promise<BinanceOrderResponse> {
+    return this.signedRequest('DELETE', BINANCE_API.ORDER, {
+      symbol,
+      orderId: orderId.toString(),
+    });
+  }
+
   // ─── Algo Order API (STOP_MARKET, TAKE_PROFIT_MARKET — migrated Dec 2025) ───
 
   async placeAlgoOrder(
@@ -252,16 +266,20 @@ export class BinanceRestService implements OnModuleInit {
     const signature = signQuery(queryString, apiSecret);
     const url = `${this.baseUrl}${path}?${queryString}&signature=${signature}`;
 
-    const response = await firstValueFrom(
-      this.httpService.request<T>({
-        method,
-        url,
-        headers: { 'X-MBX-APIKEY': apiKey },
-      }),
-    );
-
-    this.trackRateLimit(response.headers);
-    return response.data;
+    try {
+      const response = await firstValueFrom(
+        this.httpService.request<T>({
+          method,
+          url,
+          headers: { 'X-MBX-APIKEY': apiKey },
+        }),
+      );
+      this.trackRateLimit(response.headers);
+      return response.data;
+    } catch (err) {
+      // Surface el body de Binance (code+msg) en vez de un opaco "status code 400".
+      throw asBinanceError(err, method, path);
+    }
   }
 
   private async publicRequest<T>(
@@ -315,4 +333,14 @@ export class BinanceRestService implements OnModuleInit {
       }
     }
   }
+}
+
+// Convierte un error de axios en un Error con el body de Binance (code+msg) visible. Sin esto, un
+// rechazo del exchange llega como "Request failed with status code 400" y no se puede diagnosticar.
+function asBinanceError(err: unknown, method: string, path: string): Error {
+  const e = err as { response?: { status?: number; data?: unknown }; message?: string };
+  const status = e?.response?.status;
+  const data = e?.response?.data;
+  const detail = data !== undefined ? JSON.stringify(data) : e?.message ?? 'unknown error';
+  return new Error(`Binance ${method} ${path} failed (HTTP ${status ?? '?'}): ${detail}`);
 }
