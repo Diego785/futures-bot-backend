@@ -80,6 +80,8 @@ export interface BinanceAlgoOrderResponse {
   orderType: string;
   symbol: string;
   side: string;
+  positionSide?: string; // presente en la query; el ACK del place puede omitirlo
+  quantity?: string;
   triggerPrice: string;
   algoStatus: string;
   createTime: number;

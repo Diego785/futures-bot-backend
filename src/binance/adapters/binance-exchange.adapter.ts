@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { BinanceRestService } from '../binance-rest.service';
 import type {
   BinanceOrderResponse,
+  BinanceAlgoOrderResponse,
   BinancePositionRisk,
   BinanceAccountBalance,
   BinanceUserTrade,
@@ -109,9 +110,10 @@ export class BinanceExchangeAdapter extends IExchangeRest {
     return this.placeConditional(req, 'TAKE_PROFIT_MARKET');
   }
 
-  // STOP_MARKET / TAKE_PROFIT_MARKET van por el endpoint ESTÁNDAR /fapi/v1/order (type + stopPrice).
-  // NO existe un endpoint "algo" canónico para SL/TP en USDT-M (esa ruta heredada del v1 daba HTTP 400).
-  // Quedan como órdenes abiertas normales → se listan/cancelan vía openOrders.
+  // STOP_MARKET / TAKE_PROFIT_MARKET migraron (Binance, 2025-12-09) a la Algo Order API: van por POST
+  // /fapi/v1/algoOrder con algoType=CONDITIONAL. El endpoint estándar /fapi/v1/order los RECHAZA (-4120).
+  // Params CORRECTOS del algo (≠ del endpoint viejo): `type` (NO orderType) · `triggerPrice` (NO stopPrice)
+  // · `clientAlgoId` (NO newClientOrderId). Se listan/cancelan vía /fapi/v1/openAlgoOrders + algoId.
   private async placeConditional(
     req: ConditionalOrderRequest,
     orderType: 'STOP_MARKET' | 'TAKE_PROFIT_MARKET',
@@ -120,11 +122,11 @@ export class BinanceExchangeAdapter extends IExchangeRest {
       symbol: req.symbol,
       side: req.side,
       type: orderType,
-      stopPrice: req.triggerPrice,
+      triggerPrice: req.triggerPrice,
       workingType: 'CONTRACT_PRICE',
     };
-    // closePosition cierra TODA la posición al disparar (sin quantity ni reduceOnly): bracket OCO
-    // robusto — evita el rechazo por suma de reduceOnly y auto-cancela la hermana al cerrar.
+    // closePosition cierra TODA la posición al disparar (sin quantity): bracket OCO robusto — evita el
+    // rechazo por suma de reduceOnly y auto-cancela la hermana al cerrar.
     if (req.closePosition) {
       params.closePosition = 'true';
     } else {
@@ -134,37 +136,23 @@ export class BinanceExchangeAdapter extends IExchangeRest {
       }
     }
     if (req.positionSide) params.positionSide = req.positionSide;
-    if (req.clientOrderId) params.newClientOrderId = req.clientOrderId;
+    if (req.clientOrderId) params.clientAlgoId = req.clientOrderId;
 
-    const raw = await this.rest.placeOrder(params);
-    return orderToConditional(raw, orderType);
+    const raw = await this.rest.placeAlgoOrder(params);
+    return mapConditionalResult(raw);
   }
 
-  async cancelConditional(symbol: string, conditionalId: string): Promise<void> {
-    await this.rest.cancelOrderById(symbol, parseInt(conditionalId, 10));
+  async cancelConditional(_symbol: string, conditionalId: string): Promise<void> {
+    await this.rest.cancelAlgoOrder(parseInt(conditionalId, 10));
   }
 
   async getOpenConditionals(symbol: string): Promise<ConditionalResult[]> {
-    const raws = await this.rest.getOpenOrders(symbol);
-    return raws
-      .filter((o) => o.type === 'STOP_MARKET' || o.type === 'TAKE_PROFIT_MARKET')
-      .map((o) =>
-        orderToConditional(
-          o,
-          o.type === 'TAKE_PROFIT_MARKET' ? 'TAKE_PROFIT_MARKET' : 'STOP_MARKET',
-        ),
-      );
+    const raws = await this.rest.getOpenAlgoOrders(symbol);
+    return raws.map(mapConditionalResult);
   }
 
   async cancelAllConditionals(symbol: string): Promise<void> {
-    const conds = await this.getOpenConditionals(symbol);
-    for (const c of conds) {
-      try {
-        await this.rest.cancelOrderById(symbol, parseInt(c.conditionalId, 10));
-      } catch {
-        // best-effort
-      }
-    }
+    await this.rest.cancelAllAlgoOrders(symbol);
   }
 
   // ─── Account ────────────────────────────────────────────────────────────
@@ -243,25 +231,22 @@ function mapOrderResult(raw: BinanceOrderResponse): OrderResult {
   };
 }
 
-function orderToConditional(
-  raw: BinanceOrderResponse,
-  orderType: 'STOP_MARKET' | 'TAKE_PROFIT_MARKET',
-): ConditionalResult {
+function mapConditionalResult(raw: BinanceAlgoOrderResponse): ConditionalResult {
   return {
-    conditionalId: String(raw.orderId),
-    clientOrderId: raw.clientOrderId,
+    conditionalId: String(raw.algoId),
+    clientOrderId: raw.clientAlgoId,
     symbol: raw.symbol,
     side: raw.side as OrderSide,
-    positionSide: mapPositionSide(raw.positionSide),
+    positionSide: mapPositionSide(raw.positionSide ?? 'BOTH'),
     orderType:
-      orderType === 'TAKE_PROFIT_MARKET'
+      raw.orderType === 'TAKE_PROFIT_MARKET'
         ? OrderType.TAKE_PROFIT_MARKET
         : OrderType.STOP_MARKET,
-    triggerPrice: raw.stopPrice ?? '0',
-    quantity: raw.origQty,
-    status: mapConditionalStatusFromOrder(raw.status),
+    triggerPrice: raw.triggerPrice,
+    quantity: raw.quantity ?? '0',
+    status: mapConditionalStatus(raw.algoStatus),
     reduceOnly: false, // el raw no lo refleja; la decisión del caller se preserva
-    createTime: raw.updateTime,
+    createTime: raw.createTime,
   };
 }
 
@@ -382,11 +367,15 @@ function mapOrderStatus(s: string): OrderStatus {
   }
 }
 
-function mapConditionalStatusFromOrder(s: string): ConditionalStatus {
+function mapConditionalStatus(s: string): ConditionalStatus {
   switch (s) {
     case 'NEW':
       return ConditionalStatus.NEW;
-    case 'FILLED':
+    case 'TRIGGERING':
+      return ConditionalStatus.TRIGGERING;
+    case 'TRIGGERED':
+      return ConditionalStatus.TRIGGERED;
+    case 'FINISHED':
       return ConditionalStatus.FINISHED;
     case 'CANCELED':
       return ConditionalStatus.CANCELED;
