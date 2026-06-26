@@ -10,8 +10,9 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional, Inject } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { execSync } from 'child_process';
-import { Subscription } from 'rxjs';
+import { Subject, Subscription } from 'rxjs';
 import { IMarketDataPort } from '../exchange/interfaces/exchange.interfaces';
+import type { TradeIntent } from '../backtest/trade-simulator';
 import { CandleRepository } from '../market-data/candle.repository';
 import { computeHtfBias, type BiasPoint } from '../backtest/htf-bias';
 import { makeParamsHash } from '../backtest/register.mapper';
@@ -44,6 +45,15 @@ export class PaperTradingService implements OnModuleInit, OnModuleDestroy {
   private readonly subs: Subscription[] = [];
   private timer: ReturnType<typeof setInterval> | null = null;
   private live = false; // false durante la rehidratación (no se emiten eventos del pasado)
+
+  // Hooks READ-ONLY para la capa de ejecución (P.5.3, módulo APARTE): emiten el intent nuevo (la
+  // decisión del candidato de entrar) y la cancelación. NO tocan órdenes — la Regla Cero del paper
+  // sigue intacta (el test de invarianza estructural no halla write-API aquí); el executor, en otro
+  // módulo, se suscribe y actúa. Solo emiten en vivo (jamás durante la rehidratación del pasado).
+  private readonly liveIntent$ = new Subject<TradeIntent>();
+  private readonly liveCancel$ = new Subject<string>();
+  readonly onLiveIntent$ = this.liveIntent$.asObservable();
+  readonly onLiveCancel$ = this.liveCancel$.asObservable();
 
   constructor(
     private readonly candles: CandleRepository,
@@ -182,12 +192,22 @@ export class PaperTradingService implements OnModuleInit, OnModuleDestroy {
         for (const p of st.engine.allPositions()) {
           const sig = stateSig(p);
           if (st.prev.get(p.id) !== sig) {
+            const wasKnown = st.prev.has(p.id);
             st.prev.set(p.id, sig);
             const row = toPaperTradeRow(p, buffer, this.engineVersion, st.paramsHash, now, this.clockStart);
             // SOLO el forward-test real (live) se persiste/emite. El histórico rehidratado es CONTEXTO:
             // vive solo en el motor (para continuidad) y NUNCA ensucia el historial del paper — el
             // pasado se audita en Backtests. (El reloj NO arrancado ⇒ todo backfill ⇒ no se guarda nada.)
-            if (row.phase === 'live') changes.push(row);
+            if (row.phase === 'live') {
+              changes.push(row);
+              // Hooks de ejecución (solo en vivo): intent NUEVO aún PENDING → el executor coloca la
+              // límite · cancelación → el executor retira la límite si sigue resting. El executor
+              // ignora lo que no tenga en vuelo, así que emitir de más es inocuo.
+              if (this.live) {
+                if (!wasKnown && p.state === 'PENDING') this.liveIntent$.next(p.intent);
+                else if (p.state === 'CLOSED' && p.cancelReason) this.liveCancel$.next(p.id);
+              }
+            }
           }
         }
         if (changes.length > 0) {
@@ -226,5 +246,7 @@ export class PaperTradingService implements OnModuleInit, OnModuleDestroy {
   onModuleDestroy(): void {
     this.subs.forEach((s) => s.unsubscribe());
     if (this.timer) clearInterval(this.timer);
+    this.liveIntent$.complete();
+    this.liveCancel$.complete();
   }
 }
