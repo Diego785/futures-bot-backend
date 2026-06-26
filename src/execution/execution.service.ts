@@ -444,6 +444,40 @@ export class ExecutionService implements OnModuleInit, OnModuleDestroy {
     this.logger.error(`⛔ KILL-SWITCH: ${reason} — órdenes canceladas, posiciones aplanadas, ejecución detenida.`);
   }
 
+  // Inyector de prueba (TESTNET-ONLY): dispara un intent sintético que LLENA de inmediato (entrada
+  // cruzando el mercado) para validar TODO el lifecycle en minutos, sin esperar una señal natural del
+  // candidato. Rechaza si no es testnet — JAMÁS debe inyectar en real.
+  async injectTestIntent(
+    symbol: string,
+    direction: TradeDirection = 'LONG',
+    stopPct = 0.003,
+    rMultiple = 2,
+  ): Promise<{ ok: boolean; intentId?: string; entry?: number; stopLoss?: number; takeProfit?: number; reason?: string }> {
+    if (!this.testnet) return { ok: false, reason: 'INYECTOR DESHABILITADO fuera de testnet (EXECUTION_TESTNET=false)' };
+    if (!this.enabled) return { ok: false, reason: 'EXECUTION_ENABLED=false' };
+    const price = await this.executor.getLastPrice(symbol).catch(() => 0);
+    if (price <= 0) return { ok: false, reason: `sin precio para ${symbol}` };
+    const isLong = direction === 'LONG';
+    const entry = isLong ? price * 1.0008 : price * 0.9992; // cruza el mercado → fill inmediato
+    const risk = entry * stopPct;
+    const stopLoss = isLong ? entry - risk : entry + risk;
+    const takeProfit = isLong ? entry + rMultiple * risk : entry - rMultiple * risk;
+    const intent: TradeIntent = {
+      id: `TEST_${symbol}_${Date.now().toString(36)}_${isLong ? 'u' : 'd'}`,
+      symbol,
+      tf: '15m',
+      direction,
+      signalBarTime: Date.now(),
+      entry,
+      stopLoss,
+      takeProfit,
+      cancelBeyond: isLong ? entry * 1.05 : entry * 0.95,
+    };
+    this.logger.warn(`🧪 INTENT DE PRUEBA: ${symbol} ${direction} entry≈${entry.toFixed(4)} SL≈${stopLoss.toFixed(4)} TP≈${takeProfit.toFixed(4)}`);
+    await this.handleIntent(intent);
+    return { ok: true, intentId: intent.id, entry, stopLoss, takeProfit };
+  }
+
   status(): unknown {
     return {
       enabled: this.enabled,

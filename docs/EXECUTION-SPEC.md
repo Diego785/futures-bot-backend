@@ -128,3 +128,28 @@ Chequeados ANTES de cada orden; si alguno se viola → NO coloca + alerta:
 - [ ] `EXECUTION_ENABLED=true`, `EXECUTION_TESTNET=false`, capital $100.
 - [ ] Backup del estado + plan de "apagar todo" a mano si hace falta.
 - [ ] Arrancar con 1-3 símbolos, no los 10.
+
+## §12 — Runbook de validación TESTNET (P.5.3 paso 5)
+Correr **LOCAL** (no tocar el server de producción, que corre el paper-test sobre mercado REAL). Env:
+```
+EXCHANGE_PROVIDER=binance
+BINANCE_FUTURES_BASE_URL=https://testnet.binancefuture.com
+BINANCE_FUTURES_WS_URL=wss://stream.binancefuture.com   ← WS de testnet (clave: detección de fills)
+BINANCE_API_KEY / BINANCE_API_SECRET = los de testnet (con permiso de trade)
+DB_ENABLED=true + DB local (localhost:5433 / futures_bot_v2 / *_dev_password / futures_bot_v2_dev)
+EXECUTION_ENABLED=true · EXECUTION_TESTNET=true
+MARKET_DATA_LIVE=true · MARKET_DATA_SYMBOLS=BTCUSDT,ETHUSDT
+(PAPER_TRADING no es necesario para el inyector; sí para validar señales naturales)
+```
+Pasos (la migración `execution_orders` ya está aplicada en la DB local):
+1. `npm run build` → `node dist/main`
+2. `GET /api/exec/status` → enabled/testnet/risk-guard limpio
+3. `POST /api/exec/test-intent {"symbol":"BTCUSDT"}` → en los logs: **LÍMITE → FILL → BRACKET** (segundos)
+4. `GET /api/exec/status` → la posición FILLED; en la UI de Binance testnet → la posición + SL/TP
+5. esperar SL/TP, **o** `POST /api/exec/kill` para aplanar (prueba el kill-switch)
+6. `GET /api/exec/status` → CLOSED + risk-guard actualizado; tabla `execution_orders` → la fila del ciclo
+7. **BE:** dejar una posición abierta; al cierre de la vela 15m, si el precio alcanzó el 50 % a TP → el SL se mueve
+8. **reconciliación:** matar `node` con una posición abierta → re-arrancar → debe re-adoptarla y verificar el bracket
+
+**Éxito = ** fill detectado · SL+TP colocados · BE mueve el stop · salida → R correcta · kill-switch aplana ·
+reinicio re-adopta/protege. Recién con esto verde → P.5.4 (real $100, +isolated margin, +checklist §11).

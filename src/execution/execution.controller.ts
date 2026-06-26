@@ -18,4 +18,13 @@ export class ExecutionController {
     await this.exec.killAll(body?.reason ?? 'kill-switch manual');
     return { ok: true };
   }
+
+  // Inyector de prueba (TESTNET-ONLY, validado por el servicio): dispara un intent sintético que llena
+  // de inmediato para verificar el lifecycle completo sin esperar una señal natural.
+  @Post('test-intent')
+  testIntent(
+    @Body() body: { symbol: string; direction?: 'LONG' | 'SHORT'; stopPct?: number; rMultiple?: number },
+  ): Promise<unknown> {
+    return this.exec.injectTestIntent(body.symbol, body.direction ?? 'LONG', body.stopPct, body.rMultiple);
+  }
 }
