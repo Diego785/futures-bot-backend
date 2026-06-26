@@ -72,10 +72,10 @@ export class ExecutionService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly executor: OrderExecutorService,
     private readonly config: ConfigService,
-    @Optional() private readonly paper: PaperTradingService | null,
+    @Optional() @Inject(PaperTradingService) private readonly paper: PaperTradingService | null,
     @Optional() @Inject(IUserDataPort) private readonly userData: IUserDataPort | null,
     @Optional() @Inject(IMarketDataPort) private readonly market: IMarketDataPort | null,
-    @Optional() private readonly repo: ExecutionOrderRepository | null,
+    @Optional() @Inject(ExecutionOrderRepository) private readonly repo: ExecutionOrderRepository | null,
   ) {
     this.enabled = this.config.get<string>('EXECUTION_ENABLED', 'false') === 'true';
     this.testnet = this.config.get<string>('EXECUTION_TESTNET', 'true') === 'true';
@@ -116,7 +116,9 @@ export class ExecutionService implements OnModuleInit, OnModuleDestroy {
       return;
     }
     if (!this.paper || !this.userData || !this.market) {
-      this.logger.error('Faltan dependencias (paper/user-data/market WS) — ejecución NO arranca.');
+      this.logger.error(
+        `Faltan dependencias — paper=${!!this.paper} userData=${!!this.userData} market=${!!this.market} — ejecución NO arranca.`,
+      );
       return;
     }
     this.logger.warn(
