@@ -37,9 +37,18 @@ export class OrderExecutorService {
     await this.rest.changeLeverage(symbol, leverage);
   }
 
+  // Precio de referencia (último cierre 1m). Reintenta: el REST de testnet falla transitoriamente.
   async getLastPrice(symbol: string): Promise<number> {
-    const k = await this.rest.getKlines(symbol, '1m', 1);
-    return k.length ? k[k.length - 1].close : 0;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const k = await this.rest.getKlines(symbol, '1m', 1);
+        if (k.length) return k[k.length - 1].close;
+      } catch (e) {
+        this.logger.warn(`getLastPrice ${symbol} intento ${attempt}/3: ${e instanceof Error ? e.message : e}`);
+        if (attempt < 3) await new Promise((r) => setTimeout(r, 800 * attempt));
+      }
+    }
+    return 0;
   }
 
   async getOpenPosition(symbol: string): Promise<Position | null> {
