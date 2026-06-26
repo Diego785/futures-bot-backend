@@ -13,12 +13,17 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { validate } from '../common/config/env.validation';
-import { ExecutionModule } from './execution.module';
+import { ExchangeModule } from '../exchange/exchange.module';
 import { OrderExecutorService } from './order-executor.service';
 import { planBracket } from './order-plan';
 import type { TradeIntent } from '../backtest/trade-simulator';
 
-@Module({ imports: [ConfigModule.forRoot({ isGlobal: true, validate }), ExecutionModule] })
+// Módulo auto-contenido DB-free: el smoke solo necesita el executor sobre el exchange (no el
+// ExecutionModule completo, que ahora arrastra DB + paper).
+@Module({
+  imports: [ConfigModule.forRoot({ isGlobal: true, validate }), ExchangeModule],
+  providers: [OrderExecutorService],
+})
 class SmokeModule {}
 
 const SYMBOL = process.argv[2] ?? 'ETHUSDT';

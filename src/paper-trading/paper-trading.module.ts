@@ -17,5 +17,8 @@ import { PaperTradingController } from './paper-trading.controller';
   imports: [TypeOrmModule.forFeature([PaperTradeEntity]), MarketDataModule, ExchangeModule],
   controllers: [PaperTradingController],
   providers: [PaperTradeRepository, PaperTradingService, PaperTradingGateway],
+  // Exporta el servicio para que la capa de EJECUCIÓN (módulo aparte) se suscriba a sus intents
+  // (onLiveIntent$/onLiveCancel$) — eventos READ-ONLY; la Regla Cero del paper queda intacta.
+  exports: [PaperTradingService],
 })
 export class PaperTradingModule {}

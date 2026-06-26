@@ -12,12 +12,16 @@ import { ManualMarksModule } from './manual-marks/manual-marks.module';
 import { BotAnalysisModule } from './bot-analysis/bot-analysis.module';
 import { BacktestViewerModule } from './backtest-viewer/backtest-viewer.module';
 import { PaperTradingModule } from './paper-trading/paper-trading.module';
+import { ExecutionModule } from './execution/execution.module';
 
 // TypeORM se activa SOLO si DB_ENABLED=true. En el skeleton v2 todavía no hay
 // entidades; conectar a Postgres no aporta nada y bloquearía el arranque local
 // sin DB. Cuando llegue MarketDataModule con persistencia, los entornos reales
 // pondrán DB_ENABLED=true.
 const DB_ENABLED = process.env.DB_ENABLED?.trim() === 'true';
+// EJECUCIÓN REAL ACOTADA (P.5): el módulo se carga SOLO con DB_ENABLED && EXECUTION_ENABLED. Default
+// (false) ⇒ NADA del código de órdenes se instancia — el paper-test sigue idéntico, Regla Cero en reposo.
+const EXECUTION_ENABLED = process.env.EXECUTION_ENABLED?.trim() === 'true';
 
 @Module({
   imports: [
@@ -60,6 +64,8 @@ const DB_ENABLED = process.env.DB_ENABLED?.trim() === 'true';
           BotAnalysisModule,
           BacktestViewerModule,
           PaperTradingModule,
+          // Ejecución real acotada: solo si además EXECUTION_ENABLED (importa el paper para sus intents).
+          ...(EXECUTION_ENABLED ? [ExecutionModule] : []),
         ]
       : []),
 
