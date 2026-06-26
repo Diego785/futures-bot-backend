@@ -99,6 +99,13 @@ export class RiskGuard {
     return decision;
   }
 
+  // Reconciliación tras reinicio: re-ocupa el slot + margen de una posición YA viva, sin chequear topes
+  // (ya existe en el exchange; solo restauramos la contabilidad).
+  adopt(plan: BracketPlan): void {
+    this.state.activeSlots += 1;
+    this.state.marginUsedUsd += plan.notionalUsd / this.limits.leverage;
+  }
+
   // La límite se canceló sin llenar (ranAway): libera slot + margen, sin P&L.
   release(plan: BracketPlan): void {
     this.state.activeSlots = Math.max(0, this.state.activeSlots - 1);

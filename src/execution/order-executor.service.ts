@@ -108,6 +108,10 @@ export class OrderExecutorService {
     return this.rest.cancelOrder(symbol, clientOrderId);
   }
 
+  cancelConditional(symbol: string, conditionalId: string): Promise<void> {
+    return this.rest.cancelConditional(symbol, conditionalId);
+  }
+
   // Aplana TODO el símbolo: cancela condicionales + órdenes abiertas y cierra la posición a mercado
   // (reduceOnly). Best-effort en cada paso para que un fallo parcial no deje la posición a medio cerrar.
   async flatten(symbol: string): Promise<void> {

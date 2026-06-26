@@ -1,0 +1,519 @@
+// ExecutionService — el orquestador de la EJECUCIÓN REAL acotada (P.5.3, EXECUTION-SPEC). Conecta el
+// "cerebro" (PaperTradingService: emite los intents del candidato congelado) con las "manos"
+// (OrderExecutorService: coloca/cancela órdenes reales), bajo el arnés del RiskGuard, y persiste el
+// ciclo de vida en execution_orders. Todo gateado por EXECUTION_ENABLED (default false) — TEST de
+// medición, no payday. Vive en su MÓDULO APARTE: la Regla Cero del paper queda intacta.
+//
+// El loop es dirigido por la REALIDAD: el paper da la DECISIÓN (intent + cancelación); el fill, el
+// SL/TP y el BE se manejan con eventos reales del exchange (user-data WS) + el cierre de vela (15m).
+
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional, Inject } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { execSync } from 'child_process';
+import { Subscription } from 'rxjs';
+import {
+  IUserDataPort,
+  IMarketDataPort,
+  OrderStatus,
+  ConditionalStatus,
+  type OrderUpdate,
+  type ConditionalUpdate,
+  type Candle,
+} from '../exchange/interfaces/exchange.interfaces';
+import { roundToTickSize } from '../common/utils/precision.util';
+import type { TradeIntent, TradeDirection } from '../backtest/trade-simulator';
+import { FROZEN_SIM } from '../paper-trading/frozen-candidate';
+import { PaperTradingService } from '../paper-trading/paper-trading.service';
+import { OrderExecutorService } from './order-executor.service';
+import { ExecutionOrderRepository, type ExecutionOrderRow } from './execution-order.repository';
+import { ExecutionOrderEntity } from './entities/execution-order.entity';
+import { RiskGuard } from './risk-guard';
+import { planBracket } from './order-plan';
+import { reachedBreakeven, computeRealizedR, estimateFeesUsd } from './execution-logic';
+import type { BracketPlan, PlannedOrder, RiskLimits } from './execution.types';
+
+type ExecState = 'PENDING' | 'FILLED' | 'CLOSED' | 'CANCELED'; // PENDING = límite resting
+
+interface ExecPosition {
+  intent: TradeIntent;
+  plan: BracketPlan;
+  state: ExecState;
+  entryFillPrice: number | null;
+  entryFillTime: number | null;
+  movedToBE: boolean;
+  slClientId: string; // cambia al id de BE tras mover el stop
+  slAlgoId: string | null;
+  tpClientId: string;
+  tpAlgoId: string | null;
+  createdAt: number;
+}
+
+const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+@Injectable()
+export class ExecutionService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(ExecutionService.name);
+  private readonly positions = new Map<string, ExecPosition>();
+  private readonly subs: Subscription[] = [];
+  private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
+
+  private readonly enabled: boolean;
+  private readonly testnet: boolean;
+  private readonly riskUsd: number;
+  private readonly leverage: number;
+  private readonly maxNotionalUsd: number;
+  private readonly symbols: string[];
+  private readonly engineVersion: string;
+  private readonly beFraction = FROZEN_SIM.breakevenAtTpFraction;
+  private readonly makerFee = FROZEN_SIM.makerFee ?? 0.0002;
+  private readonly takerFee = FROZEN_SIM.takerFee ?? 0.0005;
+  private readonly riskGuard: RiskGuard;
+
+  constructor(
+    private readonly executor: OrderExecutorService,
+    private readonly config: ConfigService,
+    @Optional() private readonly paper: PaperTradingService | null,
+    @Optional() @Inject(IUserDataPort) private readonly userData: IUserDataPort | null,
+    @Optional() @Inject(IMarketDataPort) private readonly market: IMarketDataPort | null,
+    @Optional() private readonly repo: ExecutionOrderRepository | null,
+  ) {
+    this.enabled = this.config.get<string>('EXECUTION_ENABLED', 'false') === 'true';
+    this.testnet = this.config.get<string>('EXECUTION_TESTNET', 'true') === 'true';
+    const capital = Number(this.config.get('EXECUTION_TEST_CAPITAL', 100));
+    const riskPct = Number(this.config.get('EXECUTION_RISK_PCT', 0.005));
+    this.riskUsd = capital * riskPct;
+    this.leverage = Number(this.config.get('EXECUTION_LEVERAGE', 5));
+    this.maxNotionalUsd = Number(this.config.get('EXECUTION_MAX_NOTIONAL_USD', 400));
+    const raw = this.config.get<string>('MARKET_DATA_SYMBOLS') ?? this.config.get<string>('DEFAULT_SYMBOL', 'BTCUSDT');
+    this.symbols = raw.split(',').map((s) => s.trim()).filter(Boolean);
+
+    let version = this.config.get<string>('BUILD_VERSION', '');
+    if (!version) {
+      try {
+        version = execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+      } catch {
+        version = 'unknown';
+      }
+    }
+    this.engineVersion = version;
+
+    const limits: RiskLimits = {
+      maxConcurrentPositions: Number(this.config.get('EXECUTION_MAX_POSITIONS', 3)),
+      maxNotionalPerOrderUsd: this.maxNotionalUsd,
+      maxMarginUsedUsd: Number(this.config.get('EXECUTION_MAX_MARGIN_USD', 80)),
+      maxDailyLossR: Number(this.config.get('EXECUTION_MAX_DAILY_LOSS_R', 3)),
+      circuitBreakerLossR: Number(this.config.get('EXECUTION_CIRCUIT_BREAKER_R', 10)),
+      leverage: this.leverage,
+      symbols: this.symbols,
+      priceSanityFrac: 0.05,
+    };
+    this.riskGuard = new RiskGuard(limits, Date.now());
+  }
+
+  async onModuleInit(): Promise<void> {
+    if (!this.enabled) {
+      this.logger.log('EXECUTION_ENABLED != true — ejecución real NO arranca (Regla Cero acotada en reposo).');
+      return;
+    }
+    if (!this.paper || !this.userData || !this.market) {
+      this.logger.error('Faltan dependencias (paper/user-data/market WS) — ejecución NO arranca.');
+      return;
+    }
+    this.logger.warn(
+      `⚠️ EJECUCIÓN REAL ACOTADA ACTIVA — testnet=${this.testnet} · riesgo $${this.riskUsd}/trade · ` +
+        `leverage ${this.leverage}x · ${this.symbols.length} símbolos. TEST de medición.`,
+    );
+
+    for (const s of this.symbols) {
+      try {
+        await this.executor.ensureLeverage(s, this.leverage);
+      } catch (e) {
+        this.logger.warn(`leverage ${s}: ${msg(e)}`);
+      }
+    }
+
+    await this.reconcile();
+
+    try {
+      await this.userData.start();
+    } catch (e) {
+      this.logger.error(`user-data WS start: ${msg(e)} — sin detección de fills, ejecución INSEGURA, abortando.`);
+      return;
+    }
+    this.keepaliveTimer = setInterval(() => void this.userData?.keepalive().catch(() => undefined), 30 * 60_000);
+
+    this.subs.push(
+      this.paper.onLiveIntent$.subscribe((i) => void this.handleIntent(i)),
+      this.paper.onLiveCancel$.subscribe((id) => void this.handleCancel(id)),
+      this.userData.onOrderUpdate$.subscribe((u) => void this.onOrderUpdate(u)),
+      this.userData.onConditionalUpdate$.subscribe((u) => void this.onConditionalUpdate(u)),
+      this.market.onCandleClose$.subscribe(({ symbol, tf, candle }) => {
+        if (tf === '15m') void this.onCandleClose(symbol, candle);
+      }),
+    );
+    this.logger.log('Ejecución suscrita: intents/cancelaciones del paper + fills (user-data WS) + cierres 15m.');
+  }
+
+  // ── Intent nuevo → colocar la LÍMITE en el CE ──────────────────────────────
+  private async handleIntent(intent: TradeIntent): Promise<void> {
+    if (this.riskGuard.isKilled()) return;
+    if (this.positions.has(intent.id)) return; // idempotente
+    // Un intent activo por símbolo (one-way mode + closePosition = una posición por símbolo).
+    if ([...this.positions.values()].some((p) => p.intent.symbol === intent.symbol && (p.state === 'PENDING' || p.state === 'FILLED'))) {
+      this.logger.warn(`${intent.symbol}: ya hay un intent activo — se salta ${intent.id}`);
+      return;
+    }
+
+    const filters = this.executor.filtersFor(intent.symbol);
+    const planRes = planBracket(intent, this.riskUsd, filters, this.maxNotionalUsd);
+    if (!planRes.ok) {
+      this.logger.warn(`plan rechazado ${intent.id}: ${planRes.reason} (${planRes.detail})`);
+      return;
+    }
+    const plan = planRes.plan;
+
+    let price = 0;
+    try {
+      price = await this.executor.getLastPrice(intent.symbol);
+    } catch {
+      /* sigue 0 → el sanity de precio se omite */
+    }
+
+    const decision = this.riskGuard.tryReserve(plan, price, Date.now());
+    if (!decision.allow) {
+      this.logger.warn(`risk-guard bloqueó ${intent.id}: ${decision.reason}`);
+      return;
+    }
+
+    try {
+      const res = await this.executor.placeEntryLimit(plan.entry);
+      const pos: ExecPosition = {
+        intent,
+        plan,
+        state: 'PENDING',
+        entryFillPrice: null,
+        entryFillTime: null,
+        movedToBE: false,
+        slClientId: plan.stopLoss.clientOrderId,
+        slAlgoId: null,
+        tpClientId: plan.takeProfit.clientOrderId,
+        tpAlgoId: null,
+        createdAt: Date.now(),
+      };
+      this.positions.set(intent.id, pos);
+      await this.persist(pos, { entryOrderId: res.orderId });
+      this.logger.log(`LÍMITE ${intent.symbol} ${intent.direction} @ ${plan.entry.price} (qty ${plan.quantity}, $${plan.notionalUsd.toFixed(0)})`);
+    } catch (e) {
+      this.riskGuard.release(plan); // liberar la reserva si no se colocó
+      this.logger.error(`fallo al colocar la límite ${intent.id}: ${msg(e)}`);
+    }
+  }
+
+  // ── Paper canceló (ranAway) → retirar la límite si sigue resting ───────────
+  private async handleCancel(intentId: string): Promise<void> {
+    const pos = this.positions.get(intentId);
+    if (!pos || pos.state !== 'PENDING') return; // si ya llenó, el real manda (no se cancela)
+    try {
+      await this.executor.cancelOrder(pos.plan.symbol, pos.plan.entry.clientOrderId);
+    } catch (e) {
+      // No se pudo cancelar → quizá llenó en el ínterin; el WS de fill lo resolverá.
+      this.logger.warn(`cancel límite ${intentId}: ${msg(e)} (¿ya llenó?)`);
+      return;
+    }
+    pos.state = 'CANCELED';
+    this.riskGuard.release(pos.plan);
+    await this.persist(pos, { cancelReason: 'ranAway' });
+    this.logger.log(`LÍMITE cancelada (ranAway) ${pos.plan.symbol} ${intentId}`);
+  }
+
+  // ── Fill de la entrada (user-data WS) → montar SL + TP ─────────────────────
+  private async onOrderUpdate(u: OrderUpdate): Promise<void> {
+    if (u.status !== OrderStatus.FILLED) return;
+    const pos = [...this.positions.values()].find(
+      (p) => p.state === 'PENDING' && p.plan.entry.clientOrderId === u.clientOrderId,
+    );
+    if (!pos) return;
+    pos.state = 'FILLED';
+    pos.entryFillPrice = parseFloat(u.avgPrice) || pos.intent.entry;
+    pos.entryFillTime = u.eventTime;
+    this.logger.log(`FILL ${pos.plan.symbol} @ ${pos.entryFillPrice}`);
+    await this.placeBracket(pos);
+  }
+
+  // Coloca el bracket SL + TP (closePosition). Si algo falla → APLANA (no dejar posición sin protección).
+  private async placeBracket(pos: ExecPosition): Promise<void> {
+    try {
+      const sl = await this.executor.placeStop(pos.plan.stopLoss);
+      pos.slAlgoId = sl.conditionalId;
+      const tp = await this.executor.placeTakeProfit(pos.plan.takeProfit);
+      pos.tpAlgoId = tp.conditionalId;
+      await this.persist(pos, { entryFillPrice: pos.entryFillPrice, entryFillTime: pos.entryFillTime });
+      this.logger.log(`BRACKET ${pos.plan.symbol}: SL ${pos.plan.stopLoss.stopPrice} / TP ${pos.plan.takeProfit.stopPrice}`);
+    } catch (e) {
+      this.logger.error(`fallo al montar bracket ${pos.intent.id}: ${msg(e)} — APLANANDO por seguridad.`);
+      await this.executor.flatten(pos.plan.symbol).catch(() => undefined);
+      pos.state = 'CLOSED';
+      this.riskGuard.release(pos.plan);
+      await this.persist(pos, { cancelReason: 'reconcile', exitReason: 'KILL' });
+    }
+  }
+
+  // ── Salida (SL/TP/BE disparó, user-data WS algo FINISHED) → settle + cierre ─
+  private async onConditionalUpdate(u: ConditionalUpdate): Promise<void> {
+    if (u.status !== ConditionalStatus.FINISHED) return;
+    const pos = [...this.positions.values()].find(
+      (p) => p.state === 'FILLED' && (u.clientOrderId === p.slClientId || u.clientOrderId === p.tpClientId),
+    );
+    if (!pos) return;
+    const isTp = u.clientOrderId === pos.tpClientId;
+    const reason = isTp ? 'TP' : pos.movedToBE ? 'BE' : 'SL';
+    const exitPrice = u.avgPrice ? parseFloat(u.avgPrice) : isTp ? pos.intent.takeProfit : pos.intent.stopLoss;
+    await this.closePosition(pos, reason, exitPrice, u.eventTime);
+  }
+
+  private async closePosition(pos: ExecPosition, reason: string, exitPrice: number, exitTime: number): Promise<void> {
+    // Cancelar la hermana (la que disparó ya terminó; la otra sigue viva). Best-effort.
+    for (const algoId of [pos.slAlgoId, pos.tpAlgoId]) {
+      if (algoId) await this.executor.cancelConditional(pos.plan.symbol, algoId).catch(() => undefined);
+    }
+    const qty = parseFloat(pos.plan.quantity);
+    const entryFill = pos.entryFillPrice ?? pos.intent.entry;
+    const fees = estimateFeesUsd(entryFill, exitPrice, qty, this.makerFee, this.takerFee);
+    const r = computeRealizedR(pos.intent, entryFill, exitPrice, fees, qty);
+    pos.state = 'CLOSED';
+    this.riskGuard.settle(pos.plan, r, exitTime);
+    await this.persist(pos, {
+      exitReason: reason,
+      exitPrice,
+      exitTime,
+      exitFeeUsd: fees,
+      realizedR: r,
+      realizedUsd: r * pos.plan.riskUsd,
+    });
+    this.logger.log(`CLOSE ${pos.plan.symbol} ${reason} @ ${exitPrice} = ${r >= 0 ? '+' : ''}${r.toFixed(3)}R`);
+    if (this.riskGuard.isKilled()) {
+      this.logger.error(`⛔ CIRCUIT BREAKER disparado: ${this.riskGuard.snapshot().killReason} — aplanando todo.`);
+      await this.killAll(this.riskGuard.snapshot().killReason ?? 'circuit breaker');
+    }
+  }
+
+  // ── Cierre de vela 15m → mover a break-even si corresponde ─────────────────
+  private async onCandleClose(symbol: string, candle: Candle): Promise<void> {
+    for (const pos of this.positions.values()) {
+      if (pos.plan.symbol !== symbol || pos.state !== 'FILLED' || pos.movedToBE) continue;
+      if (reachedBreakeven(pos.intent, candle.high, candle.low, this.beFraction)) {
+        await this.moveToBreakeven(pos);
+      }
+    }
+  }
+
+  private async moveToBreakeven(pos: ExecPosition): Promise<void> {
+    const filters = this.executor.filtersFor(pos.plan.symbol);
+    if (!filters) return;
+    const entryFill = pos.entryFillPrice ?? pos.intent.entry;
+    const isLong = pos.intent.direction === 'LONG';
+    const buffer = entryFill * 0.0008; // cubre el coste round-trip → un stop en BE rinde ≈ 0R
+    const bePrice = roundToTickSize(isLong ? entryFill + buffer : entryFill - buffer, filters.tickSize);
+    const beClientId = pos.plan.stopLoss.clientOrderId.replace('FAB_S', 'FAB_B');
+    const beOrder: PlannedOrder = {
+      leg: 'SL',
+      clientOrderId: beClientId,
+      symbol: pos.plan.symbol,
+      side: isLong ? 'SELL' : 'BUY',
+      type: 'STOP_MARKET',
+      quantity: pos.plan.quantity,
+      stopPrice: bePrice,
+      reduceOnly: true,
+    };
+    try {
+      if (pos.slAlgoId) await this.executor.cancelConditional(pos.plan.symbol, pos.slAlgoId).catch(() => undefined);
+      const sl = await this.executor.placeStop(beOrder);
+      pos.slAlgoId = sl.conditionalId;
+      pos.slClientId = beClientId;
+      pos.movedToBE = true;
+      await this.persist(pos, { movedToBE: true });
+      this.logger.log(`BE ${pos.plan.symbol}: SL → ${bePrice}`);
+    } catch (e) {
+      this.logger.error(`fallo al mover BE ${pos.intent.id}: ${msg(e)}`);
+    }
+  }
+
+  // ── Reconciliación al arrancar: re-adoptar lo vivo, PROTEGER fills sin bracket ──
+  private async reconcile(): Promise<void> {
+    if (!this.repo) return;
+    let openRows: ExecutionOrderEntity[] = [];
+    try {
+      openRows = await this.repo.findOpen();
+    } catch (e) {
+      this.logger.error(`reconcile: no se pudo leer execution_orders: ${msg(e)}`);
+      return;
+    }
+    if (openRows.length === 0) return;
+    this.logger.log(`reconciliando ${openRows.length} intents abiertos contra el exchange...`);
+
+    for (const row of openRows) {
+      const intent = rowToIntent(row);
+      const filters = this.executor.filtersFor(row.symbol);
+      const planRes = planBracket(intent, row.riskUsd ?? this.riskUsd, filters, this.maxNotionalUsd);
+      if (!planRes.ok) {
+        this.logger.warn(`reconcile: no se pudo reconstruir el plan de ${row.intentId} (${planRes.reason}) — REVISAR A MANO.`);
+        continue;
+      }
+      const pos: ExecPosition = {
+        intent,
+        plan: planRes.plan,
+        state: (row.state as ExecState) ?? 'PENDING',
+        entryFillPrice: row.entryFillPrice ?? null,
+        entryFillTime: row.entryFillTime ?? null,
+        movedToBE: row.movedToBE ?? false,
+        slClientId: row.slClientId ?? planRes.plan.stopLoss.clientOrderId,
+        slAlgoId: row.slAlgoId ?? null,
+        tpClientId: row.tpClientId ?? planRes.plan.takeProfit.clientOrderId,
+        tpAlgoId: row.tpAlgoId ?? null,
+        createdAt: row.createdAt ?? Date.now(),
+      };
+      this.positions.set(intent.id, pos);
+      this.riskGuard.adopt(pos.plan);
+
+      const realPos = await this.executor.getOpenPosition(row.symbol).catch(() => null);
+      if (pos.state === 'FILLED') {
+        if (realPos) {
+          await this.ensureBracket(pos);
+          this.logger.log(`reconcile ${row.symbol}: posición viva re-adoptada (bracket verificado).`);
+        } else {
+          this.riskGuard.release(pos.plan);
+          pos.state = 'CLOSED';
+          await this.persist(pos, { cancelReason: 'reconcile' });
+          this.logger.warn(`reconcile ${row.symbol}: cerró mientras estábamos caídos (R no recuperada).`);
+        }
+      } else {
+        // PENDING
+        if (realPos) {
+          pos.state = 'FILLED';
+          pos.entryFillPrice = parseFloat(realPos.entryPrice) || intent.entry;
+          pos.entryFillTime = Date.now();
+          await this.placeBracket(pos);
+          this.logger.warn(`reconcile ${row.symbol}: LLENÓ mientras caídos → bracket colocado (protegida).`);
+        } else {
+          await this.executor.cancelOrder(row.symbol, pos.plan.entry.clientOrderId).catch(() => undefined);
+          this.riskGuard.release(pos.plan);
+          pos.state = 'CANCELED';
+          await this.persist(pos, { cancelReason: 'reconcile' });
+          this.logger.log(`reconcile ${row.symbol}: límite no resumida (cancelada por seguridad).`);
+        }
+      }
+    }
+  }
+
+  // Verifica que SL y TP estén presentes en el exchange; re-coloca los que falten.
+  private async ensureBracket(pos: ExecPosition): Promise<void> {
+    const open = await this.executor.getOpenConditionals(pos.plan.symbol).catch(() => []);
+    const ids = new Set(open.map((c) => c.clientOrderId));
+    if (!ids.has(pos.slClientId)) {
+      const sl = await this.executor.placeStop(pos.plan.stopLoss).catch((e) => {
+        this.logger.error(`reconcile: no se pudo re-colocar SL de ${pos.intent.id}: ${msg(e)}`);
+        return null;
+      });
+      if (sl) pos.slAlgoId = sl.conditionalId;
+    }
+    if (!ids.has(pos.tpClientId)) {
+      const tp = await this.executor.placeTakeProfit(pos.plan.takeProfit).catch((e) => {
+        this.logger.error(`reconcile: no se pudo re-colocar TP de ${pos.intent.id}: ${msg(e)}`);
+        return null;
+      });
+      if (tp) pos.tpAlgoId = tp.conditionalId;
+    }
+    await this.persist(pos, {});
+  }
+
+  // ── Kill-switch: cancela todo + cierra posiciones + detiene ────────────────
+  async killAll(reason: string): Promise<void> {
+    this.riskGuard.kill(reason);
+    const symbols = new Set(
+      [...this.positions.values()].filter((p) => p.state === 'PENDING' || p.state === 'FILLED').map((p) => p.plan.symbol),
+    );
+    for (const symbol of symbols) {
+      await this.executor.flatten(symbol).catch((e) => this.logger.error(`kill flatten ${symbol}: ${msg(e)}`));
+    }
+    for (const pos of this.positions.values()) {
+      if (pos.state === 'PENDING' || pos.state === 'FILLED') {
+        pos.state = 'CLOSED';
+        await this.persist(pos, { cancelReason: 'killed' });
+      }
+    }
+    this.logger.error(`⛔ KILL-SWITCH: ${reason} — órdenes canceladas, posiciones aplanadas, ejecución detenida.`);
+  }
+
+  status(): unknown {
+    return {
+      enabled: this.enabled,
+      testnet: this.testnet,
+      riskUsd: this.riskUsd,
+      engineVersion: this.engineVersion,
+      risk: this.riskGuard.snapshot(),
+      positions: [...this.positions.values()].map((p) => ({
+        intentId: p.intent.id,
+        symbol: p.plan.symbol,
+        direction: p.intent.direction,
+        state: p.state,
+        entryFillPrice: p.entryFillPrice,
+        movedToBE: p.movedToBE,
+      })),
+    };
+  }
+
+  private async persist(pos: ExecPosition, extra: Partial<ExecutionOrderRow>): Promise<void> {
+    if (!this.repo) return;
+    const row: ExecutionOrderRow = {
+      intentId: pos.intent.id,
+      symbol: pos.plan.symbol,
+      direction: pos.intent.direction,
+      signalBarTime: pos.intent.signalBarTime,
+      state: pos.state,
+      testnet: this.testnet,
+      entry: pos.intent.entry,
+      stopLoss: pos.intent.stopLoss,
+      takeProfit: pos.intent.takeProfit,
+      cancelBeyond: pos.intent.cancelBeyond ?? null,
+      quantity: parseFloat(pos.plan.quantity),
+      notionalUsd: pos.plan.notionalUsd,
+      riskUsd: pos.plan.riskUsd,
+      entryClientId: pos.plan.entry.clientOrderId,
+      slClientId: pos.slClientId,
+      tpClientId: pos.tpClientId,
+      slAlgoId: pos.slAlgoId,
+      tpAlgoId: pos.tpAlgoId,
+      entryFillPrice: pos.entryFillPrice,
+      entryFillTime: pos.entryFillTime,
+      movedToBE: pos.movedToBE,
+      engineVersion: this.engineVersion,
+      createdAt: pos.createdAt,
+      updatedAt: Date.now(),
+      ...extra,
+    };
+    try {
+      await this.repo.upsert(row);
+    } catch (e) {
+      this.logger.error(`persist ${pos.intent.id}: ${msg(e)}`);
+    }
+  }
+
+  onModuleDestroy(): void {
+    this.subs.forEach((s) => s.unsubscribe());
+    if (this.keepaliveTimer) clearInterval(this.keepaliveTimer);
+  }
+}
+
+function rowToIntent(row: ExecutionOrderEntity): TradeIntent {
+  return {
+    id: row.intentId,
+    symbol: row.symbol,
+    tf: '15m',
+    direction: row.direction as TradeDirection,
+    signalBarTime: row.signalBarTime,
+    entry: row.entry,
+    stopLoss: row.stopLoss,
+    takeProfit: row.takeProfit,
+    cancelBeyond: row.cancelBeyond ?? undefined,
+  };
+}
