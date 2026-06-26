@@ -11,7 +11,10 @@ export interface CapitalConfig {
   riskPct: number; // fracción arriesgada por trade sobre el capital BASE (fijo). 0.005 = 0.5%
 }
 
-export const DEFAULT_CAPITAL_CONFIG: CapitalConfig = { baseCapital: 300, riskPct: 0.005 };
+// Capital REAL del usuario (cuenta real ~$100). Editable en el panel (persiste en localStorage):
+// ponelo en tu saldo exacto. Coincide con EXECUTION_TEST_CAPITAL del executor para que paper y real
+// estén en la misma escala.
+export const DEFAULT_CAPITAL_CONFIG: CapitalConfig = { baseCapital: 100, riskPct: 0.005 };
 
 export interface CapitalPoint {
   time: number; // exitTime del trade realizado (0 = punto base inicial)
