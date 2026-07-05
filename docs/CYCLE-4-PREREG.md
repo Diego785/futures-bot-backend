@@ -1,6 +1,10 @@
 # Ciclo 4 — PRE-REGISTRO de la gestión de salida (parcial + BE-en-ganancia + runner a liquidez)
 
-> **Estado: 🔴 PRE-REGISTRADO (2026-07-02) — pendiente de ejecutar.**
+> **Estado: ✅ EJECUTADO y CERRADO (2026-07-04) — resultado POSITIVO, ver §8. V5 (parcial 50 % @ +1R
+> + BE + runner al 2R nominal) cumple LOS 6 criterios del §5 en held-out + walk-forward → según §5,
+> reemplaza al candidato congelado como CANDIDATO v2 (pendiente C4.e: congelar, re-registrar
+> corridas canónicas y arrancar SU paper-test). Pre-registrado el 2026-07-02 y ejecutado SIN cambiar
+> criterios a mitad.**
 > Fuente primaria: **la práctica real del instructor/comunidad** (chats de WhatsApp aportados por el
 > usuario, 2026-07-02: 1:1 con Pablo Rivas + grupo ~19k líneas, analizados exhaustivamente). NO viene
 > de los videos (los videos NO traen parciales — cerrado en `CYCLE-2-PREREG.md` §6): es una fuente
@@ -130,3 +134,47 @@ copiar el "5 % ROI" literal · scoring discrecional del pool (la lección del C2
   (5 variantes × 10 símbolos, registradas) → elección de UNA.
 - **C4.d** — held-out + walk-forward + veredicto contra §5 → decisión.
 - **C4.e** — si reemplaza: visor muestra TP1/TP2 y las piernas en el porqué causal; paper-test v2.
+
+## 8. RESULTADOS (2026-07-04) — ejecutado según §4, sin cambios de criterios
+
+**Calibración 2022-01→2025-06 (10 símbolos, N=1635 IDÉNTICO en todas — invarianza verificada):**
+
+| variante | expR | WR% | PF | totalR | SL% | BE% | TP% |
+|---|---|---|---|---|---|---|---|
+| BENCH (congelado 2R+BE) | +0.099 | 41.9 | 1.24 | +161.9 | 35.5 | 37.8 | 26.7 |
+| V1 tp1@1R 30 % pool | −0.018 | — | 0.96 | −29.7 | 35.4 | 59.3 | 5.3 |
+| V2 tp1@1R 50 % pool | +0.038 | — | 1.09 | +62.3 | 35.4 | 59.3 | 5.3 |
+| V3 tp1@.5R 30 % pool | −0.100 | — | 0.71 | −164.0 | 29.2 | 66.9 | 3.9 |
+| V4 tp1@.5R 50 % pool | −0.085 | — | 0.75 | −139.7 | 29.2 | 66.9 | 3.9 |
+| **V5 tp1@1R 50 % TP2=2R** | **+0.139** | 64.6 | **1.34** | **+226.6** | 35.4 | 37.9 | 26.7 |
+
+> - **El runner-al-POOL (V1-V4) DESTRUYE el edge**: el TP% cae de 26.7 % a 3.9-5.3 % — el pool casi
+>   nunca se alcanza y el runner muere en BE ⇒ se pierde el banco del 2R. **4ª refutación del
+>   target-por-niveles mecánico** (Fase D, C2, C3, ahora C4-pool). El "dejar correr" de Pablo es
+>   discrecional; mecanizado a un pool lejano, pierde.
+> - **V5 ("el parcial puro") le gana al benchmark en calibración** con mejora en 9/10 símbolos —
+>   NO es la sirena BTC-céntrica del C2. Elegida por la regla §4.1.
+
+**Held-out 2025-06→2026-07 (SOLO BENCH + V5, una corrida):** N=346 idéntico.
+BENCH +0.177R · PF 1.49 · totalR +61.4 · WR 44.8 % → **V5 +0.226R · PF 1.63 · totalR +78.2 · WR 69.4 %**.
+
+**Veredicto §5 (los 6 criterios):**
+1. Pooled ≥ bench +0.02R → **+0.049R ✓** · 2. TotalR ≥ bench → **+78.2 vs +61.4 ✓** (N idéntico ✓)
+3. ≥7/10 símbolos ≥ bench −0.03R → **10/10 ✓** (peores deltas: BTC −0.020, DOGE −0.028, LINK −0.008)
+4. maxDD ≤ 1.5× por símbolo → **✓ y además MENOR en 8/10** (AVAX 6.9→3.1, ADA 9.6→6.9)
+5. SL-completo ≤ bench +5 pp → **30.6 % vs 30.9 % ✓** · 6. WF ventanas rentables ≥ bench −10 pp →
+   **75.0 % (90/120) vs 62.5 % (75/120) = +12.5 pp ✓** (pooled mejor en 9/10; DOT −0.005→+0.058)
+
+> **Por qué funciona (estructural, no fiteado):** con el TP1 al +1R, el ~38-41 % de trades que hoy
+> muere en "BE +0.00" (tocó +1R y retrocedió) pasa a asegurar ≈ +0.48R, a cambio de ceder 0.5R en
+> los full-winners (26-28 %). Delta esperado ≈ +0.38·0.48 − 0.27·0.5 ≈ **+0.05R/trade** — coincide
+> con lo observado (+0.040 cal, +0.049 held-out). Es una reestructuración matemática de los MISMOS
+> trades (mismas entradas, mismo SL), no un parámetro ajustado — por eso transfiere a símbolos y
+> ventanas. La intuición del usuario ("cierra temprano", "el BE debe cerrar en ganancia") + la
+> práctica de Pablo (parcial+BE) quedan VALIDADAS por datos no vistos; el target estructural del
+> runner, refutado otra vez — la receta ganadora es su mecanismo de gestión + nuestro 2R robusto.
+
+**Decisión (§5, automática): V5 = CANDIDATO v2.** Pendiente C4.e (congelar `frozen-candidate` v2 +
+corridas canónicas registradas + visor con piernas + SU paper-test desde cero). La ejecución real
+(P.5.4) con v2 exige extender el executor a parciales (TP1 reduceOnly por cantidad + BE al fill)
+ANTES de operarlo — sin atajos. Mientras: el candidato v1 congelado sigue corriendo su gate.

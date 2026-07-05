@@ -157,6 +157,15 @@ async function main(): Promise<void> {
       maxWaitFillBars: parseInt(getArg('max-wait', '0'), 10),
     };
 
+    // Ciclo 4 (CYCLE-4-PREREG): --exit c4 [--tp1r 1] [--frac 0.5] [--tp2-fixed]. Salida parcial+runner:
+    // TP1 cierra frac en +tp1r·R → SL a BE → runner al pool de liquidez (--tp2-fixed = al 2R nominal, V5).
+    if (getArg('exit', '') === 'c4') {
+      simConfig.exitMode = 'partial-runner';
+      simConfig.tp1AtR = parseFloat(getArg('tp1r', '1'));
+      simConfig.partialFrac = parseFloat(getArg('frac', '0.5'));
+      if (!hasFlag('tp2-fixed')) signalBase.runnerTpLiquidity = true;
+    }
+
     // Sesgo HTF (multi-TF): --htf <tf> filtra gatillos a favor de ese TF. --htf2 <tf> añade un segundo
     // TF y exige UNANIMIDAD (sesgo más estricto, p.ej. --htf 4h --htf2 1d). Historia HTF completa.
     const htfTf = getArg('htf', '');
