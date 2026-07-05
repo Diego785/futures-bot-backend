@@ -64,6 +64,11 @@ export interface TradeIntent {
   invalidationPrice?: number; // pendiente: si el cuerpo CIERRA más allá (en contra) → cancelar
   cancelBeyond?: number; // pendiente: si el precio se ALEJA hasta aquí sin fill → cancelar (se fue sin nosotros)
   tpSource?: TpSource; // procedencia del TP (informativo; el simulador no lo usa)
+  // Ciclo 4 (CYCLE-4-PREREG §2): target del RUNNER en modo partial-runner — la liquidez opuesta
+  // causal conocida a la señal (la setea signal-source). Si falta o queda ≤ TP1, el simulador cae al
+  // TP nominal (fallback pre-registrado). Ignorado en modo full.
+  runnerTakeProfit?: number;
+  runnerTpSource?: TpSource; // procedencia del runner-TP (contabilidad de fallbacks; informativo)
   context?: IntentContext; // porqué causal (visor/paper); ignorado por el simulador
 }
 
@@ -87,6 +92,14 @@ export interface SimConfig {
   // OPEN (fill GARANTIZADO, sin pullback ni incertidumbre de fill ni cancelBeyond). Para comparar el
   // edge de una entrada robusta-a-fill vs la límite-en-CE (frágil). Solo herramienta, no default.
   entryAtMarket?: boolean;
+  // ─── Ciclo 4 (CYCLE-4-PREREG): motor de salida parcial + runner ───
+  // 'full' / undefined = candidato congelado (ruta original INTACTA — bit a bit).
+  // 'partial-runner' = TP1 cierra partialFrac en entry + tp1AtR×riesgo → SL del resto a BE (efectivo
+  // la vela siguiente) → el runner corre hasta intent.runnerTakeProfit (pool causal; fallback = TP
+  // nominal). El BE se ancla al fill del TP1 (reemplaza breakevenAtTpFraction en este modo).
+  exitMode?: 'full' | 'partial-runner';
+  tp1AtR?: number; // gatillo del parcial, en R (default 1)
+  partialFrac?: number; // fracción cerrada en TP1 (default 0.5)
 }
 
 // Defaults provisionales 🔴. feeRatePerSide ~0.05 % = taker Binance/Bitget futures (ver doc §6).
@@ -122,6 +135,12 @@ export interface SimTrade {
   barsToFill: number; // velas desde la colocación hasta el fill (0 = primera vela elegible)
   barsHeld: number; // velas en posición (incluye la de salida)
   movedToBE: boolean;
+  // ─── Ciclo 4 (solo en modo partial-runner; rMultiple/grossR/costR ya vienen COMBINADOS por pierna) ───
+  tp1Filled?: boolean; // el parcial llenó (si false y exitReason='SL' → pérdida completa −1R)
+  tp1Time?: number;
+  tp1ExitPrice?: number;
+  runnerTp?: number; // TP2 efectivo que usó el runner (pool o fallback al TP nominal)
+  runnerExitReason?: ExitReason; // cómo salió el runner (TP/BE/SL/maxHold/endOfData); ausente si no hubo TP1
 }
 
 export interface SimResult {
@@ -172,6 +191,21 @@ export function simulateTrade(
   // Buffer del BE en precio: compensa el coste round-trip (entrada maker + salida taker, que es el
   // caso de un stop en BE) para que ese stop rinda ≈ 0R.
   const beBufferPrice = 2 * cfg.slippagePerSide + intent.entry * (feeEntry + feeExitTaker);
+
+  // Ciclo 4: motor de salida parcial+runner en función APARTE — la ruta original (candidato
+  // congelado) queda intacta bit a bit.
+  if (cfg.exitMode === 'partial-runner') {
+    return simulatePartialRunner(intent, candles, cfg, {
+      start,
+      sign,
+      risk,
+      fillStrict,
+      feeEntry,
+      feeExitTaker,
+      feeExitMaker,
+      beBufferPrice,
+    });
+  }
 
   let filled = false;
   let entryFill = 0;
@@ -293,6 +327,195 @@ export function simulateTrade(
   if (filled) {
     const last = candles[candles.length - 1];
     return finishTrade(last.close, last.closeTime ?? last.openTime, 'endOfData');
+  }
+  const last = candles[candles.length - 1];
+  return { intentId: intent.id, outcome: 'expired', reason: 'noFill', endTime: last.closeTime ?? last.openTime };
+}
+
+interface PartialRunnerCtx {
+  start: number;
+  sign: number;
+  risk: number;
+  fillStrict: number;
+  feeEntry: number;
+  feeExitTaker: number;
+  feeExitMaker: number;
+  beBufferPrice: number;
+}
+
+/**
+ * Ciclo 4 (CYCLE-4-PREREG §2) — salida PARCIAL + RUNNER. Fase de fill idéntica al modo full (límite
+ * en CE / cancelBeyond / invalidación). Tras el fill:
+ *   · TP1 (límite, maker): cierra `partialFrac` en entry + tp1AtR×riesgo, al toque.
+ *   · Al llenar TP1 → SL del resto a BE+buffer, EFECTIVO LA VELA SIGUIENTE (sin reordenar intrabar).
+ *   · Runner (1−frac): corre hasta runnerTakeProfit (pool causal del intent) si queda MÁS ALLÁ del
+ *     TP1; si no, fallback al TP nominal (pre-registrado). Sin salida por tiempo salvo maxHoldBars.
+ *   · Pesimismo intacto: SL y TP en la misma vela → SL primero (−1R completo si el TP1 no llenó).
+ * R combinada = Σ fracción·R_pierna, fees por pierna (TP maker · SL/BE/maxHold/endOfData taker),
+ * entrada prorrateada por fracción.
+ */
+function simulatePartialRunner(
+  intent: TradeIntent,
+  candles: SimCandle[],
+  cfg: SimConfig,
+  ctx: PartialRunnerCtx,
+): SimResult {
+  const { start, sign, risk, fillStrict, feeEntry, feeExitTaker, feeExitMaker, beBufferPrice } = ctx;
+  const tp1AtR = cfg.tp1AtR ?? 1;
+  const frac = Math.min(Math.max(cfg.partialFrac ?? 0.5, 0), 1);
+  const tp1Level = intent.entry + sign * tp1AtR * risk;
+  // TP2 del runner: el pool causal si existe y queda MÁS ALLÁ del TP1; si no, el TP nominal (fallback).
+  const tp2Level =
+    intent.runnerTakeProfit != null && (intent.runnerTakeProfit - tp1Level) * sign > 0
+      ? intent.runnerTakeProfit
+      : intent.takeProfit;
+
+  let filled = false;
+  let entryFill = 0;
+  let entryTime = 0;
+  let barsToFill = 0;
+  let sl = intent.stopLoss;
+  let movedToBE = false;
+  let barsHeld = 0;
+  let tp1Filled = false;
+  let tp1Time = 0;
+  let tp1ExitFill = 0;
+  let tp1NetR = 0;
+  let tp1GrossR = 0;
+
+  // R neta de UNA pierna que sale en `exitLevel` (entrada prorrateada: cada pierna carga su fracción
+  // del fee de entrada al ponderarse en el combinado).
+  const leg = (exitLevel: number, feeExit: number) => {
+    const exitFill = exitLevel - sign * cfg.slippagePerSide; // salida adversa
+    const netPrice = (exitFill - entryFill) * sign - entryFill * feeEntry - exitFill * feeExit;
+    return { exitFill, netR: netPrice / risk, grossR: ((exitLevel - intent.entry) * sign) / risk };
+  };
+
+  // Cierra lo que quede vivo y devuelve el trade COMBINADO (suma ponderada de piernas).
+  const finish = (exitLevel: number, exitTime: number, reason: ExitReason, feeExit: number): SimResult => {
+    const rest = leg(exitLevel, feeExit);
+    const restFrac = tp1Filled ? 1 - frac : 1;
+    const gross = (tp1Filled ? frac * tp1GrossR : 0) + restFrac * rest.grossR;
+    const net = (tp1Filled ? frac * tp1NetR : 0) + restFrac * rest.netR;
+    const exitPrice = (tp1Filled ? frac * tp1ExitFill : 0) + restFrac * rest.exitFill;
+    return {
+      intentId: intent.id,
+      outcome: 'filled',
+      trade: {
+        id: intent.id,
+        symbol: intent.symbol,
+        tf: intent.tf,
+        direction: intent.direction,
+        signalBarTime: intent.signalBarTime,
+        entryTime,
+        entryPrice: round4(entryFill),
+        exitTime,
+        exitPrice: round4(exitPrice),
+        exitReason: reason,
+        stopLoss: intent.stopLoss,
+        takeProfit: intent.takeProfit,
+        grossR: round4(gross),
+        costR: round4(gross - net),
+        rMultiple: round4(net),
+        barsToFill,
+        barsHeld,
+        movedToBE,
+        tp1Filled,
+        tp1Time: tp1Filled ? tp1Time : undefined,
+        tp1ExitPrice: tp1Filled ? round4(tp1ExitFill) : undefined,
+        runnerTp: round4(tp2Level),
+        runnerExitReason: tp1Filled ? reason : undefined,
+      },
+    };
+  };
+
+  for (let b = start; b < candles.length; b++) {
+    const c = candles[b];
+    const ct = c.closeTime ?? c.openTime;
+
+    if (!filled) {
+      // — fase de fill: idéntica al modo full —
+      const offset = b - start;
+      if (cfg.entryAtMarket) {
+        filled = true;
+        entryFill = intent.entry + sign * cfg.slippagePerSide;
+        entryTime = c.openTime;
+        barsToFill = offset;
+      } else {
+        if (cfg.maxWaitFillBars > 0 && offset >= cfg.maxWaitFillBars) {
+          return { intentId: intent.id, outcome: 'cancelled', reason: 'maxWaitFill', endTime: ct };
+        }
+        const hitEntry =
+          intent.direction === 'LONG' ? c.low <= intent.entry - fillStrict : c.high >= intent.entry + fillStrict;
+        if (hitEntry) {
+          filled = true;
+          entryFill = intent.entry + sign * cfg.slippagePerSide;
+          entryTime = c.openTime;
+          barsToFill = offset;
+        } else {
+          if (intent.cancelBeyond != null) {
+            const ranAway =
+              intent.direction === 'LONG' ? c.high >= intent.cancelBeyond : c.low <= intent.cancelBeyond;
+            if (ranAway) return { intentId: intent.id, outcome: 'cancelled', reason: 'ranAway', endTime: ct };
+          }
+          if (intent.invalidationPrice != null) {
+            const invalidated =
+              intent.direction === 'LONG' ? c.close < intent.invalidationPrice : c.close > intent.invalidationPrice;
+            if (invalidated) return { intentId: intent.id, outcome: 'cancelled', reason: 'invalidated', endTime: ct };
+          }
+          continue;
+        }
+      }
+    }
+
+    // —— posición abierta ——
+    barsHeld++;
+    const liveStop = sl; // el stop vigente en ESTA vela (el BE recién movido no rige hasta la siguiente)
+    const slHit = intent.direction === 'LONG' ? c.low <= liveStop : c.high >= liveStop;
+    const tp1Hit = !tp1Filled && (intent.direction === 'LONG' ? c.high >= tp1Level : c.low <= tp1Level);
+    const tp2Hit = intent.direction === 'LONG' ? c.high >= tp2Level : c.low <= tp2Level;
+
+    if (slHit && (cfg.pessimisticSameBar || !(tp1Hit || tp2Hit))) {
+      // SL primero (pesimista): si el TP1 aún no llenó cae la posición COMPLETA (−1R).
+      return finish(liveStop, ct, movedToBE ? 'BE' : 'SL', feeExitTaker);
+    }
+    if (tp2Hit) {
+      // El runner alcanza su target. Si el TP1 no había llenado, llena en el camino (está más acá).
+      if (tp1Hit) {
+        const l = leg(tp1Level, feeExitMaker);
+        tp1Filled = true;
+        tp1Time = ct;
+        tp1ExitFill = l.exitFill;
+        tp1NetR = l.netR;
+        tp1GrossR = l.grossR;
+      }
+      return finish(tp2Level, ct, 'TP', feeExitMaker);
+    }
+    if (tp1Hit) {
+      const l = leg(tp1Level, feeExitMaker);
+      tp1Filled = true;
+      tp1Time = ct;
+      tp1ExitFill = l.exitFill;
+      tp1NetR = l.netR;
+      tp1GrossR = l.grossR;
+      // BE del runner: efectivo desde la vela SIGUIENTE (no reordenamos intrabar a favor).
+      const beLevel = intent.entry + sign * beBufferPrice;
+      if (intent.direction === 'LONG' ? beLevel > sl : beLevel < sl) {
+        sl = beLevel;
+        movedToBE = true;
+      }
+      // Rama optimista no-canónica (pessimisticSameBar=false): TP1 primero y el runner sale en el
+      // stop que regía esta vela.
+      if (slHit && !cfg.pessimisticSameBar) return finish(liveStop, ct, 'SL', feeExitTaker);
+    }
+    if (cfg.maxHoldBars > 0 && barsHeld >= cfg.maxHoldBars) {
+      return finish(c.close, ct, 'maxHold', feeExitTaker);
+    }
+  }
+
+  if (filled) {
+    const last = candles[candles.length - 1];
+    return finish(last.close, last.closeTime ?? last.openTime, 'endOfData', feeExitTaker);
   }
   const last = candles[candles.length - 1];
   return { intentId: intent.id, outcome: 'expired', reason: 'noFill', endTime: last.closeTime ?? last.openTime };
