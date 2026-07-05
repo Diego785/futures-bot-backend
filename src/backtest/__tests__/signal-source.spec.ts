@@ -274,6 +274,52 @@ describe('TP estructural (Ciclo 2 — CYCLE-2-PREREG Eje 1)', () => {
   });
 });
 
+describe('runner TP (Ciclo 4 — CYCLE-4-PREREG §2)', () => {
+  // Misma serie del e2e structural: liquidez buyside 114 confirmada encima de la señal LONG.
+  const SERIES: ObCandle[] = [
+    oc(0, 105, 110, 100, 105),
+    oc(1, 104, 109, 101, 104),
+    oc(2, 103, 114, 100.5, 103), // swing high 114
+    oc(3, 102, 107, 95, 102), // swing low 95
+    oc(4, 101, 106, 100, 101), // confirma el high
+    oc(5, 101, 104, 98, 102), // confirma el low
+    oc(6, 102, 103, 90, 102), // sweep + reclaim → señal LONG
+  ];
+
+  it('runnerTpLiquidity: el intent lleva el pool causal SIN tocar el TP nominal (2R)', () => {
+    const intents = generateIntents('BTCUSDT', '15m', SERIES, { gatillo: 'C', runnerTpLiquidity: true, ...LB2 });
+    expect(intents).toHaveLength(1);
+    const it = intents[0];
+    const risk = Math.abs(it.entry - it.stopLoss);
+    expect(it.tpSource).toBe('fixedR'); // el TP nominal sigue siendo el 2R del candidato
+    expect(it.takeProfit).toBeCloseTo(it.entry + 2 * risk, 6);
+    expect(it.runnerTakeProfit).toBeCloseTo(114, 6); // y el runner apunta a la liquidez
+    expect(it.runnerTpSource).toBe('liquidity');
+  });
+
+  it('sin pool vigente → runnerTpSource fallbackFixedR (el sim usará el TP nominal)', () => {
+    const intents = generateIntents('BTCUSDT', '15m', C_SERIES, { gatillo: 'C', runnerTpLiquidity: true, ...LB2 });
+    expect(intents).toHaveLength(1);
+    expect(intents[0].runnerTakeProfit).toBeUndefined();
+    expect(intents[0].runnerTpSource).toBe('fallbackFixedR');
+  });
+
+  it('N-invarianza: el flag NO cambia ids, entradas, SL ni TP (solo agrega los campos del runner)', () => {
+    const base = generateIntents('BTCUSDT', '15m', SERIES, { gatillo: 'C', ...LB2 });
+    const flagged = generateIntents('BTCUSDT', '15m', SERIES, { gatillo: 'C', runnerTpLiquidity: true, ...LB2 });
+    expect(flagged.length).toBe(base.length);
+    for (let i = 0; i < base.length; i++) {
+      expect(flagged[i].id).toBe(base[i].id);
+      expect(flagged[i].entry).toBe(base[i].entry);
+      expect(flagged[i].stopLoss).toBe(base[i].stopLoss);
+      expect(flagged[i].takeProfit).toBe(base[i].takeProfit);
+      expect(flagged[i].cancelBeyond).toBe(base[i].cancelBeyond);
+    }
+    expect(base[0].runnerTakeProfit).toBeUndefined(); // sin flag, nada nuevo en el intent
+    expect(base[0].runnerTpSource).toBeUndefined();
+  });
+});
+
 describe('generateIntents — modo D (sweep → CHoCH → entrada FVG, Ciclo 3)', () => {
   // Serie construida para un setup D LONG completo:
   // - swing high 110 (idx1) y swing low 95 (idx3), ambos confirmados con lookback 2.

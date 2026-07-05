@@ -74,6 +74,10 @@ export interface SignalConfig {
   // (candidato congelado, frágil al fill) · 'confirm' = entrada a MERCADO en el reclaim (fill garantizado,
   // sin pullback). El sim debe correr con entryAtMarket=true para 'confirm'. Solo herramienta, no default.
   entryMode?: 'ce' | 'confirm';
+  // Ciclo 4 (CYCLE-4-PREREG §2): adjunta al intent el target del RUNNER (liquidez opuesta causal,
+  // nearestLiquidityTp) para el modo partial-runner del simulador. NO toca entry/SL/TP nominal ni el
+  // gate minRr (⇒ N idéntico al candidato congelado). Solo herramienta, no default.
+  runnerTpLiquidity?: boolean;
 }
 
 // Defaults provisionales 🔴 (alineados con SMC-STRATEGY-MECHANICAL §5).
@@ -227,6 +231,21 @@ function buildIntent(
   const rr = Math.abs(tp.price - entry) / risk;
   if (rr < cfg.minRr) return { rejectReason: 'minRr' };
   const distal = direction === 'LONG' ? zoneLow : zoneHigh;
+
+  // Ciclo 4: target del RUNNER (liquidez opuesta causal). El gate minRr ya pasó sobre el TP nominal
+  // (N idéntico); el simulador aplica el fallback pre-registrado si el pool falta o queda ≤ TP1.
+  let runnerTakeProfit: number | undefined;
+  let runnerTpSource: TpSource | undefined;
+  if (cfg.runnerTpLiquidity) {
+    const pool = nearestLiquidityTp(direction, entry, signalBarTime, signalIdx, liqs, cfg, idxOfTime);
+    if (pool != null) {
+      runnerTakeProfit = round4(pool);
+      runnerTpSource = 'liquidity';
+    } else {
+      runnerTpSource = 'fallbackFixedR';
+    }
+  }
+
   return {
     intent: {
       id: makeId(cfg, symbol, tf, idSuffix),
@@ -240,6 +259,8 @@ function buildIntent(
       invalidationPrice: round4(distal),
       cancelBeyond: round4(entry + sign * cfg.cancelDistanceFrac * range),
       tpSource: tp.source,
+      runnerTakeProfit,
+      runnerTpSource,
       context: { zoneLow: round4(zoneLow), zoneHigh: round4(zoneHigh), ...extraContext },
     },
   };
@@ -473,7 +494,7 @@ export function generateIntentsDetailed(
 
   // Liquidez (si el TP la necesita): histórico completo, con barridos, sin filtros de distancia
   // ni tope → el filtro causal lo aplica nearestLiquidityTp por intent.
-  const needLiq = cfg.tpRule === 'liquidity' || cfg.tpRule === 'structural';
+  const needLiq = cfg.tpRule === 'liquidity' || cfg.tpRule === 'structural' || cfg.runnerTpLiquidity === true;
   const liqs: BotLiquidity[] = needLiq
     ? detectLiquidity(symbol, tf, candles, {
         ...DEFAULT_LIQ_PARAMS,
