@@ -121,6 +121,15 @@ export class ExecutionService implements OnModuleInit, OnModuleDestroy {
       );
       return;
     }
+    // GUARD v2: el candidato congelado usa salida PARCIAL+RUNNER (Ciclo 4) y este executor todavía
+    // ejecuta el lifecycle v1 (TP entero + BE al 50 %). Ejecutarlo sería INFIEL al candidato → se
+    // niega a arrancar hasta extender P.5 a parciales (TP1 reduceOnly por cantidad + BE al fill).
+    if ((FROZEN_SIM.exitMode ?? 'full') !== 'full') {
+      this.logger.error(
+        'El candidato congelado es v2 (partial-runner) y el executor aún NO soporta parciales — ejecución NO arranca (extender P.5 antes de operar v2).',
+      );
+      return;
+    }
     this.logger.warn(
       `⚠️ EJECUCIÓN REAL ACOTADA ACTIVA — testnet=${this.testnet} · riesgo $${this.riskUsd}/trade · ` +
         `leverage ${this.leverage}x · ${this.symbols.length} símbolos. TEST de medición.`,

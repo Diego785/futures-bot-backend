@@ -40,6 +40,11 @@ export interface PaperTradeRow {
   // regla estricta ("fill exige ≥ k ticks") al cierre del gate.
   entryPenetration: number | null; // cuánto pasó la mecha MÁS ALLÁ del límite en la vela del fill
   tpPenetration: number | null; // ídem más allá del TP en la vela de salida (solo exitReason TP)
+  // v2 (Ciclo 4): piernas del motor partial-runner. null en filas del candidato v1 (modo full).
+  tp1Filled: boolean | null; // el parcial llenó (BE con tp1Filled = trade EN GANANCIA)
+  tp1Time: number | null;
+  tp1ExitPrice: number | null;
+  runnerTp: number | null; // TP2 efectivo del runner
   engineVersion: string;
   paramsHash: string;
   createdAt: number;
@@ -133,6 +138,10 @@ export function toPaperTradeRow(
     barsToFill: t.barsToFill,
     barsHeld: t.barsHeld,
     cancelReason: p.cancelReason ?? null,
+    tp1Filled: (closed ?? fillInfo)?.tp1Filled ?? null,
+    tp1Time: (closed ?? fillInfo)?.tp1Time ?? null,
+    tp1ExitPrice: (closed ?? fillInfo)?.tp1ExitPrice ?? null,
+    runnerTp: (closed ?? fillInfo)?.runnerTp ?? null,
     ...pen,
     engineVersion,
     paramsHash,

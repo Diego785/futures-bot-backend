@@ -228,7 +228,14 @@ export function PaperDashboard() {
   const focused = trades.find((t) => t.intentId === focusedId) ?? null;
   const liveSymbols = useMemo(() => status?.symbols.map((s) => s.symbol) ?? [], [status]);
   const symbols = useMemo(() => ['ALL', ...new Set(trades.map((t) => t.symbol))], [trades]);
-  const liveTrades = trades; // el backend solo persiste 'live' → historial siempre limpio
+  // El backend solo persiste 'live' → historial limpio. Además, tras conmutar de candidato (v1→v2)
+  // las filas del candidato ANTERIOR (otro paramsHash) no deben mezclar las estadísticas del gate
+  // vigente: se filtra por los hashes que reporta /api/paper/status (sin status → sin filtro).
+  const currentHashes = useMemo(() => new Set((status?.symbols ?? []).map((s) => s.paramsHash)), [status]);
+  const liveTrades = useMemo(
+    () => (currentHashes.size === 0 ? trades : trades.filter((t) => currentHashes.has(t.paramsHash))),
+    [trades, currentHashes],
+  );
 
   const listed = useMemo(() => {
     let xs = liveTrades;
@@ -391,6 +398,12 @@ export function PaperDashboard() {
               <span className="ri-usd-sub"> · riesgo {formatUsd(capital.riskPerTrade)}/op</span>
             </div>
             <div className="ri-rbreak">bruto {fmtR(focused.grossR)} · comisiones+slip −{(focused.costR ?? 0).toFixed(2)}R</div>
+            {focused.tp1Filled != null && (
+              <div className="ri-rbreak">
+                parcial 50% @ +1R: {focused.tp1Filled ? `✓ asegurado @ ${focused.tp1ExitPrice ?? '—'}` : '— no llegó'}
+                {focused.runnerTp != null ? ` · runner → ${focused.runnerTp}` : ''}
+              </div>
+            )}
           </>
         ) : (
           <div className="ri-flow">

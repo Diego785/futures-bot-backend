@@ -111,6 +111,19 @@ export class PaperTradeEntity {
   @Column({ type: 'double precision', nullable: true })
   tpPenetration: number | null;
 
+  // v2 (Ciclo 4): piernas del motor partial-runner. null en filas del candidato v1.
+  @Column({ type: 'boolean', nullable: true })
+  tp1Filled: boolean | null;
+
+  @Column({ type: 'bigint', transformer: bigintToNumber, nullable: true })
+  tp1Time: number | null;
+
+  @Column({ type: 'double precision', nullable: true })
+  tp1ExitPrice: number | null;
+
+  @Column({ type: 'double precision', nullable: true })
+  runnerTp: number | null;
+
   @Column({ type: 'varchar', length: 40 })
   engineVersion: string;
 

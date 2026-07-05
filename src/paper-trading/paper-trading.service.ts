@@ -31,7 +31,9 @@ interface SymbolState {
   paramsHash: string;
 }
 
-const stateSig = (p: PaperPosition): string => `${p.state}:${p.trade?.exitReason ?? ''}:${p.cancelReason ?? ''}`;
+// v2: el fill del TP1 (parcial) también es una transición persistible/emitible (cambia la fila).
+const stateSig = (p: PaperPosition): string =>
+  `${p.state}:${p.trade?.exitReason ?? ''}:${p.cancelReason ?? ''}:${(p.trade ?? p.live)?.tp1Filled ? '1' : '0'}`;
 
 @Injectable()
 export class PaperTradingService implements OnModuleInit, OnModuleDestroy {

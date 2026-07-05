@@ -143,6 +143,22 @@ adverse selection). v2 mueve la decisión al humano y usa el software como ojos 
 - **Separación histórico/live del paper ✅ + historial LIMPIO** (`PAPER_CLOCK_START`, `paper_trades.phase`):
   solo se persiste el forward-test real; el rehidratado es contexto en memoria. UI: 3 pestañas + stats
   densas. Reporte capital $30: minNotional Binance real $5-50 (no $100); ~$0.25-0.30/mes (simbólico).
+- **P.5 (ejecución real ACOTADA) ✅ construida y validada en TESTNET** (`docs/EXECUTION-SPEC.md`,
+  `src/execution/`): risk-guard (topes duros + kill) · `execution_orders` · ExecutionService (límite en
+  CE → fill vía user-data WS → bracket SL/TP Algo API → BE → settle) · `POST /api/exec/kill` + status ·
+  inyector testnet-only. Lifecycle E2E verificado en testnet (fill+bracket+SL real −1.246R). Solo carga
+  con `DB_ENABLED && EXECUTION_ENABLED`. Hallazgo: STOP/TP van por `/fapi/v1/algoOrder` (migración
+  Binance 2025-12-09; params `type`/`triggerPrice`/`clientAlgoId`). P.5.4 (real $100) PENDIENTE.
+- **Ciclo 4 EJECUTADO y CERRADO (2026-07-04): POSITIVO — V5 = CANDIDATO v2** (`CYCLE-4-PREREG.md` §8;
+  primera mejora real en 4 ciclos). Fuente: práctica del instructor/comunidad (chats WhatsApp). V5 =
+  misma señal/entrada/SL + salida PARCIAL+RUNNER: TP1 cierra 50 % en +1R → SL a BE (cierra EN GANANCIA
+  ≈+0.48R lo que antes era BE $0.00) → runner al 2R. Cumple LOS 6 criterios §5 en held-out (+0.226R vs
+  +0.177R, 10/10 símbolos, maxDD MENOR en 8/10, WF 75 % vs 62.5 % ventanas). El runner-al-POOL (V1-V4)
+  refutado (4ª vez el target-por-niveles). Mecanismo estructural (mismos trades re-particionados), no
+  fiteado. **`frozen-candidate.ts` YA ES v2** (hash == 10 corridas canónicas registradas; historia
+  completa 10/10 positivos ≈+303R). Piernas en `paper_trades` (AddPaperTp1) + dashboard filtra por hash
+  vigente. GUARD: el executor se niega a arrancar con v2 hasta soportar parciales. PENDIENTE: cutover
+  del server (PAPER_CLOCK_START nuevo = gate v2 desde cero) + executor con parciales antes de P.5.4.
 
 ## Documentación (fuente de verdad — leer antes de codear)
 - `docs/PRODUCT-VISION.md` — **EL NORTE**: objetivo final (bot rentable y autónomo) + qué debe poder VER el usuario (dashboard en vivo + historial/reportes + replay visual de backtests). El "para qué" innegociable

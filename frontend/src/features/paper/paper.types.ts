@@ -36,6 +36,11 @@ export interface PaperTrade {
   cancelReason: string | null;
   entryPenetration: number | null; // touched-vs-crossed: cuánto cruzó la mecha el límite
   tpPenetration: number | null;
+  // v2 (Ciclo 4): piernas del motor partial-runner (null/ausente en filas del candidato v1)
+  tp1Filled?: boolean | null;
+  tp1Time?: number | null;
+  tp1ExitPrice?: number | null;
+  runnerTp?: number | null;
   engineVersion: string;
   paramsHash: string;
   createdAt: number;

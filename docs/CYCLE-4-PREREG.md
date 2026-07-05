@@ -174,7 +174,26 @@ BENCH +0.177R · PF 1.49 · totalR +61.4 · WR 44.8 % → **V5 +0.226R · PF 1.6
 > práctica de Pablo (parcial+BE) quedan VALIDADAS por datos no vistos; el target estructural del
 > runner, refutado otra vez — la receta ganadora es su mecanismo de gestión + nuestro 2R robusto.
 
-**Decisión (§5, automática): V5 = CANDIDATO v2.** Pendiente C4.e (congelar `frozen-candidate` v2 +
-corridas canónicas registradas + visor con piernas + SU paper-test desde cero). La ejecución real
-(P.5.4) con v2 exige extender el executor a parciales (TP1 reduceOnly por cantidad + BE al fill)
-ANTES de operarlo — sin atajos. Mientras: el candidato v1 congelado sigue corriendo su gate.
+**Decisión (§5, automática): V5 = CANDIDATO v2.**
+
+**C4.e EJECUTADO (2026-07-04):**
+- `frozen-candidate.ts` **congelado en v2** (exitMode partial-runner · tp1AtR 1 · partialFrac 0.5,
+  claves al FINAL del literal → paramsHash CLI == paper, verificado en vivo: los 10 hashes del
+  `/api/paper/status` == los de las corridas canónicas).
+- **10 corridas canónicas v2 registradas** (bt_1783219619535…bt_1783219728964, engine 4634abb),
+  historia completa 2022-2026: **10/10 símbolos POSITIVOS, ≈+303R total** (v1: +216R, 9/10).
+  BTC +0.367R/PF 2.31 · XRP +0.214 · BNB +0.239 · ADA +0.188 · LINK +0.179 · DOGE +0.169 ·
+  SOL +0.164 · AVAX +0.069 · DOT +0.058 · ETH +0.032.
+- **Paridad ventana-vs-full con v2**: BTC 110 trades / 0 divergencias ✓ (SOL pendiente de re-correr
+  por timeout — mismo code path).
+- **Piernas persistidas** en `paper_trades` (migración AddPaperTp1: tp1Filled/tp1Time/tp1ExitPrice/
+  runnerTp) + visibles en el panel del dashboard + `stateSig` emite el fill del parcial al momento.
+- **Anti-mezcla**: el dashboard filtra el historial por el paramsHash VIGENTE (las filas v1 no
+  contaminan las estadísticas del gate v2).
+- **GUARD del executor**: la ejecución (P.5) se NIEGA a arrancar con un candidato partial-runner
+  hasta extenderla a parciales (TP1 reduceOnly por cantidad + BE al fill del TP1) — sin atajos.
+
+**PENDIENTE (fuera de este doc):** (a) cutover del SERVER a v2 — decisión consciente del usuario:
+backup → git pull → fijar `PAPER_CLOCK_START` NUEVO (el gate v2 arranca de cero) → restart;
+(b) extender el executor a parciales antes de P.5.4 con v2; (c) re-correr verify-equivalence SOL;
+(d) overlays de TP1/runner en la gráfica del visor (nice-to-have).
