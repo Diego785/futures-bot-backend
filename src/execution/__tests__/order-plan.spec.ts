@@ -120,6 +120,58 @@ describe('order-plan · clientOrderId', () => {
   });
 });
 
+describe('order-plan · pierna TP1 (v2 partial-runner)', () => {
+  const PARTIAL = { tp1AtR: 1, partialFrac: 0.5 };
+
+  it('LONG: TP1 = LIMIT reduceOnly de la mitad en entry + 1R, y runnerQuantity = el resto', () => {
+    const r = planBracket(intent(), 0.5, F, 400, PARTIAL);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const tp1 = r.plan.takeProfitPartial;
+    expect(tp1).toBeDefined();
+    expect(tp1).toMatchObject({ leg: 'TP1', side: 'SELL', type: 'LIMIT', reduceOnly: true });
+    // riesgo = |100 − 99.6| ≈ 0.4 → TP1 ≈ 100.4 (al tick)
+    expect(parseFloat(tp1?.price as string)).toBeCloseTo(100.4, 1);
+    const qty1 = parseFloat(tp1?.quantity as string);
+    const rest = parseFloat(r.plan.runnerQuantity as string);
+    expect(qty1).toBeGreaterThan(0);
+    expect(rest).toBeGreaterThan(0);
+    expect(qty1 + rest).toBeCloseTo(parseFloat(r.plan.quantity), 6);
+    expect(tp1?.clientOrderId).not.toBe(r.plan.takeProfit.clientOrderId); // legs con id propio
+  });
+
+  it('SHORT: TP1 por debajo de la entrada, BUY reduceOnly', () => {
+    const r = planBracket(
+      intent({ direction: 'SHORT', entry: 100, stopLoss: 100.4, takeProfit: 99.2 }),
+      0.5,
+      F,
+      400,
+      PARTIAL,
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.plan.takeProfitPartial?.side).toBe('BUY');
+    expect(parseFloat(r.plan.takeProfitPartial?.price as string)).toBeCloseTo(99.6, 1);
+  });
+
+  it('posición de 1 step: la fracción redondea a 0 → DEGRADA a full (sin TP1), nunca qty 0', () => {
+    // qty total = 1.25 → floor a step '1' = 1; 50% de 1 → floor 0 → sin pierna parcial
+    const r = planBracket(intent({ entry: 100, stopLoss: 99.6, takeProfit: 100.8 }), 0.5, { ...F, stepSize: '1', minNotional: 5 }, 400, PARTIAL);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(parseFloat(r.plan.quantity)).toBe(1);
+    expect(r.plan.takeProfitPartial).toBeUndefined();
+    expect(r.plan.runnerQuantity).toBeUndefined();
+  });
+
+  it('sin config parcial → bracket v1 idéntico (sin TP1)', () => {
+    const r = planBracket(intent(), 0.5, F, 400);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.plan.takeProfitPartial).toBeUndefined();
+  });
+});
+
 describe('order-plan · planBreakeven', () => {
   it('LONG: BE por encima de la entrada, SELL stop reduceOnly', () => {
     const be = planBreakeven(intent(), '1.250', F);

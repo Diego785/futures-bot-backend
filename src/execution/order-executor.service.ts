@@ -73,6 +73,20 @@ export class OrderExecutorService {
     });
   }
 
+  // v2: la pierna TP1 del partial-runner — LIMIT reduceOnly por cantidad (maker, como el sim).
+  placeLimitReduceOnly(o: PlannedOrder): Promise<OrderResult> {
+    return this.rest.placeOrder({
+      symbol: o.symbol,
+      side: toSide(o.side),
+      type: OrderType.LIMIT,
+      quantity: o.quantity,
+      price: o.price,
+      timeInForce: TimeInForce.GTC,
+      reduceOnly: true,
+      clientOrderId: o.clientOrderId,
+    });
+  }
+
   // MARKET — usado para forzar fill en el smoke y para CERRAR (reduceOnly) al aplanar.
   placeMarket(
     symbol: string,

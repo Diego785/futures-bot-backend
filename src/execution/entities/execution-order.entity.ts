@@ -85,6 +85,19 @@ export class ExecutionOrderEntity {
   @Column({ type: 'boolean', default: false })
   movedToBE: boolean;
 
+  // ── v2 (partial-runner): pierna TP1 real ──
+  @Column({ type: 'varchar', length: 40, nullable: true })
+  tp1ClientId: string | null;
+
+  @Column({ type: 'boolean', default: false })
+  tp1Filled: boolean;
+
+  @Column({ type: 'double precision', nullable: true })
+  tp1FillPrice: number | null;
+
+  @Column({ type: 'bigint', transformer: bigintToNumber, nullable: true })
+  tp1FillTime: number | null;
+
   @Column({ type: 'bigint', transformer: bigintToNumber, nullable: true })
   exitTime: number | null;
 

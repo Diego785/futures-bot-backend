@@ -26,7 +26,7 @@ export interface SymbolFilters {
   minNotional: number;
 }
 
-export type OrderLeg = 'ENTRY' | 'SL' | 'TP';
+export type OrderLeg = 'ENTRY' | 'SL' | 'TP' | 'TP1';
 export type OrderSideStr = 'BUY' | 'SELL';
 export type PlannedOrderType = 'LIMIT' | 'STOP_MARKET' | 'TAKE_PROFIT_MARKET';
 
@@ -53,7 +53,11 @@ export interface BracketPlan {
   notionalUsd: number;
   entry: PlannedOrder;
   stopLoss: PlannedOrder;
-  takeProfit: PlannedOrder;
+  takeProfit: PlannedOrder; // v2: el TP del RUNNER (2R nominal) — closePosition cierra lo que quede
+  // v2 (candidato partial-runner): pierna TP1 = LIMIT reduceOnly por CANTIDAD (frac del total).
+  // Ausente en modo full o si la qty parcial redondea a 0 (posición de 1 step → degrada a full, se loggea).
+  takeProfitPartial?: PlannedOrder;
+  runnerQuantity?: string; // qty − qty(TP1); lo que gestiona el runner tras el parcial
 }
 
 export type PlanRejectReason =

@@ -43,6 +43,19 @@ El usuario usa la **cuenta principal** (no sub-cuenta). Por eso, **regla innegoc
 - `quantity = risk$ / |entry − SL|`, redondeado al `stepSize` del símbolo. Pérdida en SL = `qty × |entry−SL| = $0.50`. ✓
 
 ## §4 — Modelo de ejecución (mapeo simulador → órdenes Binance USDT-M)
+
+> **v2 (Ciclo 4, 2026-07-04):** el candidato congelado ahora es PARTIAL-RUNNER. El lifecycle §4
+> se extiende así (implementado; el executor detecta el modo desde `FROZEN_SIM`):
+> - Al fill de la entrada se colocan TRES salidas: **SL** `STOP_MARKET closePosition` ·
+>   **TP2 (runner)** `TAKE_PROFIT_MARKET closePosition` en el 2R nominal · **TP1 (parcial)**
+>   `LIMIT reduceOnly` del 50 % de la qty en entry + 1R (maker, fiel al sim).
+> - **Al fill del TP1** (ORDER_TRADE_UPDATE): el SL se re-coloca en **BE+buffer** (anclado al
+>   fill, como el sim — ya no al 50 % del camino por vela). `closePosition` cubre lo que quede.
+> - Salida final (SL/BE/TP2): se cancela la hermana + el TP1 si quedó resting; la **R es COMBINADA
+>   por piernas** (TP1 maker + resto taker, entrada prorrateada) = misma escala que el paper.
+> - Si la qty parcial redondea a 0 (posición de 1 step) o el TP1 falla al colocarse → el trade
+>   DEGRADA a full-exit (v1) y se loggea — nunca una orden de qty 0, nunca posición sin SL/TP.
+> - Reconciliación: re-adopta la pierna TP1 (si no llenó, re-coloca — id determinista = idempotente).
 Modo de cuenta: **one-way** (no hedge) · margen **aislado (isolated)** · leverage **5x** (NO cambia el
 riesgo —lo fija el SL al 0.5%— solo da margen; el SL cierra MUCHÍSIMO antes de cualquier liquidación).
 

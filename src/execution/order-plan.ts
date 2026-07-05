@@ -18,16 +18,23 @@ import type {
 
 // clientOrderId DETERMINISTA (≤36 chars) para idempotencia: mismo intent+leg → mismo id, así un
 // reinicio que re-coloque la misma orden es RECHAZADO por Binance (duplicate clientOrderId) =
-// salvaguarda anti-doble-fill (EXECUTION-SPEC §6). Formato: FAB_{E|S|T}_{base36(ts)}_{sym}_{u|d}.
+// salvaguarda anti-doble-fill (EXECUTION-SPEC §6). Formato: FAB_{E|S|T|P}_{base36(ts)}_{sym}_{u|d}.
 export function clientOrderIdFor(
   intent: { symbol: string; signalBarTime: number; direction: string },
   leg: OrderLeg,
 ): string {
-  const code = leg === 'ENTRY' ? 'E' : leg === 'SL' ? 'S' : 'T';
+  const code = leg === 'ENTRY' ? 'E' : leg === 'SL' ? 'S' : leg === 'TP1' ? 'P' : 'T';
   const ts = intent.signalBarTime.toString(36);
   const sym = intent.symbol.replace('USDT', '');
   const dir = intent.direction === 'LONG' ? 'u' : 'd';
   return `FAB_${code}_${ts}_${sym}_${dir}`.slice(0, 36);
+}
+
+// Config de la pierna parcial (v2, candidato partial-runner): TP1 = LIMIT reduceOnly de partialFrac
+// en entry + tp1AtR×riesgo; el runner (resto) va al TP nominal. Sin esto → bracket v1 (full).
+export interface PartialPlanConfig {
+  tp1AtR: number;
+  partialFrac: number;
 }
 
 // Construye el bracket para un intent. Devuelve un PlanResult discriminado: ok=true con el plan, o
@@ -37,6 +44,7 @@ export function planBracket(
   riskUsd: number,
   filters: SymbolFilters | undefined,
   maxNotionalUsd: number,
+  partial?: PartialPlanConfig,
 ): PlanResult {
   if (!filters) return { ok: false, reason: 'symbolUnknown', detail: intent.symbol };
 
@@ -106,6 +114,30 @@ export function planBracket(
     reduceOnly: true,
   };
 
+  // v2: pierna TP1 (LIMIT reduceOnly por cantidad). Si la fracción redondea a 0 (posición de 1 step),
+  // el plan DEGRADA a full-exit (sin TP1) — el executor lo loggea; jamás una orden de qty 0.
+  let takeProfitPartial: PlannedOrder | undefined;
+  let runnerQuantity: string | undefined;
+  if (partial) {
+    const sign = isLong ? 1 : -1;
+    const tp1Qty = roundToStepSize(qtyNum * partial.partialFrac, filters.stepSize);
+    const tp1QtyNum = parseFloat(tp1Qty);
+    const restQty = roundToStepSize(qtyNum - tp1QtyNum, filters.stepSize);
+    if (tp1QtyNum > 0 && parseFloat(restQty) > 0) {
+      takeProfitPartial = {
+        leg: 'TP1',
+        clientOrderId: clientOrderIdFor(intent, 'TP1'),
+        symbol: intent.symbol,
+        side: exitSide,
+        type: 'LIMIT',
+        quantity: tp1Qty,
+        price: roundToTickSize(entry + sign * partial.tp1AtR * stopDistance, filters.tickSize),
+        reduceOnly: true,
+      };
+      runnerQuantity = restQty;
+    }
+  }
+
   return {
     ok: true,
     plan: {
@@ -119,6 +151,8 @@ export function planBracket(
       entry: entryOrder,
       stopLoss: stopLossOrder,
       takeProfit: takeProfitOrder,
+      takeProfitPartial,
+      runnerQuantity,
     },
   };
 }

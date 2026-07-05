@@ -3,6 +3,7 @@ import {
   breakevenTriggerLevel,
   reachedBreakeven,
   computeRealizedR,
+  computeRealizedRPartial,
   estimateFeesUsd,
 } from '../execution-logic';
 import type { TradeIntent } from '../../backtest/trade-simulator';
@@ -94,5 +95,71 @@ describe('execution-logic · estimateFeesUsd', () => {
   it('entrada maker + salida taker sobre el nocional por lado', () => {
     // 100·1·0.0002 + 102·1·0.0005 = 0.02 + 0.051 = 0.071
     expect(estimateFeesUsd(100, 102, 1, 0.0002, 0.0005)).toBeCloseTo(0.071, 6);
+  });
+});
+
+describe('execution-logic · computeRealizedRPartial (v2)', () => {
+  // intent(): entry 100, SL 99 → riesgo 1. Sin fees para la lógica pura.
+  it('TP1 a +1R (50%) + runner a +2R (50%) ≈ 1.5R', () => {
+    const legs = [
+      { price: 101, qty: 0.5, feeUsd: 0 },
+      { price: 102, qty: 0.5, feeUsd: 0 },
+    ];
+    expect(computeRealizedRPartial(intent(), 100, legs, 0)).toBeCloseTo(1.5, 6);
+  });
+
+  it('TP1 (50%) + runner en BE ≈ +0.5R — el trade cierra EN GANANCIA', () => {
+    const legs = [
+      { price: 101, qty: 0.5, feeUsd: 0 },
+      { price: 100, qty: 0.5, feeUsd: 0 },
+    ];
+    const r = computeRealizedRPartial(intent(), 100, legs, 0);
+    expect(r).toBeCloseTo(0.5, 6);
+    expect(r).toBeGreaterThan(0);
+  });
+
+  it('SL antes del TP1 (una sola pierna completa) = −1R', () => {
+    expect(computeRealizedRPartial(intent(), 100, [{ price: 99, qty: 1, feeUsd: 0 }], 0)).toBeCloseTo(-1, 6);
+  });
+
+  it('SHORT espejo: TP1 −1R abajo + runner −2R abajo ≈ 1.5R', () => {
+    const s = intent({ direction: 'SHORT', entry: 100, stopLoss: 101, takeProfit: 98 });
+    const legs = [
+      { price: 99, qty: 0.5, feeUsd: 0 },
+      { price: 98, qty: 0.5, feeUsd: 0 },
+    ];
+    expect(computeRealizedRPartial(s, 100, legs, 0)).toBeCloseTo(1.5, 6);
+  });
+
+  it('las fees (entrada + por pierna) restan sobre el riesgo total en USD', () => {
+    // riesgo total USD = 1·1 = 1. gross = 1.5. fees = 0.1 entrada + 0.05+0.05 salidas = 0.2 → 1.3R
+    const legs = [
+      { price: 101, qty: 0.5, feeUsd: 0.05 },
+      { price: 102, qty: 0.5, feeUsd: 0.05 },
+    ];
+    expect(computeRealizedRPartial(intent(), 100, legs, 0.1)).toBeCloseTo(1.3, 6);
+  });
+
+  it('fill de entrada mejor que el CE aumenta la R (denominador = riesgo PLANEADO)', () => {
+    // entrada real 99.5: gross = (101−99.5)·0.5 + (102−99.5)·0.5 = 0.75 + 1.25 = 2.0 → 2R
+    const legs = [
+      { price: 101, qty: 0.5, feeUsd: 0 },
+      { price: 102, qty: 0.5, feeUsd: 0 },
+    ];
+    expect(computeRealizedRPartial(intent(), 99.5, legs, 0)).toBeCloseTo(2.0, 6);
+  });
+
+  it('qty asimétrica pondera bien (30/70)', () => {
+    const legs = [
+      { price: 101, qty: 0.3, feeUsd: 0 },
+      { price: 102, qty: 0.7, feeUsd: 0 },
+    ];
+    // gross = 1·0.3 + 2·0.7 = 1.7 / (1·1) = 1.7R
+    expect(computeRealizedRPartial(intent(), 100, legs, 0)).toBeCloseTo(1.7, 6);
+  });
+
+  it('defensivo: sin piernas o riesgo nulo → 0', () => {
+    expect(computeRealizedRPartial(intent(), 100, [], 0)).toBe(0);
+    expect(computeRealizedRPartial(intent({ stopLoss: 100 }), 100, [{ price: 101, qty: 1, feeUsd: 0 }], 0)).toBe(0);
   });
 });

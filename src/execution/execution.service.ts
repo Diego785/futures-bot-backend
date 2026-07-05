@@ -29,7 +29,7 @@ import { ExecutionOrderRepository, type ExecutionOrderRow } from './execution-or
 import { ExecutionOrderEntity } from './entities/execution-order.entity';
 import { RiskGuard } from './risk-guard';
 import { planBracket } from './order-plan';
-import { reachedBreakeven, computeRealizedR, estimateFeesUsd } from './execution-logic';
+import { reachedBreakeven, computeRealizedR, computeRealizedRPartial, estimateFeesUsd } from './execution-logic';
 import type { BracketPlan, PlannedOrder, RiskLimits } from './execution.types';
 
 type ExecState = 'PENDING' | 'FILLED' | 'CLOSED' | 'CANCELED'; // PENDING = límite resting
@@ -45,6 +45,11 @@ interface ExecPosition {
   slAlgoId: string | null;
   tpClientId: string;
   tpAlgoId: string | null;
+  // v2 (partial-runner): pierna TP1 (LIMIT reduceOnly). null/false si el modo es full o degradó.
+  tp1ClientId: string | null;
+  tp1Filled: boolean;
+  tp1FillPrice: number | null;
+  tp1FillTime: number | null;
   createdAt: number;
 }
 
@@ -67,6 +72,10 @@ export class ExecutionService implements OnModuleInit, OnModuleDestroy {
   private readonly beFraction = FROZEN_SIM.breakevenAtTpFraction;
   private readonly makerFee = FROZEN_SIM.makerFee ?? 0.0002;
   private readonly takerFee = FROZEN_SIM.takerFee ?? 0.0005;
+  // v2 (Ciclo 4): modo partial-runner del candidato congelado. En full, el lifecycle es el v1.
+  private readonly partialMode = FROZEN_SIM.exitMode === 'partial-runner';
+  private readonly tp1AtR = FROZEN_SIM.tp1AtR ?? 1;
+  private readonly partialFrac = FROZEN_SIM.partialFrac ?? 0.5;
   private readonly riskGuard: RiskGuard;
 
   constructor(
@@ -121,18 +130,9 @@ export class ExecutionService implements OnModuleInit, OnModuleDestroy {
       );
       return;
     }
-    // GUARD v2: el candidato congelado usa salida PARCIAL+RUNNER (Ciclo 4) y este executor todavía
-    // ejecuta el lifecycle v1 (TP entero + BE al 50 %). Ejecutarlo sería INFIEL al candidato → se
-    // niega a arrancar hasta extender P.5 a parciales (TP1 reduceOnly por cantidad + BE al fill).
-    if ((FROZEN_SIM.exitMode ?? 'full') !== 'full') {
-      this.logger.error(
-        'El candidato congelado es v2 (partial-runner) y el executor aún NO soporta parciales — ejecución NO arranca (extender P.5 antes de operar v2).',
-      );
-      return;
-    }
     this.logger.warn(
       `⚠️ EJECUCIÓN REAL ACOTADA ACTIVA — testnet=${this.testnet} · riesgo $${this.riskUsd}/trade · ` +
-        `leverage ${this.leverage}x · ${this.symbols.length} símbolos. TEST de medición.`,
+        `leverage ${this.leverage}x · ${this.symbols.length} símbolos · salida ${this.partialMode ? `PARCIAL+RUNNER (TP1 ${this.partialFrac * 100}% @ +${this.tp1AtR}R → BE → runner 2R)` : 'full (v1)'}. TEST de medición.`,
     );
 
     for (const s of this.symbols) {
@@ -176,12 +176,22 @@ export class ExecutionService implements OnModuleInit, OnModuleDestroy {
     }
 
     const filters = this.executor.filtersFor(intent.symbol);
-    const planRes = planBracket(intent, this.riskUsd, filters, this.maxNotionalUsd);
+    const planRes = planBracket(
+      intent,
+      this.riskUsd,
+      filters,
+      this.maxNotionalUsd,
+      this.partialMode ? { tp1AtR: this.tp1AtR, partialFrac: this.partialFrac } : undefined,
+    );
     if (!planRes.ok) {
       this.logger.warn(`plan rechazado ${intent.id}: ${planRes.reason} (${planRes.detail})`);
       return;
     }
     const plan = planRes.plan;
+    if (this.partialMode && !plan.takeProfitPartial) {
+      // qty parcial redondeó a 0 (posición de 1 step) → degrada a full-exit para ESTE trade.
+      this.logger.warn(`${intent.symbol}: qty parcial = 0 (posición mínima) — este trade corre SIN TP1 (full).`);
+    }
 
     let price = 0;
     try {
@@ -209,6 +219,10 @@ export class ExecutionService implements OnModuleInit, OnModuleDestroy {
         slAlgoId: null,
         tpClientId: plan.takeProfit.clientOrderId,
         tpAlgoId: null,
+        tp1ClientId: plan.takeProfitPartial?.clientOrderId ?? null,
+        tp1Filled: false,
+        tp1FillPrice: null,
+        tp1FillTime: null,
         createdAt: Date.now(),
       };
       this.positions.set(intent.id, pos);
@@ -237,36 +251,66 @@ export class ExecutionService implements OnModuleInit, OnModuleDestroy {
     this.logger.log(`LÍMITE cancelada (ranAway) ${pos.plan.symbol} ${intentId}`);
   }
 
-  // ── Fill de la entrada (user-data WS) → montar SL + TP ─────────────────────
+  // ── Fill de la entrada o del TP1 (user-data WS) ────────────────────────────
   private async onOrderUpdate(u: OrderUpdate): Promise<void> {
     if (u.status !== OrderStatus.FILLED) return;
-    const pos = [...this.positions.values()].find(
+    // ¿Es el fill de una ENTRADA pendiente?
+    const pending = [...this.positions.values()].find(
       (p) => p.state === 'PENDING' && p.plan.entry.clientOrderId === u.clientOrderId,
     );
-    if (!pos) return;
-    pos.state = 'FILLED';
-    pos.entryFillPrice = parseFloat(u.avgPrice) || pos.intent.entry;
-    pos.entryFillTime = u.eventTime;
-    this.logger.log(`FILL ${pos.plan.symbol} @ ${pos.entryFillPrice}`);
-    await this.placeBracket(pos);
+    if (pending) {
+      pending.state = 'FILLED';
+      pending.entryFillPrice = parseFloat(u.avgPrice) || pending.intent.entry;
+      pending.entryFillTime = u.eventTime;
+      this.logger.log(`FILL ${pending.plan.symbol} @ ${pending.entryFillPrice}`);
+      await this.placeBracket(pending);
+      return;
+    }
+    // ¿Es el fill del TP1 (parcial)? → asegurado; el SL del resto va a BE (anclado al fill, como el sim).
+    const withTp1 = [...this.positions.values()].find(
+      (p) => p.state === 'FILLED' && !p.tp1Filled && p.tp1ClientId != null && p.tp1ClientId === u.clientOrderId,
+    );
+    if (withTp1) {
+      withTp1.tp1Filled = true;
+      withTp1.tp1FillPrice = parseFloat(u.avgPrice) || parseFloat(withTp1.plan.takeProfitPartial?.price ?? '0');
+      withTp1.tp1FillTime = u.eventTime;
+      this.logger.log(`TP1 ${withTp1.plan.symbol}: parcial asegurado @ ${withTp1.tp1FillPrice} → SL a BE`);
+      await this.moveToBreakeven(withTp1);
+      await this.persist(withTp1, {});
+    }
   }
 
-  // Coloca el bracket SL + TP (closePosition). Si algo falla → APLANA (no dejar posición sin protección).
+  // Coloca el bracket SL + TP (closePosition) + TP1 (LIMIT reduceOnly, v2). Si el SL/TP falla →
+  // APLANA (no dejar posición sin protección). Si solo falla el TP1 → sigue como full (degrada, loggea).
   private async placeBracket(pos: ExecPosition): Promise<void> {
     try {
       const sl = await this.executor.placeStop(pos.plan.stopLoss);
       pos.slAlgoId = sl.conditionalId;
       const tp = await this.executor.placeTakeProfit(pos.plan.takeProfit);
       pos.tpAlgoId = tp.conditionalId;
-      await this.persist(pos, { entryFillPrice: pos.entryFillPrice, entryFillTime: pos.entryFillTime });
-      this.logger.log(`BRACKET ${pos.plan.symbol}: SL ${pos.plan.stopLoss.stopPrice} / TP ${pos.plan.takeProfit.stopPrice}`);
     } catch (e) {
       this.logger.error(`fallo al montar bracket ${pos.intent.id}: ${msg(e)} — APLANANDO por seguridad.`);
       await this.executor.flatten(pos.plan.symbol).catch(() => undefined);
       pos.state = 'CLOSED';
       this.riskGuard.release(pos.plan);
       await this.persist(pos, { cancelReason: 'reconcile', exitReason: 'KILL' });
+      return;
     }
+    if (pos.plan.takeProfitPartial) {
+      try {
+        await this.executor.placeLimitReduceOnly(pos.plan.takeProfitPartial);
+      } catch (e) {
+        pos.tp1ClientId = null; // degrada a full-exit: SL/TP (closePosition) ya protegen todo
+        this.logger.error(`fallo al colocar TP1 ${pos.intent.id}: ${msg(e)} — el trade sigue SIN parcial (full).`);
+      }
+    }
+    await this.persist(pos, { entryFillPrice: pos.entryFillPrice, entryFillTime: pos.entryFillTime });
+    this.logger.log(
+      `BRACKET ${pos.plan.symbol}: SL ${pos.plan.stopLoss.stopPrice} / TP ${pos.plan.takeProfit.stopPrice}` +
+        (pos.plan.takeProfitPartial && pos.tp1ClientId
+          ? ` / TP1 ${pos.plan.takeProfitPartial.quantity} @ ${pos.plan.takeProfitPartial.price}`
+          : ''),
+    );
   }
 
   // ── Salida (SL/TP/BE disparó, user-data WS algo FINISHED) → settle + cierre ─
@@ -283,14 +327,32 @@ export class ExecutionService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async closePosition(pos: ExecPosition, reason: string, exitPrice: number, exitTime: number): Promise<void> {
-    // Cancelar la hermana (la que disparó ya terminó; la otra sigue viva). Best-effort.
+    // Cancelar la hermana (la que disparó ya terminó; la otra sigue viva) + el TP1 si quedó resting.
     for (const algoId of [pos.slAlgoId, pos.tpAlgoId]) {
       if (algoId) await this.executor.cancelConditional(pos.plan.symbol, algoId).catch(() => undefined);
     }
-    const qty = parseFloat(pos.plan.quantity);
+    if (pos.tp1ClientId && !pos.tp1Filled) {
+      await this.executor.cancelOrder(pos.plan.symbol, pos.tp1ClientId).catch(() => undefined);
+    }
+    const totalQty = parseFloat(pos.plan.quantity);
     const entryFill = pos.entryFillPrice ?? pos.intent.entry;
-    const fees = estimateFeesUsd(entryFill, exitPrice, qty, this.makerFee, this.takerFee);
-    const r = computeRealizedR(pos.intent, entryFill, exitPrice, fees, qty);
+    const entryFeeUsd = entryFill * totalQty * this.makerFee;
+    let r: number;
+    let fees: number;
+    if (pos.tp1Filled && pos.tp1FillPrice != null && pos.plan.takeProfitPartial) {
+      // v2: R combinada por piernas — TP1 (maker) + resto (taker: SL/BE/TP-market).
+      const tp1Qty = parseFloat(pos.plan.takeProfitPartial.quantity);
+      const restQty = parseFloat(pos.plan.runnerQuantity ?? '0') || Math.max(totalQty - tp1Qty, 0);
+      const legs = [
+        { price: pos.tp1FillPrice, qty: tp1Qty, feeUsd: pos.tp1FillPrice * tp1Qty * this.makerFee },
+        { price: exitPrice, qty: restQty, feeUsd: exitPrice * restQty * this.takerFee },
+      ];
+      fees = entryFeeUsd + legs[0].feeUsd + legs[1].feeUsd;
+      r = computeRealizedRPartial(pos.intent, entryFill, legs, entryFeeUsd);
+    } else {
+      fees = estimateFeesUsd(entryFill, exitPrice, totalQty, this.makerFee, this.takerFee);
+      r = computeRealizedR(pos.intent, entryFill, exitPrice, fees, totalQty);
+    }
     pos.state = 'CLOSED';
     this.riskGuard.settle(pos.plan, r, exitTime);
     await this.persist(pos, {
@@ -308,8 +370,10 @@ export class ExecutionService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  // ── Cierre de vela 15m → mover a break-even si corresponde ─────────────────
+  // ── Cierre de vela 15m → mover a break-even si corresponde (SOLO modo full/v1) ──
+  // En partial-runner el BE se ancla al FILL del TP1 (onOrderUpdate), no al progreso por vela.
   private async onCandleClose(symbol: string, candle: Candle): Promise<void> {
+    if (this.partialMode) return;
     for (const pos of this.positions.values()) {
       if (pos.plan.symbol !== symbol || pos.state !== 'FILLED' || pos.movedToBE) continue;
       if (reachedBreakeven(pos.intent, candle.high, candle.low, this.beFraction)) {
@@ -365,7 +429,13 @@ export class ExecutionService implements OnModuleInit, OnModuleDestroy {
     for (const row of openRows) {
       const intent = rowToIntent(row);
       const filters = this.executor.filtersFor(row.symbol);
-      const planRes = planBracket(intent, row.riskUsd ?? this.riskUsd, filters, this.maxNotionalUsd);
+      const planRes = planBracket(
+        intent,
+        row.riskUsd ?? this.riskUsd,
+        filters,
+        this.maxNotionalUsd,
+        this.partialMode ? { tp1AtR: this.tp1AtR, partialFrac: this.partialFrac } : undefined,
+      );
       if (!planRes.ok) {
         this.logger.warn(`reconcile: no se pudo reconstruir el plan de ${row.intentId} (${planRes.reason}) — REVISAR A MANO.`);
         continue;
@@ -381,6 +451,10 @@ export class ExecutionService implements OnModuleInit, OnModuleDestroy {
         slAlgoId: row.slAlgoId ?? null,
         tpClientId: row.tpClientId ?? planRes.plan.takeProfit.clientOrderId,
         tpAlgoId: row.tpAlgoId ?? null,
+        tp1ClientId: row.tp1ClientId ?? planRes.plan.takeProfitPartial?.clientOrderId ?? null,
+        tp1Filled: row.tp1Filled ?? false,
+        tp1FillPrice: row.tp1FillPrice ?? null,
+        tp1FillTime: row.tp1FillTime ?? null,
         createdAt: row.createdAt ?? Date.now(),
       };
       this.positions.set(intent.id, pos);
@@ -390,6 +464,11 @@ export class ExecutionService implements OnModuleInit, OnModuleDestroy {
       if (pos.state === 'FILLED') {
         if (realPos) {
           await this.ensureBracket(pos);
+          // v2: si el TP1 no llenó y sigue faltando, re-colocarlo (id determinista: un duplicado
+          // resting es RECHAZADO por Binance y se ignora — idempotente).
+          if (this.partialMode && pos.tp1ClientId && !pos.tp1Filled && pos.plan.takeProfitPartial) {
+            await this.executor.placeLimitReduceOnly(pos.plan.takeProfitPartial).catch(() => undefined);
+          }
           this.logger.log(`reconcile ${row.symbol}: posición viva re-adoptada (bracket verificado).`);
         } else {
           this.riskGuard.release(pos.plan);
@@ -503,6 +582,8 @@ export class ExecutionService implements OnModuleInit, OnModuleDestroy {
         state: p.state,
         entryFillPrice: p.entryFillPrice,
         movedToBE: p.movedToBE,
+        tp1Filled: p.tp1Filled,
+        tp1FillPrice: p.tp1FillPrice,
       })),
     };
   }
@@ -531,6 +612,10 @@ export class ExecutionService implements OnModuleInit, OnModuleDestroy {
       entryFillPrice: pos.entryFillPrice,
       entryFillTime: pos.entryFillTime,
       movedToBE: pos.movedToBE,
+      tp1ClientId: pos.tp1ClientId,
+      tp1Filled: pos.tp1Filled,
+      tp1FillPrice: pos.tp1FillPrice,
+      tp1FillTime: pos.tp1FillTime,
       engineVersion: this.engineVersion,
       createdAt: pos.createdAt,
       updatedAt: Date.now(),

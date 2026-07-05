@@ -58,3 +58,28 @@ export function estimateFeesUsd(
 ): number {
   return entryFill * quantity * makerFee + exitFill * quantity * takerFee;
 }
+
+// ─── v2 (candidato partial-runner): R combinada de una posición que salió en VARIAS piernas ───
+
+export interface ExitLeg {
+  price: number; // fill real de la pierna
+  qty: number; // cantidad de la pierna
+  feeUsd: number; // fee de ESA salida (maker si límite TP1, taker si stop/TP-market)
+}
+
+// R neta combinada en la MISMA escala que el paper: denominador = riesgo PLANEADO total
+// (totalQty × |entry − SL|). grossUsd = Σ signo·(exit − entrada)·qty − fees (entrada + salidas).
+export function computeRealizedRPartial(
+  intent: TradeIntent,
+  entryFill: number,
+  legs: ExitLeg[],
+  entryFeeUsd: number,
+): number {
+  const risk = Math.abs(intent.entry - intent.stopLoss);
+  const totalQty = legs.reduce((s, l) => s + l.qty, 0);
+  if (risk <= 0 || totalQty <= 0) return 0;
+  const sign = intent.direction === 'LONG' ? 1 : -1;
+  const grossUsd = legs.reduce((s, l) => s + sign * (l.price - entryFill) * l.qty, 0);
+  const feesUsd = entryFeeUsd + legs.reduce((s, l) => s + l.feeUsd, 0);
+  return (grossUsd - feesUsd) / (totalQty * risk);
+}
