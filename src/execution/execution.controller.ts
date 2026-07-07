@@ -1,6 +1,7 @@
-import { Body, Controller, Get, Headers, Post, UnauthorizedException } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Post, Query, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ExecutionService } from './execution.service';
+import { ExecutionOrderRepository } from './execution-order.repository';
 
 // Control de la ejecución real acotada (P.5.3/P.5.4). El kill-switch es la salvaguarda MANUAL
 // (EXECUTION-SPEC §5). Estos endpoints solo existen cuando EXECUTION_ENABLED carga el módulo.
@@ -12,6 +13,7 @@ export class ExecutionController {
 
   constructor(
     private readonly exec: ExecutionService,
+    private readonly orders: ExecutionOrderRepository,
     config: ConfigService,
   ) {
     this.token = config.get<string>('EXEC_API_TOKEN') || undefined;
@@ -25,6 +27,17 @@ export class ExecutionController {
   status(@Headers('x-exec-token') token?: string): unknown {
     this.check(token);
     return this.exec.status();
+  }
+
+  // Historial de la EJECUCIÓN REAL (execution_orders) para la vista "Real" del dashboard.
+  @Get('trades')
+  async trades(
+    @Headers('x-exec-token') token?: string,
+    @Query('limit') limit?: string,
+  ): Promise<unknown> {
+    this.check(token);
+    const rows = await this.orders.findAll(Math.min(parseInt(limit ?? '500', 10) || 500, 2000));
+    return { count: rows.length, trades: rows };
   }
 
   @Post('kill')

@@ -9,6 +9,7 @@ import { fetchPaperStatus, fetchPaperTrades, fetchPaperContext } from '../featur
 import type { PaperStatus, PaperTrade } from '../features/paper/paper.types';
 import { buildPaperMetrics, paperBySymbol, paperToSignal } from '../features/paper/paperAdapter';
 import { CapitalPanel } from '../components/paper/CapitalPanel';
+import { RealExec } from '../components/paper/RealExec';
 import { computeCapital, DEFAULT_CAPITAL_CONFIG, formatUsd, type CapitalConfig } from '../features/paper/capital';
 import { equityCurve, type BacktestRunDetail } from '../features/backtest-viewer/backtestRuns.types';
 import type { ReplayContextResponse } from '../features/backtest-viewer/backtestContext.types';
@@ -22,7 +23,7 @@ const POST_BARS = 100;
 const CURSOR_BACK = 30; // el replay arranca N velas antes de la señal (como el visor)
 const GATE_TARGET = 50; // N de operaciones cerradas para la evaluación del gate (#7)
 type ListFilter = 'open' | 'closed' | 'cancelled' | 'all';
-type PaperView = 'resumen' | 'envivo' | 'historial';
+type PaperView = 'resumen' | 'envivo' | 'historial' | 'real';
 
 /**
  * PESTAÑA PAPER (gate #7) — la ventana al forward-test. Tres sub-vistas:
@@ -298,6 +299,7 @@ export function PaperDashboard() {
     { id: 'resumen', label: 'Resumen', sub: '¿vamos rentables?' },
     { id: 'envivo', label: 'En vivo', sub: 'gráfica + análisis' },
     { id: 'historial', label: 'Historial', sub: `${liveTrades.length} operaciones` },
+    { id: 'real', label: '💵 Real', sub: 'plata de verdad' },
   ];
   const topBarContent = (
     <>
@@ -502,6 +504,29 @@ export function PaperDashboard() {
                   }}
                 />
               </div>
+            </div>
+          }
+          right={null}
+          bottom={bottomChips}
+          leftOpen={false}
+          rightOpen={false}
+          bottomOpen={true}
+        />
+      </>
+    );
+  }
+
+  // ── REAL (P.5.4: ejecución con plata de verdad, comparada contra el paper) ──
+  if (view === 'real') {
+    return (
+      <>
+        {toastEl}
+        <AppShell
+          topBar={topBar}
+          left={null}
+          center={
+            <div className="rs-scroll" style={{ padding: '10px 14px' }}>
+              <RealExec paperTrades={trades} />
             </div>
           }
           right={null}

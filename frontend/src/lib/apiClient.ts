@@ -16,6 +16,17 @@ export async function apiGet<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
+// GET con el token de ejecución (x-exec-token): los endpoints /api/exec/* lo exigen en real.
+// 401 se lanza con status para que la UI pida el token de nuevo.
+export async function apiGetExec<T>(path: string, token: string): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, { headers: { 'x-exec-token': token } });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`API ${res.status} ${path}: ${body.slice(0, 200)}`);
+  }
+  return (await res.json()) as T;
+}
+
 // POST/PATCH/DELETE con cuerpo JSON opcional. Lanza si la respuesta no es 2xx para que el
 // caller pueda degradar a modo local (sin persistencia) sin romper la UI.
 export async function apiSend<T>(
