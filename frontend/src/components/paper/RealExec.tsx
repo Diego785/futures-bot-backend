@@ -38,6 +38,8 @@ interface ExecStatus {
   enabled: boolean;
   testnet: boolean;
   riskUsd: number;
+  testCapitalUsd?: number;
+  walletUsd?: number | null;
   engineVersion: string;
   risk: {
     activeSlots: number;
@@ -148,7 +150,16 @@ export function RealExec({ paperTrades }: { paperTrades: PaperTrade[] }) {
       {/* ── Resumen REAL ── */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
         {[
-          { k: 'BALANCE DEL TEST', v: formatUsd(summary.balance), sub: `base ${formatUsd(BASE_CAPITAL)} · riesgo ${formatUsd(status?.riskUsd ?? 0.5)}/op` },
+          {
+            k: 'BILLETERA REAL',
+            v: status?.walletUsd != null ? formatUsd(status.walletUsd) : '…',
+            sub: 'Binance Futures (en vivo)',
+          },
+          {
+            k: 'CAPITAL DEL TEST',
+            v: formatUsd(summary.balance),
+            sub: `base ${formatUsd(BASE_CAPITAL)} + P&L · riesgo ${formatUsd(status?.riskUsd ?? 0.5)}/op (fijo, no usa la billetera)`,
+          },
           { k: 'P&L REAL', v: `${summary.pnlUsd >= 0 ? '+' : ''}${formatUsd(summary.pnlUsd)}`.replace('+$−', '−$'), sub: `${fmtR(summary.totalR)} · ${summary.n} cerradas`, cls: rClass(summary.pnlUsd) },
           { k: 'GANADAS', v: summary.n ? `${summary.wins}/${summary.n}` : '—', sub: summary.n ? `${((summary.wins / summary.n) * 100).toFixed(0)}% WR` : 'sin cerradas' },
           { k: 'FILLS', v: `${summary.fills}`, sub: `de ${summary.placed} límites (objetivo: 20-30)` },

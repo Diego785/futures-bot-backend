@@ -667,11 +667,15 @@ export class ExecutionService implements OnModuleInit, OnModuleDestroy {
     return { ok: true, intentId: intent.id, entry, stopLoss, takeProfit };
   }
 
-  status(): unknown {
+  async status(): Promise<unknown> {
+    // Billetera real (display-only; el sizing no la usa). Best-effort: null si el REST falla.
+    const walletUsd = this.enabled ? await this.executor.getWalletUsd().catch(() => null) : null;
     return {
       enabled: this.enabled,
       testnet: this.testnet,
       riskUsd: this.riskUsd,
+      testCapitalUsd: this.riskUsd > 0 ? this.riskUsd / Number(this.config.get('EXECUTION_RISK_PCT', 0.005)) : 100,
+      walletUsd,
       engineVersion: this.engineVersion,
       risk: this.riskGuard.snapshot(),
       positions: [...this.positions.values()].map((p) => ({

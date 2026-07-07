@@ -68,6 +68,13 @@ export class OrderExecutorService {
     return positions.find((p) => Math.abs(parseFloat(p.positionAmt)) > 0) ?? null;
   }
 
+  // Saldo REAL de la billetera USDT-M — SOLO para mostrar en el dashboard. El sizing tiene PROHIBIDO
+  // usarlo (EXECUTION-SPEC §3: el riesgo sale del capital configurado, jamás del balance).
+  async getWalletUsd(): Promise<number | null> {
+    const b = await this.rest.getBalance('USDT');
+    return b ? parseFloat(b.balance) || 0 : null;
+  }
+
   getOpenConditionals(symbol: string): Promise<ConditionalResult[]> {
     return this.rest.getOpenConditionals(symbol);
   }

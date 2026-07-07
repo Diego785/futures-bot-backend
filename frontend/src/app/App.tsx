@@ -16,7 +16,7 @@ export function App() {
   const tabs: { id: View; label: string; sub: string }[] = [
     { id: 'cockpit', label: 'Cockpit', sub: 'marcar en vivo' },
     { id: 'backtests', label: 'Backtests', sub: 'auditar histórico' },
-    { id: 'paper', label: 'Paper', sub: 'gate #7 en vivo' },
+    { id: 'paper', label: 'Bot en vivo', sub: 'paper + real' },
   ];
   return (
     <>
