@@ -135,6 +135,15 @@ export class OrderExecutorService {
     return this.rest.cancelConditional(symbol, conditionalId);
   }
 
+  // P&L REAL neto (USD) de un símbolo desde `startTime`: REALIZED_PNL + COMMISSION + FUNDING_FEE.
+  // Fuente de verdad para liquidar una posición cuyo cierre NO vimos por WS (sweep).
+  async getNetIncomeSince(symbol: string, startTime: number): Promise<number> {
+    const entries = await this.rest.getIncome({ symbol, startTime, limit: 100 });
+    return entries
+      .filter((e) => ['REALIZED_PNL', 'COMMISSION', 'FUNDING_FEE'].includes(e.incomeType))
+      .reduce((s, e) => s + (parseFloat(e.income) || 0), 0);
+  }
+
   // Aplana TODO el símbolo: cancela condicionales + órdenes abiertas y cierra la posición a mercado
   // (reduceOnly). Best-effort en cada paso para que un fallo parcial no deje la posición a medio cerrar.
   async flatten(symbol: string): Promise<void> {

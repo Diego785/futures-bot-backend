@@ -61,6 +61,8 @@ export class ExecutionService implements OnModuleInit, OnModuleDestroy {
   private readonly positions = new Map<string, ExecPosition>();
   private readonly subs: Subscription[] = [];
   private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
+  private sweepTimer: ReturnType<typeof setInterval> | null = null;
+  private sweeping = false;
 
   private readonly enabled: boolean;
   private readonly testnet: boolean;
@@ -162,7 +164,12 @@ export class ExecutionService implements OnModuleInit, OnModuleDestroy {
         if (tf === '15m') void this.onCandleClose(symbol, candle);
       }),
     );
-    this.logger.log('Ejecución suscrita: intents/cancelaciones del paper + fills (user-data WS) + cierres 15m.');
+    // SWEEP periódico (REST): red de seguridad contra eventos PERDIDOS del user-data WS (testnet lo
+    // demostró: fill de entrada sin evento → posición sin bracket). Cada 60 s verifica contra el
+    // exchange: PENDING con posición real → adoptar+bracket · FILLED con TP1 sin ver → BE ·
+    // FILLED sin posición real → liquidar con el income REAL. Idempotente con los handlers del WS.
+    this.sweepTimer = setInterval(() => void this.sweep(), 60_000);
+    this.logger.log('Ejecución suscrita: intents/cancelaciones del paper + fills (user-data WS) + cierres 15m + sweep 60s.');
   }
 
   // ── Intent nuevo → colocar la LÍMITE en el CE ──────────────────────────────
@@ -327,6 +334,8 @@ export class ExecutionService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async closePosition(pos: ExecPosition, reason: string, exitPrice: number, exitTime: number): Promise<void> {
+    if (pos.state !== 'FILLED') return; // re-entrada (WS + sweep): solo el primero liquida
+    pos.state = 'CLOSED'; // marcar ANTES de los awaits — cierra la ventana de carrera
     // Cancelar la hermana (la que disparó ya terminó; la otra sigue viva) + el TP1 si quedó resting.
     for (const algoId of [pos.slAlgoId, pos.tpAlgoId]) {
       if (algoId) await this.executor.cancelConditional(pos.plan.symbol, algoId).catch(() => undefined);
@@ -353,7 +362,6 @@ export class ExecutionService implements OnModuleInit, OnModuleDestroy {
       fees = estimateFeesUsd(entryFill, exitPrice, totalQty, this.makerFee, this.takerFee);
       r = computeRealizedR(pos.intent, entryFill, exitPrice, fees, totalQty);
     }
-    pos.state = 'CLOSED';
     this.riskGuard.settle(pos.plan, r, exitTime);
     await this.persist(pos, {
       exitReason: reason,
@@ -383,6 +391,7 @@ export class ExecutionService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async moveToBreakeven(pos: ExecPosition): Promise<void> {
+    if (pos.movedToBE) return; // idempotente (WS + sweep pueden coincidir)
     const filters = this.executor.filtersFor(pos.plan.symbol);
     if (!filters) return;
     const entryFill = pos.entryFillPrice ?? pos.intent.entry;
@@ -516,6 +525,71 @@ export class ExecutionService implements OnModuleInit, OnModuleDestroy {
     await this.persist(pos, {});
   }
 
+  // ── SWEEP (REST, 60 s): repara lo que el user-data WS se haya perdido ──────
+  private async sweep(): Promise<void> {
+    if (this.sweeping || this.riskGuard.isKilled()) return;
+    this.sweeping = true;
+    try {
+      for (const pos of this.positions.values()) {
+        if (pos.state === 'PENDING') {
+          // ¿La límite llenó sin que llegara el evento? → adoptar el fill y proteger.
+          const real = await this.executor.getOpenPosition(pos.plan.symbol).catch(() => undefined);
+          if (real === undefined) continue; // REST falló: no concluir nada
+          if (real && Math.abs(parseFloat(real.positionAmt)) > 0) {
+            pos.state = 'FILLED';
+            pos.entryFillPrice = parseFloat(real.entryPrice) || pos.intent.entry;
+            pos.entryFillTime = Date.now();
+            this.logger.warn(`sweep ${pos.plan.symbol}: FILL detectado por REST (el WS lo perdió) → bracket.`);
+            await this.placeBracket(pos);
+          }
+        } else if (pos.state === 'FILLED') {
+          const real = await this.executor.getOpenPosition(pos.plan.symbol).catch(() => undefined);
+          if (real === undefined) continue;
+          if (real == null) {
+            // La posición YA NO existe: salió sin que viéramos el evento. Liquidar con el income
+            // REAL del exchange (PnL + comisiones + funding desde el fill) — la fuente de verdad.
+            const since = pos.entryFillTime ?? pos.createdAt;
+            const netUsd = await this.executor.getNetIncomeSince(pos.plan.symbol, since).catch(() => null);
+            if (netUsd == null) continue; // sin dato fiable, reintenta el próximo sweep
+            const r = pos.plan.riskUsd > 0 ? netUsd / pos.plan.riskUsd : 0;
+            this.logger.warn(
+              `sweep ${pos.plan.symbol}: cierre detectado por REST (el WS lo perdió) → income $${netUsd.toFixed(4)} = ${r >= 0 ? '+' : ''}${r.toFixed(3)}R`,
+            );
+            pos.state = 'CLOSED';
+            await this.executor.flatten(pos.plan.symbol).catch(() => undefined); // cancela TP1/hermanas resting
+            this.riskGuard.settle(pos.plan, r, Date.now());
+            await this.persist(pos, {
+              exitReason: 'SWEEP',
+              exitTime: Date.now(),
+              realizedR: r,
+              realizedUsd: netUsd,
+            });
+            if (this.riskGuard.isKilled()) {
+              await this.killAll(this.riskGuard.snapshot().killReason ?? 'circuit breaker');
+            }
+          } else if (pos.tp1ClientId && !pos.tp1Filled && pos.plan.takeProfitPartial) {
+            // ¿El TP1 llenó sin evento? La posición real quedó reducida ≈ runnerQuantity.
+            const amtAbs = Math.abs(parseFloat(real.positionAmt));
+            const totalQty = parseFloat(pos.plan.quantity);
+            const tp1Qty = parseFloat(pos.plan.takeProfitPartial.quantity);
+            if (amtAbs > 0 && amtAbs <= totalQty - tp1Qty / 2) {
+              pos.tp1Filled = true;
+              pos.tp1FillPrice = parseFloat(pos.plan.takeProfitPartial.price ?? '0') || null;
+              pos.tp1FillTime = Date.now();
+              this.logger.warn(`sweep ${pos.plan.symbol}: TP1 llenó (detectado por REST) → SL a BE.`);
+              await this.moveToBreakeven(pos);
+              await this.persist(pos, {});
+            }
+          }
+        }
+      }
+    } catch (e) {
+      this.logger.warn(`sweep falló: ${msg(e)}`);
+    } finally {
+      this.sweeping = false;
+    }
+  }
+
   // ── Kill-switch: cancela todo + cierra posiciones + detiene ────────────────
   async killAll(reason: string): Promise<void> {
     this.riskGuard.kill(reason);
@@ -631,6 +705,7 @@ export class ExecutionService implements OnModuleInit, OnModuleDestroy {
   onModuleDestroy(): void {
     this.subs.forEach((s) => s.unsubscribe());
     if (this.keepaliveTimer) clearInterval(this.keepaliveTimer);
+    if (this.sweepTimer) clearInterval(this.sweepTimer);
   }
 }
 
