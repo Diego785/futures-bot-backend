@@ -64,6 +64,12 @@ const baseSchema = z.object({
   // BINANCE_FUTURES_BASE_URL=https://testnet.binancefuture.com + las API keys de testnet.
   EXECUTION_ENABLED: z.enum(['true', 'false']).default('false'),
   EXECUTION_TESTNET: z.enum(['true', 'false']).default('true'),
+  // Universo de EJECUCIÓN (CSV) — puede ser un SUBSET de MARKET_DATA_SYMBOLS (§11: arrancar real con
+  // 1-3 símbolos, no los 10). Sin setear → ejecuta el universo completo del paper.
+  EXECUTION_SYMBOLS: z.string().optional(),
+  // Token para los endpoints /api/exec/* (kill/status/test-intent). Si está seteado, exigen el header
+  // x-exec-token. OBLIGATORIO en real (el puerto del dashboard es público).
+  EXEC_API_TOKEN: z.string().optional(),
   EXECUTION_TEST_CAPITAL: z.coerce.number().positive().default(100),
   EXECUTION_RISK_PCT: z.coerce.number().positive().default(0.005),
   EXECUTION_LEVERAGE: z.coerce.number().int().positive().default(5),

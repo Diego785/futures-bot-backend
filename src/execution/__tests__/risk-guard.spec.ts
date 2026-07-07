@@ -221,6 +221,34 @@ describe('risk-guard · RiskGuard (estado)', () => {
   });
 });
 
+describe('risk-guard · restoreFromHistory (reinicios no borran la contabilidad)', () => {
+  it('re-siembra realized/diaria/acumulada desde cierres persistidos', () => {
+    const g = new RiskGuard(LIMITS, DAY_B);
+    g.restoreFromHistory(
+      [
+        { r: 1.5, time: DAY_A }, // ganancia de ayer: solo realized
+        { r: -1.2, time: DAY_A }, // pérdida de AYER: acumulada, no diaria
+        { r: -1.1, time: DAY_B }, // pérdida de HOY: acumulada + diaria
+      ],
+      DAY_B,
+    );
+    const s = g.snapshot();
+    expect(s.realizedR).toBeCloseTo(-0.8, 6);
+    expect(s.cumulativeLossR).toBeCloseTo(2.3, 6);
+    expect(s.dailyLossR).toBeCloseTo(1.1, 6);
+    expect(s.killed).toBe(false);
+  });
+
+  it('si el historial ya cruzó el circuit breaker → arranca KILLED', () => {
+    const g = new RiskGuard(LIMITS, DAY_B);
+    const losses = Array.from({ length: 10 }, (_, i) => ({ r: -1.1, time: DAY_A + i }));
+    g.restoreFromHistory(losses, DAY_B);
+    expect(g.isKilled()).toBe(true);
+    expect(g.snapshot().killReason).toContain('restaurado');
+    expect(g.tryReserve(plan(), MARKET, DAY_B).allow).toBe(false);
+  });
+});
+
 describe('risk-guard · dayKeyOf', () => {
   it('da YYYY-MM-DD UTC', () => {
     expect(dayKeyOf(DAY_A)).toBe('2026-06-25');

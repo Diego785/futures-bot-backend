@@ -36,6 +36,11 @@ export class ExecutionOrderRepository {
     return this.repo.findOne({ where: { intentId } });
   }
 
+  /** Cierres con R realizada del MISMO entorno (testnet/real) — re-siembra el risk-guard tras reinicio. */
+  findClosedRealized(testnet: boolean): Promise<ExecutionOrderEntity[]> {
+    return this.repo.find({ where: { state: 'CLOSED', testnet }, order: { exitTime: 'ASC' } });
+  }
+
   findAll(limit = 1000): Promise<ExecutionOrderEntity[]> {
     return this.repo.find({ order: { signalBarTime: 'DESC' }, take: limit });
   }

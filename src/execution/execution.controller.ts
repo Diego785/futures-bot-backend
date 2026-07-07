@@ -1,20 +1,38 @@
-import { Body, Controller, Get, Post } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Post, UnauthorizedException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { ExecutionService } from './execution.service';
 
-// Control de la ejecución real acotada (P.5.3). El kill-switch es la salvaguarda MANUAL (EXECUTION-SPEC
-// §5): cancela TODAS las órdenes, aplana posiciones y detiene. Estos endpoints solo existen cuando
-// EXECUTION_ENABLED carga el ExecutionModule.
+// Control de la ejecución real acotada (P.5.3/P.5.4). El kill-switch es la salvaguarda MANUAL
+// (EXECUTION-SPEC §5). Estos endpoints solo existen cuando EXECUTION_ENABLED carga el módulo.
+// Si EXEC_API_TOKEN está seteado (OBLIGATORIO en real: el puerto es público), exigen el header
+// x-exec-token — sin token correcto, 401.
 @Controller('api/exec')
 export class ExecutionController {
-  constructor(private readonly exec: ExecutionService) {}
+  private readonly token: string | undefined;
+
+  constructor(
+    private readonly exec: ExecutionService,
+    config: ConfigService,
+  ) {
+    this.token = config.get<string>('EXEC_API_TOKEN') || undefined;
+  }
+
+  private check(token?: string): void {
+    if (this.token && token !== this.token) throw new UnauthorizedException('x-exec-token inválido');
+  }
 
   @Get('status')
-  status(): unknown {
+  status(@Headers('x-exec-token') token?: string): unknown {
+    this.check(token);
     return this.exec.status();
   }
 
   @Post('kill')
-  async kill(@Body() body?: { reason?: string }): Promise<{ ok: boolean }> {
+  async kill(
+    @Headers('x-exec-token') token?: string,
+    @Body() body?: { reason?: string },
+  ): Promise<{ ok: boolean }> {
+    this.check(token);
     await this.exec.killAll(body?.reason ?? 'kill-switch manual');
     return { ok: true };
   }
@@ -23,8 +41,10 @@ export class ExecutionController {
   // de inmediato para verificar el lifecycle completo sin esperar una señal natural.
   @Post('test-intent')
   testIntent(
+    @Headers('x-exec-token') token: string | undefined,
     @Body() body: { symbol: string; direction?: 'LONG' | 'SHORT'; stopPct?: number; rMultiple?: number },
   ): Promise<unknown> {
+    this.check(token);
     return this.exec.injectTestIntent(body.symbol, body.direction ?? 'LONG', body.stopPct, body.rMultiple);
   }
 }

@@ -95,7 +95,11 @@ export class ExecutionService implements OnModuleInit, OnModuleDestroy {
     this.riskUsd = capital * riskPct;
     this.leverage = Number(this.config.get('EXECUTION_LEVERAGE', 5));
     this.maxNotionalUsd = Number(this.config.get('EXECUTION_MAX_NOTIONAL_USD', 400));
-    const raw = this.config.get<string>('MARKET_DATA_SYMBOLS') ?? this.config.get<string>('DEFAULT_SYMBOL', 'BTCUSDT');
+    // Universo de EJECUCIÓN: EXECUTION_SYMBOLS (§11: real arranca con 1-3) o, sin setear, el del paper.
+    const raw =
+      this.config.get<string>('EXECUTION_SYMBOLS') ??
+      this.config.get<string>('MARKET_DATA_SYMBOLS') ??
+      this.config.get<string>('DEFAULT_SYMBOL', 'BTCUSDT');
     this.symbols = raw.split(',').map((s) => s.trim()).filter(Boolean);
 
     let version = this.config.get<string>('BUILD_VERSION', '');
@@ -139,9 +143,30 @@ export class ExecutionService implements OnModuleInit, OnModuleDestroy {
 
     for (const s of this.symbols) {
       try {
+        await this.executor.ensureIsolatedMargin(s);
         await this.executor.ensureLeverage(s, this.leverage);
       } catch (e) {
-        this.logger.warn(`leverage ${s}: ${msg(e)}`);
+        this.logger.warn(`margen/leverage ${s}: ${msg(e)}`);
+      }
+    }
+
+    // Re-siembra del risk-guard desde el historial (mismo entorno): un reinicio NO borra la pérdida
+    // diaria/acumulada — el circuit breaker sobrevive a los restarts.
+    if (this.repo) {
+      try {
+        const closed = await this.repo.findClosedRealized(this.testnet);
+        const entries = closed
+          .filter((r) => r.realizedR != null)
+          .map((r) => ({ r: r.realizedR as number, time: r.exitTime ?? r.updatedAt }));
+        if (entries.length > 0) {
+          this.riskGuard.restoreFromHistory(entries, Date.now());
+          const s = this.riskGuard.snapshot();
+          this.logger.log(
+            `risk-guard restaurado: ${entries.length} cierres · realized ${s.realizedR.toFixed(2)}R · pérdida hoy ${s.dailyLossR.toFixed(2)}R · acumulada ${s.cumulativeLossR.toFixed(2)}R${s.killed ? ' · ⛔ KILLED' : ''}`,
+          );
+        }
+      } catch (e) {
+        this.logger.warn(`no se pudo restaurar el risk-guard: ${msg(e)}`);
       }
     }
 

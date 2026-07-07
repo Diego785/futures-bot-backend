@@ -137,6 +137,27 @@ export class RiskGuard {
     }
   }
 
+  // Re-siembra la contabilidad desde el HISTORIAL persistido (execution_orders) tras un reinicio:
+  // sin esto, reiniciar borraría la pérdida diaria/acumulada y el circuit breaker sería evadible.
+  // No toca slots/margen (eso lo reconstruye la reconciliación con adopt()).
+  restoreFromHistory(closed: { r: number; time: number }[], now: number): void {
+    this.rollDay(now);
+    const today = dayKeyOf(now);
+    for (const t of closed) {
+      this.state.realizedR += t.r;
+      if (t.r < 0) {
+        const loss = -t.r;
+        this.state.cumulativeLossR += loss;
+        if (dayKeyOf(t.time) === today) this.state.dailyLossR += loss;
+      }
+    }
+    if (this.state.cumulativeLossR >= this.limits.circuitBreakerLossR) {
+      this.kill(
+        `circuit breaker (restaurado): pérdida acumulada ${this.state.cumulativeLossR.toFixed(2)}R ≥ ${this.limits.circuitBreakerLossR}R`,
+      );
+    }
+  }
+
   kill(reason: string): void {
     this.state.killed = true;
     this.state.killReason = reason;

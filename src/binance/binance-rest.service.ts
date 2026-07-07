@@ -216,6 +216,18 @@ export class BinanceRestService implements OnModuleInit {
     });
   }
 
+  // Margen ISOLATED/CROSSED por símbolo (P.5.4: real exige ISOLATED — EXECUTION-SPEC §4).
+  // Binance devuelve -4046 si ya está en ese modo → el caller lo trata como éxito.
+  async changeMarginType(
+    symbol: string,
+    marginType: 'ISOLATED' | 'CROSSED',
+  ): Promise<void> {
+    await this.signedRequest('POST', BINANCE_API.MARGIN_TYPE, {
+      symbol,
+      marginType,
+    });
+  }
+
   // ─── ListenKey (API key header only, no signature) ───
 
   async createListenKey(): Promise<string> {

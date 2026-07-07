@@ -173,6 +173,10 @@ export class BinanceExchangeAdapter extends IExchangeRest {
     await this.rest.changeLeverage(symbol, leverage);
   }
 
+  async changeMarginType(symbol: string, marginType: 'ISOLATED' | 'CROSSED'): Promise<void> {
+    await this.rest.changeMarginType(symbol, marginType);
+  }
+
   // ─── History / fees ─────────────────────────────────────────────────────
 
   async getUserTrades(symbol: string, limit = 50): Promise<UserTrade[]> {

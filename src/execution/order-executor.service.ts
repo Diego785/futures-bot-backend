@@ -37,6 +37,18 @@ export class OrderExecutorService {
     await this.rest.changeLeverage(symbol, leverage);
   }
 
+  // Margen AISLADO (P.5.4): la pérdida máxima de una posición queda acotada a su margen. Binance
+  // devuelve -4046 si ya está en ISOLATED → se trata como éxito.
+  async ensureIsolatedMargin(symbol: string): Promise<void> {
+    if (!this.rest.changeMarginType) return;
+    try {
+      await this.rest.changeMarginType(symbol, 'ISOLATED');
+    } catch (e) {
+      const m = e instanceof Error ? e.message : String(e);
+      if (!m.includes('-4046')) throw e; // -4046 = "No need to change margin type" (ya estaba)
+    }
+  }
+
   // Precio de referencia (último cierre 1m). Reintenta: el REST de testnet falla transitoriamente.
   async getLastPrice(symbol: string): Promise<number> {
     for (let attempt = 1; attempt <= 3; attempt++) {

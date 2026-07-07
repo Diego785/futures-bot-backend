@@ -341,6 +341,8 @@ export abstract class IExchangeRest {
   abstract getBalance(asset: string): Promise<Balance | null>;
   abstract getPositions(symbol?: string): Promise<Position[]>;
   abstract changeLeverage(symbol: string, leverage: number): Promise<void>;
+  // Opcional (no todos los exchanges lo separan del leverage): margen ISOLATED/CROSSED por símbolo.
+  changeMarginType?(symbol: string, marginType: 'ISOLATED' | 'CROSSED'): Promise<void>;
 
   // History / fees
   abstract getUserTrades(symbol: string, limit?: number): Promise<UserTrade[]>;
