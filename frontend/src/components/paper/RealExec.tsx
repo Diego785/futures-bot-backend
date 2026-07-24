@@ -52,8 +52,6 @@ interface ExecStatus {
   positions: { intentId: string; symbol: string; direction: string; state: string; tp1Filled?: boolean }[];
 }
 
-const BASE_CAPITAL = 100; // = EXECUTION_TEST_CAPITAL (el sizing real usa este número, no el balance)
-
 const fmtR = (r: number | null | undefined): string =>
   r == null ? '—' : `${r >= 0 ? '+' : ''}${r.toFixed(2)}R`;
 const rClass = (r: number | null | undefined): string => (r == null ? '' : r > 0.02 ? 'long' : r < -0.02 ? 'short' : '');
@@ -99,8 +97,11 @@ export function RealExec({ paperTrades }: { paperTrades: PaperTrade[] }) {
     const wins = closed.filter((t) => (t.realizedR ?? 0) > 0.02).length;
     const fills = real.filter((t) => t.entryFillTime != null).length;
     const placed = real.filter((t) => t.state !== 'CANCELED' || t.cancelReason === 'ranAway').length;
-    return { pnlUsd, totalR, n: closed.length, wins, fills, placed, balance: BASE_CAPITAL + pnlUsd };
+    return { pnlUsd, totalR, n: closed.length, wins, fills, placed };
   }, [closed, real]);
+
+  // El capital del test viene del server (EXECUTION_TEST_CAPITAL) — el sizing real usa ESE número, no la billetera.
+  const baseCapital = status?.testCapitalUsd ?? 100;
 
   if (!token) {
     return (
@@ -157,8 +158,8 @@ export function RealExec({ paperTrades }: { paperTrades: PaperTrade[] }) {
           },
           {
             k: 'CAPITAL DEL TEST',
-            v: formatUsd(summary.balance),
-            sub: `base ${formatUsd(BASE_CAPITAL)} + P&L · riesgo ${formatUsd(status?.riskUsd ?? 0.5)}/op (fijo, no usa la billetera)`,
+            v: formatUsd(baseCapital + summary.pnlUsd),
+            sub: `base ${formatUsd(baseCapital)} + P&L · riesgo ${formatUsd(status?.riskUsd ?? 0.5)}/op (fijo, no usa la billetera)`,
           },
           { k: 'P&L REAL', v: `${summary.pnlUsd >= 0 ? '+' : ''}${formatUsd(summary.pnlUsd)}`.replace('+$−', '−$'), sub: `${fmtR(summary.totalR)} · ${summary.n} cerradas`, cls: rClass(summary.pnlUsd) },
           { k: 'GANADAS', v: summary.n ? `${summary.wins}/${summary.n}` : '—', sub: summary.n ? `${((summary.wins / summary.n) * 100).toFixed(0)}% WR` : 'sin cerradas' },
@@ -190,7 +191,7 @@ export function RealExec({ paperTrades }: { paperTrades: PaperTrade[] }) {
           <div className="pp-waiting-icon">⏳</div>
           <p className="pp-waiting-title">Sin operaciones reales todavía</p>
           <p className="pp-waiting-sub">
-            El bot espera su señal (~1 cada 2-3 días en BTC/XRP/SOL). Cuando llegue, acá vas a ver cada operación
+            El bot espera su señal (15 símbolos). Cuando llegue, acá vas a ver cada operación
             real al lado de lo que el paper registró para la MISMA señal — la medición del test.
           </p>
         </div>
