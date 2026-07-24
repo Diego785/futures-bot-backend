@@ -21,6 +21,18 @@ export class BinanceUserWsService implements OnModuleDestroy {
 
   private readonly MAX_RECONNECT_DELAY_MS = 30_000;
 
+  // WATCHDOG anti-zombi (hallazgo P.5.4): en VPS el TCP puede morir SIN evento 'close' (NAT corta en
+  // silencio) → el socket queda "open" para siempre sin entregar eventos. Binance pinguea cada ~3 min;
+  // si no llega NADA (ni ping ni mensajes) en STALE_MS, el stream está muerto → reinicio con listenKey
+  // nuevo. Además, Binance corta toda conexión a las 24h → refresh PLANEADO a las 23h (mejor elegido
+  // que sorpresivo). El sweep de ExecutionService cubre el hueco residual (≤60 s) en cualquier caso.
+  private lastActivityAt = 0;
+  private connectedAt = 0;
+  private watchdogTimer: ReturnType<typeof setInterval> | null = null;
+  private restarting = false;
+  private readonly STALE_MS = 10 * 60_000;
+  private readonly PLANNED_REFRESH_MS = 23 * 60 * 60_000;
+
   private readonly orderUpdateSubject = new Subject<OrderTradeUpdatePayload>();
   readonly onOrderUpdate$ = this.orderUpdateSubject.asObservable();
 
@@ -101,6 +113,10 @@ export class BinanceUserWsService implements OnModuleDestroy {
   }
 
   onModuleDestroy(): void {
+    if (this.watchdogTimer) {
+      clearInterval(this.watchdogTimer);
+      this.watchdogTimer = null;
+    }
     this.stop();
   }
 
@@ -114,10 +130,14 @@ export class BinanceUserWsService implements OnModuleDestroy {
 
     this.ws.on('open', () => {
       this.reconnectAttempts = 0;
+      this.lastActivityAt = Date.now();
+      this.connectedAt = Date.now();
+      this.startWatchdog();
       this.logger.log('User Data Stream connected');
     });
 
     this.ws.on('message', (data: Buffer | string) => {
+      this.lastActivityAt = Date.now();
       try {
         const payload = JSON.parse(data.toString());
 
@@ -153,8 +173,44 @@ export class BinanceUserWsService implements OnModuleDestroy {
     });
 
     this.ws.on('ping', (data: Buffer) => {
+      this.lastActivityAt = Date.now();
       this.ws?.pong(data);
     });
+  }
+
+  // Vigila el stream cada 60 s: sin actividad (ni pings) por STALE_MS = zombi → reinicio completo con
+  // listenKey fresco. Y refresh planeado antes del corte de 24 h de Binance.
+  private startWatchdog(): void {
+    if (this.watchdogTimer) return;
+    this.watchdogTimer = setInterval(() => {
+      if (this.destroyed || this.restarting || !this.ws) return;
+      const idleMs = Date.now() - this.lastActivityAt;
+      const ageMs = Date.now() - this.connectedAt;
+      if (idleMs > this.STALE_MS) {
+        this.logger.warn(
+          `User WS ZOMBI: sin actividad hace ${Math.round(idleMs / 60000)} min (ni pings) — reinicio con listenKey nuevo.`,
+        );
+        void this.restart();
+      } else if (ageMs > this.PLANNED_REFRESH_MS) {
+        this.logger.log('User WS: refresh planeado (~23h, antes del corte de 24h de Binance).');
+        void this.restart();
+      }
+    }, 60_000);
+  }
+
+  private async restart(): Promise<void> {
+    if (this.restarting) return;
+    this.restarting = true;
+    try {
+      await this.stop();
+      await this.start();
+    } catch (err) {
+      this.logger.error('User WS restart falló — reintento vía scheduleReconnect', err);
+      this.destroyed = false;
+      this.scheduleReconnect();
+    } finally {
+      this.restarting = false;
+    }
   }
 
   private scheduleReconnect(): void {
