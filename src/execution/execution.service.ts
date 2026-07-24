@@ -572,8 +572,12 @@ export class ExecutionService implements OnModuleInit, OnModuleDestroy {
           if (real === undefined) continue;
           if (real == null) {
             // La posición YA NO existe: salió sin que viéramos el evento. Liquidar con el income
-            // REAL del exchange (PnL + comisiones + funding desde el fill) — la fuente de verdad.
-            const since = pos.entryFillTime ?? pos.createdAt;
+            // REAL del exchange (PnL + comisiones + funding) — la fuente de verdad. La ventana
+            // arranca en la COLOCACIÓN (createdAt), no en el fill: la comisión de ENTRADA lleva el
+            // timestamp del fill y quedaba FUERA si se usaba entryFillTime (hallazgo 2026-07-23:
+            // sesgo sistemático de ~+$0.02-0.03/trade vs el Position History de Binance). Seguro:
+            // hay un solo intent por símbolo y el anterior cerró antes de esta colocación.
+            const since = pos.createdAt;
             const netUsd = await this.executor.getNetIncomeSince(pos.plan.symbol, since).catch(() => null);
             if (netUsd == null) continue; // sin dato fiable, reintenta el próximo sweep
             const r = pos.plan.riskUsd > 0 ? netUsd / pos.plan.riskUsd : 0;
