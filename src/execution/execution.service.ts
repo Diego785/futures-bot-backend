@@ -581,8 +581,11 @@ export class ExecutionService implements OnModuleInit, OnModuleDestroy {
             const netUsd = await this.executor.getNetIncomeSince(pos.plan.symbol, since).catch(() => null);
             if (netUsd == null) continue; // sin dato fiable, reintenta el próximo sweep
             const r = pos.plan.riskUsd > 0 ? netUsd / pos.plan.riskUsd : 0;
+            // Precio REAL del último fill → exitPrice persistido: hace MEDIBLE el slippage del stop
+            // por símbolo (UNI 2026-07-27: −0.31R de slip ≈0.1%, invisible hasta este fix).
+            const exitPx = await this.executor.getLastFillPriceSince(pos.plan.symbol, since).catch(() => null);
             this.logger.warn(
-              `sweep ${pos.plan.symbol}: cierre detectado por REST (el WS lo perdió) → income $${netUsd.toFixed(4)} = ${r >= 0 ? '+' : ''}${r.toFixed(3)}R`,
+              `sweep ${pos.plan.symbol}: cierre detectado por REST (el WS lo perdió) → income $${netUsd.toFixed(4)} = ${r >= 0 ? '+' : ''}${r.toFixed(3)}R${exitPx != null ? ` · salida @ ${exitPx}` : ''}`,
             );
             pos.state = 'CLOSED';
             await this.executor.flatten(pos.plan.symbol).catch(() => undefined); // cancela TP1/hermanas resting
@@ -590,6 +593,7 @@ export class ExecutionService implements OnModuleInit, OnModuleDestroy {
             await this.persist(pos, {
               exitReason: 'SWEEP',
               exitTime: Date.now(),
+              ...(exitPx != null ? { exitPrice: exitPx } : {}),
               realizedR: r,
               realizedUsd: netUsd,
             });

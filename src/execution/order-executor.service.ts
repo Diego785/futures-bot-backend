@@ -163,6 +163,18 @@ export class OrderExecutorService {
       .reduce((s, e) => s + (parseFloat(e.income) || 0), 0);
   }
 
+  // Precio del ÚLTIMO fill del símbolo desde `sinceMs` (userTrades) = precio REAL de salida de una
+  // posición liquidada por sweep. Sin esto los cierres por sweep quedan sin exitPrice y el slippage
+  // del stop es invisible (hallazgo UNI 2026-07-27: −0.31R de slip que hubo que reconstruir a mano).
+  async getLastFillPriceSince(symbol: string, sinceMs: number): Promise<number | null> {
+    const trades = await this.rest.getUserTrades(symbol, 30);
+    const inWindow = trades.filter((t) => t.time >= sinceMs);
+    if (!inWindow.length) return null;
+    const last = inWindow.reduce((a, b) => (b.time >= a.time ? b : a));
+    const px = parseFloat(last.price);
+    return Number.isFinite(px) && px > 0 ? px : null;
+  }
+
   // Aplana TODO el símbolo: cancela condicionales + órdenes abiertas y cierra la posición a mercado
   // (reduceOnly). Best-effort en cada paso para que un fallo parcial no deje la posición a medio cerrar.
   async flatten(symbol: string): Promise<void> {

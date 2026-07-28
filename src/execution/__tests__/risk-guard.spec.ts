@@ -210,6 +210,38 @@ describe('risk-guard · RiskGuard (estado)', () => {
     expect(g.tryReserve(plan({ intentId: 'z' }), MARKET, day).allow).toBe(false);
   });
 
+  it('breaker NETO: 11R brutos de pérdidas con ganancias que compensan NO mata (bug del fill ~15)', () => {
+    const g = new RiskGuard(LIMITS, DAY_A);
+    let day = DAY_A;
+    // 10 pérdidas −1.1 (bruto 11R) intercaladas con 9 ganancias +1.38 → neto ≈ +1.42R
+    for (let i = 0; i < 10; i++) {
+      const p = plan({ intentId: `l${i}` });
+      g.tryReserve(p, MARKET, day);
+      g.settle(p, -1.1, day);
+      if (i < 9) {
+        const w = plan({ intentId: `w${i}` });
+        g.tryReserve(w, MARKET, day);
+        g.settle(w, 1.38, day);
+      }
+      day += 86_400_000; // día nuevo (el corte diario no interfiere)
+    }
+    expect(g.snapshot().cumulativeLossR).toBeCloseTo(11, 6); // la bruta se sigue observando
+    expect(g.isKilled()).toBe(false); // pero NO mata: la neta es positiva
+    expect(g.tryReserve(plan({ intentId: 'z' }), MARKET, day).allow).toBe(true);
+  });
+
+  it('restore: bruta ≥10R pero neta positiva → NO arranca killed', () => {
+    const g = new RiskGuard(LIMITS, DAY_B);
+    const rows: { r: number; time: number }[] = [];
+    for (let i = 0; i < 10; i++) {
+      rows.push({ r: -1.1, time: DAY_A + i });
+      rows.push({ r: 1.38, time: DAY_A + i });
+    }
+    g.restoreFromHistory(rows, DAY_B);
+    expect(g.snapshot().cumulativeLossR).toBeCloseTo(11, 6);
+    expect(g.isKilled()).toBe(false);
+  });
+
   it('kill/unkill manual', () => {
     const g = new RiskGuard(LIMITS, DAY_A);
     g.kill('manual');

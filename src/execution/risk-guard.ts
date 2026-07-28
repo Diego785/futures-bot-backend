@@ -48,8 +48,10 @@ export function evaluateOpen(
   if (state.dailyLossR >= limits.maxDailyLossR) {
     return deny(`pérdida diaria ${state.dailyLossR.toFixed(2)}R ≥ tope ${limits.maxDailyLossR}R (corte del día)`);
   }
-  if (state.cumulativeLossR >= limits.circuitBreakerLossR) {
-    return deny(`circuit breaker ${state.cumulativeLossR.toFixed(2)}R ≥ ${limits.circuitBreakerLossR}R`);
+  // Breaker sobre la pérdida NETA (las ganancias descuentan): es freno de DESASTRE, no de varianza.
+  // El bruto (solo sumar pérdidas) se disparaba ~fill 15 del camino ESPERADO (≈55% de SLs) aun ganando.
+  if (-state.realizedR >= limits.circuitBreakerLossR) {
+    return deny(`circuit breaker: pérdida neta ${(-state.realizedR).toFixed(2)}R ≥ ${limits.circuitBreakerLossR}R`);
   }
   const entryPrice = parseFloat(plan.entry.price ?? '0');
   if (marketPrice > 0 && entryPrice > 0) {
@@ -116,7 +118,8 @@ export class RiskGuard {
   }
 
   // La posición se cerró (TP/SL/BE): libera slot + margen y contabiliza la R realizada. Una pérdida
-  // suma a la diaria y a la acumulada; si la acumulada cruza el circuit breaker → kill permanente.
+  // suma a la diaria y a la acumulada BRUTA (observabilidad); el circuit breaker mira la pérdida
+  // NETA (realizedR) — con WR ~45% el bruto cruza 10R en el camino esperado aun siendo rentable.
   settle(plan: BracketPlan, rMultiple: number, now: number): void {
     this.rollDay(now);
     this.state.activeSlots = Math.max(0, this.state.activeSlots - 1);
@@ -129,11 +132,11 @@ export class RiskGuard {
       const loss = -rMultiple;
       this.state.dailyLossR += loss;
       this.state.cumulativeLossR += loss;
-      if (this.state.cumulativeLossR >= this.limits.circuitBreakerLossR) {
-        this.kill(
-          `circuit breaker: pérdida acumulada ${this.state.cumulativeLossR.toFixed(2)}R ≥ ${this.limits.circuitBreakerLossR}R`,
-        );
-      }
+    }
+    if (-this.state.realizedR >= this.limits.circuitBreakerLossR) {
+      this.kill(
+        `circuit breaker: pérdida neta ${(-this.state.realizedR).toFixed(2)}R ≥ ${this.limits.circuitBreakerLossR}R`,
+      );
     }
   }
 
@@ -151,9 +154,9 @@ export class RiskGuard {
         if (dayKeyOf(t.time) === today) this.state.dailyLossR += loss;
       }
     }
-    if (this.state.cumulativeLossR >= this.limits.circuitBreakerLossR) {
+    if (-this.state.realizedR >= this.limits.circuitBreakerLossR) {
       this.kill(
-        `circuit breaker (restaurado): pérdida acumulada ${this.state.cumulativeLossR.toFixed(2)}R ≥ ${this.limits.circuitBreakerLossR}R`,
+        `circuit breaker (restaurado): pérdida neta ${(-this.state.realizedR).toFixed(2)}R ≥ ${this.limits.circuitBreakerLossR}R`,
       );
     }
   }

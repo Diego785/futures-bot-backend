@@ -85,7 +85,9 @@ Chequeados ANTES de cada orden; si alguno se viola → NO coloca + alerta:
 - **Máx. nocional por orden:** $400 (techo de cordura — un bug de sizing no puede abrir más).
 - **Máx. margen usado total:** $80 (nunca bloquea más, aunque la cuenta tenga más).
 - **Máx. pérdida diaria:** −3R (−$1.50) → **kill-switch del día** (no abre nuevas; las abiertas siguen con su SL).
-- **Circuit breaker total:** pérdida acumulada −10R (−$5) o −20% del capital → **kill-switch TOTAL** (para todo + alerta).
+- **Circuit breaker total:** pérdida **NETA** −10R o −20% del capital → **kill-switch TOTAL** (para todo + alerta).
+  (Fix 2026-07-27: era BRUTA —sumaba pérdidas sin descontar ganancias— y se habría disparado ~fill 15 del
+  camino esperado del candidato aun estando en verde. El freno es de desastre, no de varianza.)
 - **Whitelist:** solo los 10 símbolos del candidato.
 - **Sanity por orden:** qty>0 y múltiplo de stepSize · precio dentro de ±5% del mercado · SL/TP del lado
   correcto · exits `reduceOnly` · sin orden si el WS de precio está stale.
