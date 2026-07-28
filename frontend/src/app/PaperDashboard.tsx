@@ -312,7 +312,7 @@ export function PaperDashboard() {
         ))}
       </div>
       <span className={`pp-ws ${wsOn ? 'on' : ''}`} title="Conexión al stream /paper">
-        {wsOn ? '● EN VIVO' : '○ sin stream'}
+        {wsOn ? 'EN VIVO' : 'sin stream'}
       </span>
       {status && (
         <span className="rt-meta" title={status.symbols.map((s) => `${s.symbol} ${s.paramsHash}`).join('\n')}>
@@ -606,8 +606,8 @@ export function PaperDashboard() {
                       <td className={t.direction === 'LONG' ? 'long' : 'short'}>{t.direction === 'LONG' ? '▲ LONG' : '▼ SHORT'}</td>
                       <td className="ph-date">{formatUtc(t.signalBarTime).slice(0, 16).replace('T', ' ')}</td>
                       <td className={`ph-out ${closed ? rClass(t.rMultiple) : t.state === 'FILLED' ? 'pp-live' : cancelled ? 'r-zero' : ''}`}>{outcomeText(t)}</td>
-                      <td className={`ph-num ${rClass(t.rMultiple)}`}>{closed ? fmtR(t.rMultiple) : '—'}</td>
-                      <td className={`ph-num ${rClass(t.rMultiple)}`}>{closed ? formatUsd((t.rMultiple as number) * capital.riskPerTrade, true) : '—'}</td>
+                      <td className={`ph-num ${rClass(t.rMultiple)}`} data-l="R">{closed ? fmtR(t.rMultiple) : '—'}</td>
+                      <td className={`ph-num ${rClass(t.rMultiple)}`} data-l="USD">{closed ? formatUsd((t.rMultiple as number) * capital.riskPerTrade, true) : '—'}</td>
                     </tr>
                   );
                 })}

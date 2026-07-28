@@ -112,13 +112,12 @@ export function RealExec({ paperTrades }: { paperTrades: PaperTrade[] }) {
           Los datos de la ejecución REAL están protegidos con el <code>EXEC_API_TOKEN</code> del server. Pegalo acá
           (queda guardado solo en este navegador).
         </p>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div className="rx-token-row">
           <input
             type="password"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             placeholder="x-exec-token"
-            style={{ minWidth: 280 }}
           />
           <button
             className="on"
@@ -135,21 +134,21 @@ export function RealExec({ paperTrades }: { paperTrades: PaperTrade[] }) {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, height: '100%', overflowY: 'auto' }}>
+    <div className="rx-wrap">
       {status?.risk.killed && (
-        <div style={{ background: 'var(--down)', color: '#fff', padding: '8px 14px', borderRadius: 8, fontWeight: 700 }}>
+        <div className="rx-kill">
           ⛔ KILL-SWITCH ACTIVO: {status.risk.killReason ?? 'manual'} — el bot no abre operaciones.
         </div>
       )}
       {error && (
-        <div style={{ color: 'var(--down)', padding: '4px 2px' }}>
+        <div className="rx-error">
           {error}{' '}
           <button onClick={() => { localStorage.removeItem('exec.token'); setToken(''); }}>cambiar token</button>
         </div>
       )}
 
       {/* ── Resumen REAL ── */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+      <div className="rx-cards">
         {[
           {
             k: 'BILLETERA REAL',
@@ -166,9 +165,9 @@ export function RealExec({ paperTrades }: { paperTrades: PaperTrade[] }) {
           { k: 'FILLS', v: `${summary.fills}`, sub: `de ${summary.placed} límites (objetivo: 20-30)` },
           { k: 'RIESGO HOY', v: fmtR(-(status?.risk.dailyLossR ?? 0)), sub: `corte a −3R · acum −${(status?.risk.cumulativeLossR ?? 0).toFixed(1)}R (breaker −10R)` },
         ].map((b) => (
-          <div key={b.k} style={{ background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 16px', minWidth: 150 }}>
+          <div key={b.k} className="rx-card">
             <div className="lv-label">{b.k}</div>
-            <div className={b.cls ?? ''} style={{ fontSize: 22, fontWeight: 800 }}>{b.v}</div>
+            <div className={`rx-card-v ${b.cls ?? ''}`}>{b.v}</div>
             <div className="lv-label">{b.sub}</div>
           </div>
         ))}
@@ -176,7 +175,7 @@ export function RealExec({ paperTrades }: { paperTrades: PaperTrade[] }) {
 
       {/* ── Posiciones vivas ── */}
       {status && status.positions.filter((p) => p.state === 'PENDING' || p.state === 'FILLED').length > 0 && (
-        <div style={{ color: 'var(--muted)', fontSize: 13 }}>
+        <div className="rx-live">
           En curso:{' '}
           {status.positions
             .filter((p) => p.state === 'PENDING' || p.state === 'FILLED')
@@ -221,13 +220,13 @@ export function RealExec({ paperTrades }: { paperTrades: PaperTrade[] }) {
                     <td className="ph-sym">{t.symbol.replace('USDT', '')}</td>
                     <td className={t.direction === 'LONG' ? 'long' : 'short'}>{t.direction === 'LONG' ? '▲' : '▼'} {t.direction}</td>
                     <td className={`ph-out ${rClass(t.realizedR)}`}>{estado}</td>
-                    <td className="ph-num">{t.entry}</td>
-                    <td className="ph-num">{t.entryFillPrice ?? '—'}</td>
-                    <td>{t.tp1Filled ? '✓' : t.state === 'CLOSED' && t.entryFillPrice != null ? '—' : ''}</td>
-                    <td className={`ph-num ${rClass(t.realizedR)}`}>{fmtR(t.realizedR)}</td>
-                    <td className={`ph-num ${rClass(t.realizedR)}`}>{t.realizedUsd != null ? formatUsd(t.realizedUsd, true) : '—'}</td>
-                    <td className={`ph-num ${rClass(paper?.rMultiple)}`}>{fmtR(paper?.rMultiple)}</td>
-                    <td className={`ph-num ${delta != null && Math.abs(delta) > 0.1 ? 'short' : ''}`}>{delta != null ? fmtR(delta) : '—'}</td>
+                    <td className="ph-num" data-l="Entrada">{t.entry}</td>
+                    <td className="ph-num" data-l="Fill real">{t.entryFillPrice ?? '—'}</td>
+                    <td data-l="TP1">{t.tp1Filled ? '✓' : t.state === 'CLOSED' && t.entryFillPrice != null ? '—' : ''}</td>
+                    <td className={`ph-num ${rClass(t.realizedR)}`} data-l="R real">{fmtR(t.realizedR)}</td>
+                    <td className={`ph-num ${rClass(t.realizedR)}`} data-l="$ real">{t.realizedUsd != null ? formatUsd(t.realizedUsd, true) : '—'}</td>
+                    <td className={`ph-num ${rClass(paper?.rMultiple)}`} data-l="R paper">{fmtR(paper?.rMultiple)}</td>
+                    <td className={`ph-num ${delta != null && Math.abs(delta) > 0.1 ? 'short' : ''}`} data-l="Δ vs paper">{delta != null ? fmtR(delta) : '—'}</td>
                   </tr>
                 );
               })}
@@ -235,7 +234,7 @@ export function RealExec({ paperTrades }: { paperTrades: PaperTrade[] }) {
           </table>
         </div>
       )}
-      <div className="lv-label" style={{ paddingBottom: 8 }}>
+      <div className="lv-label rx-note">
         Δ = R real − R paper para el MISMO intent (la brecha fill/slippage que este test mide). Actualiza cada 30 s.
       </div>
     </div>

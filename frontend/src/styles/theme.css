@@ -693,3 +693,93 @@ body {
   .pls-k { display: none; }
   .pls-sep { display: none; }
 }
+
+/* ═══════════════ REDISEÑO 2026-07-27: responsive real + polish + animaciones ═══════════════ */
+:root { --radius: 10px; }
+
+/* Scrollbars discretos y consistentes en toda la app */
+* { scrollbar-width: thin; scrollbar-color: #242938 transparent; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: #242938; border-radius: 8px; }
+*::-webkit-scrollbar-thumb:hover { background: #2f3648; }
+
+/* Accesibilidad: foco visible al navegar con teclado */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Micro-transiciones en lo interactivo (solo propiedades baratas) */
+button, select, .rl-item, .pw-item, .mark-row, .plans-row, .rs-card, .rx-card, .pp-chip,
+.ph-table tbody tr, .cap-input, .tool-btn, .toggle, .tf-btn {
+  transition: background-color .15s ease, color .15s ease, border-color .15s ease,
+    box-shadow .15s ease, transform .15s ease;
+}
+button:active { transform: scale(.97); }
+
+/* Entrada suave al cambiar de sub-vista */
+@keyframes viewIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+.pp-resumen, .ph-wrap, .pl-wrap, .rx-wrap, .replay-inspector { animation: viewIn .2s ease both; }
+
+/* Latido del estado EN VIVO — el punto lo pinta el CSS (el texto ya no trae ●) */
+@keyframes pulseDot { 0% { box-shadow: 0 0 0 0 rgba(38, 166, 154, .55); } 70% { box-shadow: 0 0 0 6px rgba(38, 166, 154, 0); } 100% { box-shadow: 0 0 0 0 rgba(38, 166, 154, 0); } }
+.pp-ws::before { content: ''; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); margin-right: 6px; vertical-align: 1px; }
+.pp-ws.on::before { background: var(--up); animation: pulseDot 2s ease-out infinite; }
+
+/* Pulso de peligro (banner KILL) + progreso del gate animado */
+@keyframes pulseDanger { 0%, 100% { box-shadow: 0 0 0 0 rgba(239, 83, 80, .45); } 50% { box-shadow: 0 0 18px 2px rgba(239, 83, 80, .35); } }
+.pp-gate-fill { transition: width .6s ease; }
+
+/* Cards con vida al pasar el mouse (solo dispositivos con hover real) */
+@media (hover: hover) {
+  .rs-card:hover, .rx-card:hover { border-color: #2e3547; transform: translateY(-1px); }
+}
+
+/* ── Vista Real: de estilos inline → clases responsive ── */
+.rx-wrap { display: flex; flex-direction: column; gap: 12px; min-height: 100%; }
+.rx-kill { background: var(--down); color: #fff; padding: 10px 14px; border-radius: var(--radius); font-weight: 700; animation: pulseDanger 1.8s ease-in-out infinite; }
+.rx-error { color: var(--down); padding: 4px 2px; }
+.rx-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.rx-card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 16px; min-width: 0; }
+.rx-card-v { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.25; }
+.rx-live { color: var(--muted); font-size: 13px; }
+.rx-token-row { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.rx-token-row input { min-width: min(280px, 76vw); background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font: inherit; }
+.rx-note { padding-bottom: 8px; }
+/* En la vista Real scrollea el contenedor exterior (.rs-scroll), no la tabla anidada */
+.rx-wrap .ph-tablewrap { flex: none; overflow-y: visible; }
+
+/* ── Móvil: barra inferior con safe-area + sub-pestañas compactas ── */
+@media (max-width: 820px) {
+  .app-viewtabs { height: auto; min-height: 52px; padding-bottom: env(safe-area-inset-bottom); }
+  .shell-m { padding-bottom: calc(52px + env(safe-area-inset-bottom)); }
+  .pp-topbar { overflow: visible; padding: 0 6px; gap: 8px; }
+  .pp-subtabs { gap: 2px; }
+  .pp-subtabs button { padding: 4px 8px; }
+  .pp-st-label { font-size: 12px; }
+  .rx-wrap .ph-tablewrap { overflow-x: auto; }
+}
+
+/* ── Tablas → TARJETAS por operación en pantallas chicas (adiós scroll lateral ilegible) ── */
+@media (max-width: 640px) {
+  .ph-tablewrap { overflow-x: hidden; }
+  .ph-table, .ph-table tbody { display: block; width: 100%; }
+  .ph-table thead { display: none; }
+  .ph-table tbody tr {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 14px;
+    margin: 8px; padding: 10px 12px; background: var(--panel-2);
+    border: 1px solid var(--border); border-radius: var(--radius);
+  }
+  .ph-table td { display: flex; justify-content: flex-start; align-items: baseline; gap: 10px; padding: 2px 0; border: none; white-space: normal; min-width: 0; }
+  .ph-table td[data-l] { justify-content: space-between; }
+  .ph-table td[data-l]::before { content: attr(data-l); color: var(--muted); font-size: 9px; text-transform: uppercase; letter-spacing: .4px; flex: 0 0 auto; }
+  .ph-table td.ph-sym { font-size: 15px; }
+  .rx-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .rx-card { padding: 8px 12px; }
+  .rx-card-v { font-size: 18px; }
+  .rs-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .rs-block { overflow-x: auto; } /* la tabla por símbolo del Resumen scrollea dentro de su card */
+}
+
+/* Respeto a reduced-motion: sin animaciones para quien las desactivó en su sistema */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}
