@@ -1,8 +1,8 @@
 # Ciclo 5 — Pre-registro: «La caza del pool» (barrido de liquidez multi-día dentro de POI 4H)
 
-> **Estado: PRE-REGISTRADO (2026-08-02). NO ejecutado.** Ni el código ni las corridas arrancan hasta
-> cerrar la **evaluación de 20 fills** del test real P.5.4 (trato sellado 2026-07-23). Este documento
-> congela la hipótesis ANTES de mirar cualquier dato, siguiendo `DATASET-PROTOCOL.md`.
+> **Estado: EJECUTADO y CERRADO (2026-08-03). Veredicto §7: NEGATIVO-INFORMATIVO, con potencia
+> estadística de sobra.** El candidato congelado v2 sobrevive a su 5º retador. Hipótesis congelada
+> ANTES de cualquier corrida (§1-§2 intactos); motor en `src/backtest/c5-*` (commit bc23ae7).
 
 ## §0 Origen y motivación
 
@@ -98,3 +98,34 @@ C4 no se toca). El runner varía:
   tocan hasta cerrar esa evaluación (prep a 15 fills; hoy vamos 12).
 - Registrado por pedido explícito del usuario («yes» al plan, 2026-08-02), con su trade como semilla.
   La hipótesis y el grid del §1-§2 quedaron congelados ANTES de cualquier corrida — eso no cambia.
+
+## §7 RESULTADOS (2026-08-03) — NEGATIVO-INFORMATIVO
+
+Corridas: historia completa 2022-01→2026-08 · held-out (2ª mitad temporal) · walk-forward 12 ventanas;
+15 símbolos; motor `c5-run` (bc23ae7); DB local read-only (15m n=160.802/símbolo).
+
+| Combo | Full (N · R/trade) | Held-out (N · R/trade) | WF (ventanas rent. · pooled) |
+|---|---|---|---|
+| A-2R    | 578 · **−0.136R** | 341 · **−0.033R** | 41.5% · −0.112R |
+| A-POI   | 534 · **−0.240R** | 322 · **−0.025R** | 33.3% · −0.205R |
+| A-TRAIL | 527 · **−0.288R** | 314 · **−0.225R** | 26.9% · −0.185R |
+| B-2R    | 724 · **−0.230R** | 382 · **−0.234R** | 38.0% · −0.229R |
+| B-POI   | 717 · **−0.203R** | 376 · **−0.190R** | 31.6% · −0.259R |
+| B-TRAIL | 712 · **−0.153R** | 376 · **−0.273R** | 27.5% · −0.218R |
+
+**Veredicto por §4:** piso de N **superado** (314-382 pooled en held-out ≫ 60) → el resultado es
+CONCLUYENTE, no «datos insuficientes». **Los 6 combos negativos en las tres pruebas** (y en calibración).
+Ni reemplazo (criterio 2: ni cerca del candidato +0.11..0.23R, WF 72-83%) ni COMPLEMENTO (criterio 3:
+exige positivo). Los flags quedan como herramienta de estudio.
+
+**Lecturas:**
+1. **La respuesta a la pregunta origen** («¿por qué el bot no opera como mi trade?»): mecanizada, la caza
+   del pool PIERDE (−0.14R full, 578 trades). La trade +7.3R del usuario fue 1 de ~25 candidatas de BTC en
+   esa mitad — su ojo eligió CUÁL. La discrecionalidad ES el edge de ese patrón y no se comprime en el grid.
+   **5ª refutación de mecanizar conceptos de libro** (C2 targets, C2 pools, C3 CHoCH+FVG, htf2, C5).
+2. **BTC held-out A-2R dio +0.501R (N=25, WR 76%)** — el patrón SÍ funcionó justo donde vive la trade del
+   usuario. Positivo aislado rodeado de negativo = la firma del overfit (Fase F). NO se cherry-pickea.
+3. **Entrada B (mercado) −0.19..−0.27R en todo** = 5ª confirmación de que la entrada a mercado sangra
+   (fill-stress: −0.188R). **Runners lejanos (POI/TRAIL) ≤ 2R casi siempre** = 3ª/4ª confirmación contra
+   los targets-por-niveles. Los ejes conocidos reconfirmaron en un gatillo nuevo — consistencia del mapa.
+4. El candidato congelado v2, el trato sellado y el test real siguen EXACTAMENTE igual (como manda §6).
