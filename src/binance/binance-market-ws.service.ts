@@ -52,6 +52,7 @@ export class BinanceMarketWsService implements OnModuleDestroy {
 
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private probeTimer: ReturnType<typeof setTimeout> | null = null;
   private healthCheckTimer: ReturnType<typeof setInterval> | null = null;
   private lastMessageTime = 0;
   private lastPongTime = 0;
@@ -65,6 +66,7 @@ export class BinanceMarketWsService implements OnModuleDestroy {
   private readonly HEALTH_CHECK_INTERVAL_MS = 120_000; // 2 minutes
   private readonly STALE_PONG_THRESHOLD_MS = 300_000; // 5 min no pong = connection dead
   private readonly STALE_MESSAGE_THRESHOLD_MS = 1_200_000; // 20 min no data despite pongs = silent stream
+  private readonly HALF_OPEN_PROBE_MS = 30 * 60_000; // circuito abierto → sonda cada 30 min (nunca muerto para siempre)
   private circuitOpen = false;
 
   private readonly candleCloseSubject = new Subject<CandleEvent>();
@@ -166,6 +168,10 @@ export class BinanceMarketWsService implements OnModuleDestroy {
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
+    }
+    if (this.probeTimer) {
+      clearTimeout(this.probeTimer);
+      this.probeTimer = null;
     }
     if (this.ws) {
       this.ws.removeAllListeners();
@@ -368,9 +374,22 @@ export class BinanceMarketWsService implements OnModuleDestroy {
       this.circuitOpen = true;
       this.logger.error(
         `Binance market WS reached ${this.MAX_CONSECUTIVE_FAILS} consecutive failures — opening circuit. ` +
-          `Stopping reconnect attempts to avoid extending any upstream throttle. ` +
-          `Restart bot or call subscribe() to retry.`,
+          `Pausing reconnects to avoid extending any upstream throttle; half-open probe in 30 min.`,
       );
+      // HALF-OPEN (fix 2026-08-02): el circuito abierto era PERMANENTE ("restart bot to retry") — en
+      // un sistema desatendido convertía un throttle transitorio en un stall de horas (hallazgo 07-31:
+      // feed muerto → catch-up en lote → intents nacidos-y-resueltos jamás emitidos al executor). La
+      // sonda reabre el circuito cada 30 min y rearranca un ciclo completo de backoff: sigue siendo
+      // respetuoso con el throttle, pero nunca queda muerto hasta un reinicio manual.
+      if (this.probeTimer) clearTimeout(this.probeTimer);
+      this.probeTimer = setTimeout(() => {
+        this.probeTimer = null;
+        if (this.destroyed || this.circuitOpen === false || this.subscriptions.size === 0) return;
+        this.logger.warn('Market WS: sonda half-open — reabriendo el circuito y reintentando.');
+        this.circuitOpen = false;
+        this.reconnectAttempts = 0;
+        this.connect();
+      }, this.HALF_OPEN_PROBE_MS);
       return;
     }
 

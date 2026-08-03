@@ -47,6 +47,7 @@ export class PaperTradingService implements OnModuleInit, OnModuleDestroy {
   private readonly subs: Subscription[] = [];
   private timer: ReturnType<typeof setInterval> | null = null;
   private live = false; // false durante la rehidratación (no se emiten eventos del pasado)
+  private coverageLost = 0; // intents live que nacieron ya-resueltos en un lote de catch-up (el executor no los vio)
 
   // Hooks READ-ONLY para la capa de ejecución (P.5.3, módulo APARTE): emiten el intent nuevo (la
   // decisión del candidato de entrar) y la cancelación. NO tocan órdenes — la Regla Cero del paper
@@ -206,8 +207,20 @@ export class PaperTradingService implements OnModuleInit, OnModuleDestroy {
               // límite · cancelación → el executor retira la límite si sigue resting. El executor
               // ignora lo que no tenga en vuelo, así que emitir de más es inocuo.
               if (this.live) {
-                if (!wasKnown && p.state === 'PENDING') this.liveIntent$.next(p.intent);
-                else if (p.state === 'CLOSED' && p.cancelReason) this.liveCancel$.next(p.id);
+                if (!wasKnown && p.state === 'PENDING') {
+                  this.liveIntent$.next(p.intent);
+                } else if (!wasKnown) {
+                  // Nació y AVANZÓ dentro de un lote de catch-up (feed atrasado): la entrada ya venció
+                  // — colocarla tarde sería OTRA trade — se skipea, pero NUNCA en silencio (hallazgo
+                  // 07-31: ADA/UNI nacieron ya-resueltos en un lote y el executor jamás los vio).
+                  const ranAway = p.state === 'CLOSED' && p.cancelReason != null;
+                  if (!ranAway) this.coverageLost += 1;
+                  this.logger.error(
+                    `⚠️ COBERTURA REAL PERDIDA (lag del feed): ${p.id} nació ya-${p.state} en un lote de ${batch.length} velas — el executor no lo vio${ranAway ? ' (ranAway: tampoco habría llenado — sin impacto de P&L)' : ''}.`,
+                  );
+                } else if (p.state === 'CLOSED' && p.cancelReason) {
+                  this.liveCancel$.next(p.id);
+                }
               }
             }
           }
@@ -230,12 +243,14 @@ export class PaperTradingService implements OnModuleInit, OnModuleDestroy {
     enabled: boolean;
     engineVersion: string;
     clockStart: number | null;
+    coverageLost: number;
     symbols: { symbol: string; cursor: number; open: number; paramsHash: string }[];
   } {
     return {
       enabled: this.enabled,
       engineVersion: this.engineVersion,
       clockStart: this.clockStart >= Number.MAX_SAFE_INTEGER ? null : this.clockStart,
+      coverageLost: this.coverageLost,
       symbols: [...this.states.entries()].map(([symbol, st]) => ({
         symbol,
         cursor: st.cursor,

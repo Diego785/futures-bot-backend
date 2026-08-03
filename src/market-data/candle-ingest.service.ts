@@ -63,6 +63,9 @@ export class CandleIngestService implements OnModuleInit, OnModuleDestroy {
   private readonly symbols: string[];
   private readonly timeframes: string[];
   private started = false;
+  private reconcileTimer: ReturnType<typeof setInterval> | null = null;
+  private reconciling = false;
+  private readonly PERIODIC_RECONCILE_MS = 5 * 60_000;
 
   constructor(
     @Inject(IMarketDataPort) private readonly market: IMarketDataPort,
@@ -127,6 +130,22 @@ export class CandleIngestService implements OnModuleInit, OnModuleDestroy {
         this.market.subscribe(symbol, tf);
       }
     }
+
+    // 5) Red de seguridad (fix 2026-08-02): reconcile periódico por REST, INDEPENDIENTE del estado
+    // del WS. Antes la reconciliación solo corría al (re)conectar — si el WS moría con el circuito
+    // abierto, NADIE insertaba velas y el paper quedaba ciego por horas (hallazgo 07-31: catch-up en
+    // lote → intents nacidos-y-resueltos jamás emitidos al executor). Con esto, un stall del WS
+    // degrada a lag ≤5 min: los lotes quedan chicos y la emisión de intents sigue viva. El upsert
+    // idempotente + solape hace inocuo repetir; el peso REST es despreciable.
+    this.reconcileTimer = setInterval(() => {
+      if (this.reconciling) return;
+      this.reconciling = true;
+      void this.reconcileAll()
+        .catch((e) => this.logger.warn(`reconcile periódico falló: ${e instanceof Error ? e.message : e}`))
+        .finally(() => {
+          this.reconciling = false;
+        });
+    }, this.PERIODIC_RECONCILE_MS);
   }
 
   private async onClosedCandle(e: CandleEvent): Promise<void> {
@@ -156,12 +175,20 @@ export class CandleIngestService implements OnModuleInit, OnModuleDestroy {
       tf,
       from,
     );
-    this.logger.log(
-      `Reconcile ${symbol} ${tf}: desde ${from} (last=${last}) → ${persisted} velas, ${pages} página(s)`,
-    );
+    // Solo loguear cuando se RECUPERÓ algo real (el solape re-persiste ~2 velas siempre):
+    // con el reconcile periódico cada 5 min, loguear cada pasada inundaría los logs.
+    if (persisted > 3 || pages > 1) {
+      this.logger.log(
+        `Reconcile ${symbol} ${tf}: desde ${from} (last=${last}) → ${persisted} velas, ${pages} página(s)`,
+      );
+    }
   }
 
   onModuleDestroy(): void {
+    if (this.reconcileTimer) {
+      clearInterval(this.reconcileTimer);
+      this.reconcileTimer = null;
+    }
     this.subs.forEach((s) => s.unsubscribe());
     this.market.unsubscribe();
   }
