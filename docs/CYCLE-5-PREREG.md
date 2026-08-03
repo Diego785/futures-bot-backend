@@ -90,6 +90,11 @@ C4 no se toca). El runner varía:
 
 ## §6 Timing y disciplina
 
-- **Nada se ejecuta hasta cerrar la evaluación de 20 fills** del test real (prep a 15; hoy vamos 12).
-- El candidato congelado v2 y el trato sellado del 2026-07-23 siguen intactos pase lo que pase aquí.
+- **La construcción y las corridas pueden ejecutarse desde ya** (investigación offline, DB local
+  read-only — igual que C2/C3/C4, que corrieron con el gate vivo). *(Corregido 2026-08-02: la versión
+  original congelaba también las corridas; esa restricción protegía lo incorrecto.)*
+- **Lo que SÍ espera a la evaluación de 20 fills es ACTUAR sobre los resultados**: pase lo que pase en
+  este ciclo, el candidato congelado v2, el capital, el universo y el trato sellado del 2026-07-23 no se
+  tocan hasta cerrar esa evaluación (prep a 15 fills; hoy vamos 12).
 - Registrado por pedido explícito del usuario («yes» al plan, 2026-08-02), con su trade como semilla.
+  La hipótesis y el grid del §1-§2 quedaron congelados ANTES de cualquier corrida — eso no cambia.
