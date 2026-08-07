@@ -1,0 +1,15 @@
+# Journal Vivo web — corre JUNTO al bot en el VPS, puerto 3400 (el bot usa 3300).
+# Deploy: git pull && cd journal && docker compose up -d --build
+# Necesita UNA vez el archivo vps.env en esta carpeta (gitignoreado):
+#   BINANCE_API_KEY=...        (key de SOLO lectura)
+#   BINANCE_API_SECRET=...
+#   JOURNAL_TOKEN=...          (token largo para el ?t= de la URL)
+services:
+  journal-vivo:
+    build: .
+    container_name: journal-vivo
+    restart: unless-stopped
+    ports:
+      - "3400:3400"
+    env_file:
+      - vps.env

@@ -1,0 +1,10 @@
+{
+  "name": "journal-vivo-web",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Journal Vivo — dashboard web del trading manual (backend read-only sobre Binance)",
+  "scripts": {
+    "start": "node server.js",
+    "refresh": "node refresh.js"
+  }
+}

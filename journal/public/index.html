@@ -1,0 +1,484 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Journal Vivo · Trading Manual</title>
+<style>
+  :root {
+    --bg: #eef1f6; --card: #ffffff; --ink: #16202e; --muted: #5c6878;
+    --line: #d8dee8; --up: #0e7c6f; --down: #c4372f; --accent: #2563c4;
+    --chip: #e7ecf4; --warn: #b45309;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0b0c10; --card: #12141b; --ink: #d5dae3; --muted: #788291; --line: #232733; --up: #2fbfae; --down: #ef5350; --accent: #5b96f0; --chip: #1a1e29; --warn: #f5a623; }
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { background: var(--bg); color: var(--ink); font: 15px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif; padding: 22px 14px 60px; }
+  .wrap { max-width: 780px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
+
+  .eyebrow { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); font-weight: 700; }
+  h1 { margin: 2px 0 4px; font-size: 27px; letter-spacing: -.01em; }
+  .upd { color: var(--muted); font-size: 12.5px; }
+  .upd b { color: var(--ink); }
+  #conn { font-weight: 700; }
+  #conn.ok { color: var(--up); } #conn.bad { color: var(--down); }
+
+  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .tile { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; }
+  .tile .k { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+  .tile .v { font-size: 24px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.25; }
+  .tile .d { font-size: 11px; color: var(--muted); }
+  @media (max-width: 560px) { .tiles { grid-template-columns: repeat(2, 1fr); } h1 { font-size: 23px; } }
+
+  .pos { color: var(--up); } .neg { color: var(--down); }
+
+  .live { background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 14px; padding: 14px 16px; display: none; }
+  .live-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); animation: pulse 2s ease-out infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(91,150,240,.5); } 70% { box-shadow: 0 0 0 8px rgba(91,150,240,0); } 100% { box-shadow: 0 0 0 0 rgba(91,150,240,0); } }
+  .live-title { font-weight: 800; font-size: 16px; }
+  .live-r { margin-left: auto; font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .lvls { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+  .lvl { flex: 1; min-width: 100px; background: var(--chip); border-radius: 10px; padding: 8px 10px; text-align: center; }
+  .lvl .lk { font-size: 9.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
+  .lvl .lv { font-size: 16.5px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .track { margin-top: 12px; position: relative; height: 34px; }
+  .track .bar { position: absolute; top: 14px; left: 0; right: 0; height: 6px; border-radius: 4px; background: linear-gradient(90deg, var(--up), var(--chip) 55%, var(--down)); opacity: .5; }
+  .track .tick { position: absolute; top: 8px; width: 2px; height: 18px; background: var(--muted); }
+  .track .price { position: absolute; top: 0; transform: translateX(-50%); transition: left 1s ease; }
+  .track .price .flag { background: var(--ink); color: var(--bg); font-size: 10.5px; font-weight: 700; border-radius: 6px; padding: 2px 7px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .track .price .pin { width: 2px; height: 12px; background: var(--ink); margin: 0 auto; }
+  .track .lab { position: absolute; top: 26px; transform: translateX(-50%); font-size: 9.5px; color: var(--muted); white-space: nowrap; }
+  .next { margin-top: 10px; font-size: 13px; color: var(--muted); }
+  .next b { color: var(--ink); }
+
+  .tabs { display: flex; gap: 6px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 5px; position: sticky; top: 8px; z-index: 5; }
+  .tab { flex: 1; border: none; background: transparent; color: var(--muted); font: inherit; font-weight: 700; font-size: 14px; padding: 9px 4px; border-radius: 8px; cursor: pointer; transition: background .15s, color .15s; }
+  .tab:hover { color: var(--ink); }
+  .tab.on { background: var(--accent); color: #fff; }
+
+  .panel { display: none; flex-direction: column; gap: 14px; animation: fadeIn .25s ease; }
+  .panel.on { display: flex; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; }
+  .card h2 { margin: 0 0 4px; font-size: 12.5px; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); }
+  .card .sub { font-size: 12.5px; color: var(--muted); margin-bottom: 10px; }
+  svg text { font-family: inherit; }
+
+  .cross { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .cross > div { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+  .cross .cv { font-size: 24px; font-weight: 900; font-variant-numeric: tabular-nums; }
+  .cross .ck { font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
+  .cross .cd { font-size: 11.5px; color: var(--muted); }
+
+  .trade { border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: var(--card); }
+  .t-head { display: flex; align-items: center; gap: 10px; padding: 13px 16px; cursor: pointer; flex-wrap: wrap; transition: background .15s; }
+  .t-head:hover { background: var(--chip); }
+  .t-sym { font-weight: 800; font-size: 16px; }
+  .t-dir { font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 6px; }
+  .t-dir.short { background: color-mix(in srgb, var(--down) 14%, transparent); color: var(--down); }
+  .t-dir.long { background: color-mix(in srgb, var(--up) 14%, transparent); color: var(--up); }
+  .t-date { color: var(--muted); font-size: 12.5px; }
+  .t-r { margin-left: auto; font-weight: 800; font-size: 17px; font-variant-numeric: tabular-nums; }
+  .grade { width: 26px; height: 26px; border-radius: 50%; background: var(--chip); display: inline-flex; align-items: center; justify-content: center; font-weight: 800; font-size: 13px; }
+  .gA { color: var(--up); } .gB { color: var(--accent); } .gC { color: var(--down); }
+  .chev { color: var(--muted); transition: transform .2s; }
+  .trade.open .chev { transform: rotate(180deg); }
+  .t-body { max-height: 0; overflow: hidden; transition: max-height .3s ease; }
+  .trade.open .t-body { max-height: 600px; }
+  .t-inner { padding: 4px 16px 16px; border-top: 1px dashed var(--line); }
+  .kv { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px 14px; margin-top: 10px; }
+  @media (max-width: 560px) { .kv { grid-template-columns: repeat(2, 1fr); } }
+  .kv div { font-size: 13px; font-variant-numeric: tabular-nums; }
+  .kv .k { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .gates { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
+  .gate { font-size: 11.5px; font-weight: 600; border-radius: 8px; padding: 3px 9px; background: var(--chip); }
+  .gate.ok { color: var(--up); } .gate.bad { color: var(--down); } .gate.na { color: var(--muted); }
+  .nota { margin-top: 12px; font-size: 13.5px; background: var(--chip); border-radius: 10px; padding: 10px 12px; }
+  .nota b { color: var(--accent); }
+
+  .drow { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px dashed var(--line); font-size: 13.5px; }
+  .drow:last-child { border-bottom: none; }
+  .drow .ic { flex: 0 0 26px; text-align: center; }
+  .gauge-wrap { display: flex; align-items: center; gap: 16px; }
+  .focus { border-left: 4px solid var(--warn); }
+  .focus b { color: var(--warn); }
+
+  .err { background: var(--card); border: 1px solid var(--down); border-radius: 14px; padding: 16px 18px; color: var(--down); display: none; }
+  .foot { text-align: center; color: var(--muted); font-size: 12px; padding-top: 6px; line-height: 1.6; }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Trading manual · directo de tu cuenta vía API</div>
+    <h1>📓 Journal Vivo</h1>
+    <div class="upd"><span id="conn">●</span> <b id="upd">conectando…</b><span id="bal"></span></div>
+  </header>
+
+  <div class="err" id="err"></div>
+
+  <div class="tiles">
+    <div class="tile"><div class="k">Realizado</div><div class="v pos" id="t-usd">—</div><div class="d" id="t-r">neto real (fees+funding)</div></div>
+    <div class="tile"><div class="k">Winrate</div><div class="v" id="t-wr">—</div><div class="d" id="t-n">—</div></div>
+    <div class="tile"><div class="k">Adherencia</div><div class="v" id="t-adh">—</div><div class="d">compuertas era-playbook</div></div>
+    <div class="tile"><div class="k">En curso</div><div class="v" id="t-open">—</div><div class="d" id="t-openr">—</div></div>
+  </div>
+
+  <div class="live" id="liveCard">
+    <div class="live-head">
+      <span class="dot"></span>
+      <span class="live-title" id="lv-title"></span>
+      <span class="t-dir short" id="lv-dir"></span>
+      <span class="live-r" id="lv-r"></span>
+    </div>
+    <div class="lvls" id="lv-lvls"></div>
+    <div class="track">
+      <div class="bar"></div>
+      <div id="lv-ticks"></div>
+      <div class="price" id="lv-price"><div class="flag" id="lv-flag"></div><div class="pin"></div></div>
+    </div>
+    <div class="next" id="lv-next"></div>
+  </div>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab on" data-p="resumen">Resumen</button>
+    <button class="tab" data-p="trades">Trades</button>
+    <button class="tab" data-p="disciplina">Disciplina</button>
+  </nav>
+
+  <section class="panel on" id="p-resumen">
+    <div class="card">
+      <h2>Curva de resultados (neto acumulado, cerradas)</h2>
+      <div class="sub" id="eq-sub"></div>
+      <svg id="eq" viewBox="0 0 700 240" style="width:100%; height:auto"></svg>
+    </div>
+    <div class="card">
+      <h2>Resultado por trade</h2>
+      <svg id="bars" viewBox="0 0 700 170" style="width:100%; height:auto"></svg>
+    </div>
+    <div class="card">
+      <h2>El cruce que importa</h2>
+      <div class="sub">Resultado neto promedio según disciplina — la tabla que decide discusiones (veredicto real a N≥20).</div>
+      <div class="cross">
+        <div><div class="ck">Con plan (✓)</div><div class="cv pos" id="cx-si">—</div><div class="cd" id="cx-si-n"></div></div>
+        <div><div class="ck">Sin plan (✗)</div><div class="cv" id="cx-no">—</div><div class="cd" id="cx-no-n"></div></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel" id="p-trades"></section>
+
+  <section class="panel" id="p-disciplina">
+    <div class="card gauge-wrap">
+      <svg id="gauge" width="110" height="110" viewBox="0 0 110 110"></svg>
+      <div>
+        <h2 style="margin-bottom:4px">Adherencia al playbook</h2>
+        <div class="sub" style="margin:0" id="g-sub"></div>
+      </div>
+    </div>
+    <div class="card focus">
+      <h2>Foco actual</h2>
+      <div class="drow"><span class="ic">📏</span><span><b>BE significa LA ENTRADA (BTC-0805).</b> TP1 cobrado al plan ✓ (+1R en la mitad). Pero el BE quedó en 64.900 (+91 de "colchón") y el retest llegó a 64.962: tagó el stop y mató al runner (~$9 hoy, ~$20 en target). El BE del plan (64.991) sobrevivía por 29 puntos. <b>BE = tu entrada exacta; colchón máximo: +fees (~15 pts).</b></span></div>
+      <div class="drow"><span class="ic">🎯</span><span><b>El tamaño.</b> Las 3 trades entraron sobre la banda (2% · 3× sin SL · 3,9% vs 0,5-1%). La fórmula antes de cada entrada: <b>cantidad = riesgo$ ÷ distancia al SL</b>. Es el ✗ que se repite — y es EL que quema cuentas.</span></div>
+      <div class="drow"><span class="ic">🚨</span><span><b>La trade fantasma (BTC-0804).</b> Entró sin línea previa, SIN Stop Loss y con notional ≈3× la cuenta; la reveló la API. Perdió poco (−$2.99) pero es el patrón que quemó la cuenta de julio. <b>Ninguna entrada sin escribirla antes en el chat.</b></span></div>
+    </div>
+    <div class="card">
+      <h2>Compuertas por trade (era playbook)</h2>
+      <div id="gates-matrix"></div>
+    </div>
+    <div class="card">
+      <h2>Los cortes innegociables</h2>
+      <div class="drow"><span class="ic">⛔</span><span>3 pérdidas en el día → se apaga hasta mañana.</span></div>
+      <div class="drow"><span class="ic">📰</span><span>Día de dato rojo (FOMC · CPI · NFP) → no operar alrededor del anuncio.</span></div>
+      <div class="drow"><span class="ic">🚫</span><span>Nunca promediar una perdedora. El SL solo se mueve a favor.</span></div>
+      <div class="drow"><span class="ic">✍️</span><span>Trade fuera del plan → escribirla ANTES de ejecutarla.</span></div>
+    </div>
+  </section>
+
+  <div class="foot">
+    Datos servidos por tu backend (API Binance de SOLO lectura — verificada: no puede operar ni retirar).<br>
+    Precio en vivo cada 5 s · cuenta completa cada 60 s · la nota de setup (A/B/C) la pone el copiloto.
+  </div>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const TK = new URLSearchParams(location.search).get('t');
+const api = (p) => p + (TK ? (p.includes('?') ? '&' : '?') + 't=' + encodeURIComponent(TK) : '');
+const fmtR = (r) => (r >= 0 ? "+" : "") + r.toFixed(2) + "R";
+const fmtUsd = (u) => (u >= 0 ? "+$" : "−$") + Math.abs(u).toFixed(2);
+const fmtN = (n) => Number(n).toLocaleString("es-BO");
+
+let DATA = null;
+let firstRender = true;
+
+const livePnl = (t) => (DATA.btcNow - t.entry) * (t.dir === "SHORT" ? -1 : 1) * t.qtyNum;
+
+function countUp(el, target, fmt, ms = 900) {
+  const t0 = performance.now();
+  const step = (now) => {
+    const p = Math.min(1, (now - t0) / ms);
+    el.textContent = fmt(target * (1 - Math.pow(1 - p, 3)));
+    if (p < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
+function renderLive() {
+  const abiertas = DATA.trades.filter(t => t.estado === "abierta");
+  if (!abiertas.length) { $("#liveCard").style.display = "none"; $("#t-openr").textContent = "—"; return; }
+  const t = abiertas[0];
+  const rNow = t.riskUsd ? livePnl(t) / t.riskUsd : 0;
+  $("#liveCard").style.display = "block";
+  $("#lv-title").textContent = t.sym + " " + fmtN(t.entry);
+  $("#lv-dir").textContent = t.dir;
+  $("#lv-dir").className = "t-dir " + t.dir.toLowerCase();
+  $("#lv-r").textContent = fmtR(rNow);
+  $("#lv-r").className = "live-r " + (rNow >= 0 ? "pos" : "neg");
+  $("#t-openr").textContent = fmtR(rNow) + " sin realizar";
+  const lvls = [["SL", t.sl, "neg"], ["ENTRADA", t.entry, ""]];
+  if (t.tp1) lvls.push(["TP1 · 50%", t.tp1, "pos"]);
+  if (t.runner) lvls.push(["RUNNER", t.runner, "pos"]);
+  $("#lv-lvls").innerHTML = lvls.map(l => `<div class="lvl"><div class="lk">${l[0]}</div><div class="lv ${l[2]}">${fmtN(l[1])}</div></div>`).join("");
+  const win = t.dir === "SHORT" ? (t.runner || t.tp1 || t.entry * 0.98) : (t.runner || t.tp1 || t.entry * 1.02);
+  const lose = t.sl != null ? t.sl : (t.dir === "SHORT" ? t.entry * 1.02 : t.entry * 0.98);
+  const lo = Math.min(win, lose), hi = Math.max(win, lose);
+  const pct = (p) => {
+    const frac = (p - lo) / (hi - lo || 1);
+    return Math.max(2, Math.min(98, (t.dir === "SHORT" ? 1 - frac : frac) * 100));
+  };
+  const marks = [["runner", t.runner], ["TP1", t.tp1], ["entrada", t.entry], ["SL", t.sl]].filter(m => m[1] != null);
+  $("#lv-ticks").innerHTML = marks.map(m =>
+    `<div class="tick" style="left:${pct(m[1])}%"></div><div class="lab" style="left:${pct(m[1])}%">${m[0]}</div>`).join("");
+  $("#lv-flag").textContent = fmtN(DATA.btcNow);
+  requestAnimationFrame(() => { $("#lv-price").style.left = pct(DATA.btcNow) + "%"; });
+  const beDone = t.sl != null && Math.abs(t.sl - t.entry) < 1;
+  $("#lv-next").innerHTML = beDone
+    ? `SL en BE ✓ — trade blindada. El runner (${t.runner ? fmtN(t.runner) : "—"}) trabaja solo.`
+    : (t.tp1 ? `Siguiente acción: <b>cuando llene el TP1 (${fmtN(t.tp1)}) → mover SL a ${fmtN(t.be)} (BE)</b>. Después: nada — el plan trabaja solo.`
+             : `Gestión pendiente de configurar en el exchange.`);
+}
+
+function render() {
+  const cerradas = DATA.trades.filter(t => t.estado === "cerrada");
+  const conR = cerradas.filter(t => t.r != null);
+  const totR = conR.reduce((s, t) => s + t.r, 0);
+  const totU = DATA.incomeNet != null ? DATA.incomeNet : cerradas.reduce((s, t) => s + t.usd, 0);
+  const wins = cerradas.filter(t => t.usd > 0).length;
+  const pbTrades = DATA.trades.filter(t => t.era === "playbook");
+  const gTot = pbTrades.reduce((s, t) => s + Object.values(t.gates).filter(v => v !== "na").length, 0);
+  const gOk = pbTrades.reduce((s, t) => s + Object.values(t.gates).filter(v => v === "ok").length, 0);
+  const adh = gTot ? Math.round(gOk / gTot * 100) : null;
+
+  $("#upd").textContent = DATA.updatedAt;
+  $("#bal").innerHTML = DATA.balance ? ` · billetera <b>$${DATA.balance.total.toFixed(2)}</b> (disp. $${DATA.balance.available.toFixed(2)})` : "";
+  if (firstRender) countUp($("#t-usd"), totU, v => fmtUsd(v)); else $("#t-usd").textContent = fmtUsd(totU);
+  $("#t-usd").className = "v " + (totU >= 0 ? "pos" : "neg");
+  $("#t-r").textContent = fmtR(totR) + " en trades con SL · neto real";
+  $("#t-wr").textContent = cerradas.length ? Math.round(wins / cerradas.length * 100) + "%" : "—";
+  $("#t-n").textContent = cerradas.length + " cerrada" + (cerradas.length === 1 ? "" : "s");
+  $("#t-adh").textContent = adh != null ? adh + "%" : "—";
+  $("#t-open").textContent = DATA.trades.filter(t => t.estado === "abierta").length;
+
+  renderLive();
+
+  // ── curva de equity en $ netos ──
+  (function equity() {
+    const svg = $("#eq");
+    const W = 700, H = 240, padL = 54, padR = 16, padT = 18, padB = 30;
+    const abiertas = DATA.trades.filter(t => t.estado === "abierta");
+    const pts = [0]; cerradas.forEach(t => pts.push(pts[pts.length - 1] + t.usd));
+    const openU = abiertas.length ? livePnl(abiertas[0]) : 0;
+    const maxY = Math.max(...pts, pts[pts.length - 1] + Math.max(openU, 0), 10) * 1.15;
+    const minY = Math.min(0, ...pts) - 4;
+    const nX = pts.length - 1 + (abiertas.length ? 1 : 0);
+    const x = (i) => padL + (W - padL - padR) * (nX ? i / nX : 0);
+    const y = (v) => padT + (H - padT - padB) * (1 - (v - minY) / (maxY - minY));
+    let g = "";
+    for (let v = 0; v <= Math.floor(maxY); v += 20) {
+      g += `<line x1="${padL}" y1="${y(v)}" x2="${W - padR}" y2="${y(v)}" stroke="var(--line)" stroke-width="1"/>` +
+           `<text x="${padL - 8}" y="${y(v) + 4}" text-anchor="end" font-size="11" fill="var(--muted)">$${v}</text>`;
+    }
+    const path = pts.map((v, i) => (i ? "L" : "M") + x(i) + " " + y(v)).join(" ");
+    let dash = "";
+    if (abiertas.length) {
+      const vEnd = pts[pts.length - 1] + openU;
+      dash = `<line x1="${x(pts.length - 1)}" y1="${y(pts[pts.length - 1])}" x2="${x(nX)}" y2="${y(vEnd)}" stroke="var(--accent)" stroke-width="2" stroke-dasharray="5 5" opacity=".8"/>` +
+             `<circle cx="${x(nX)}" cy="${y(vEnd)}" r="4.5" fill="var(--accent)"/>` +
+             `<text x="${x(nX) - 6}" y="${y(vEnd) - 10}" text-anchor="end" font-size="11.5" font-weight="700" fill="var(--accent)">${fmtUsd(vEnd)} (con abierta)</text>`;
+    }
+    const last = pts[pts.length - 1];
+    const labels = cerradas.map((t, i) => `<text x="${x(i + 1)}" y="${y(pts[i + 1]) + (t.usd >= 0 ? -12 : 18)}" text-anchor="middle" font-size="10.5" fill="var(--muted)">${t.id.slice(4)}</text>`).join("");
+    svg.innerHTML = g +
+      `<path id="eqline" d="${path}" fill="none" stroke="var(--up)" stroke-width="2.5" stroke-linecap="round"/>` +
+      pts.map((v, i) => `<circle cx="${x(i)}" cy="${y(v)}" r="4" fill="${i && cerradas[i - 1].usd < 0 ? "var(--down)" : "var(--up)"}"/>`).join("") + labels +
+      `<text x="${x(pts.length - 1) + 8}" y="${y(last) + 4}" font-size="12.5" font-weight="800" fill="var(--up)">${fmtUsd(last)}</text>` + dash;
+    if (firstRender) {
+      const line = svg.querySelector("#eqline");
+      const len = line.getTotalLength();
+      line.style.strokeDasharray = len; line.style.strokeDashoffset = len;
+      line.style.transition = "stroke-dashoffset 1.2s ease";
+      requestAnimationFrame(() => requestAnimationFrame(() => { line.style.strokeDashoffset = 0; }));
+    }
+    $("#eq-sub").textContent = cerradas.length + " trades cerradas (neto, con fees) · la línea punteada proyecta la posición abierta";
+  })();
+
+  // ── barras $ por trade ──
+  (function bars() {
+    const svg = $("#bars");
+    const W = 700, H = 170, padL = 46, padB = 34, padT = 14;
+    const all = DATA.trades.map(t => ({
+      label: t.id + (t.r != null && t.estado === "cerrada" ? ` (${fmtR(t.r)})` : t.estado === "cerrada" ? " (sin SL)" : " (viva)"),
+      v: t.estado === "cerrada" ? t.usd : livePnl(t), open: t.estado !== "cerrada"
+    }));
+    const maxA = Math.max(...all.map(a => Math.abs(a.v)), 5) * 1.15;
+    const y = (v) => padT + (H - padT - padB) / 2 * (1 - v / maxA);
+    const bw = Math.min(70, (W - padL - 40) / all.length - 24);
+    svg.innerHTML =
+      `<line x1="${padL}" y1="${y(0)}" x2="${W - 12}" y2="${y(0)}" stroke="var(--line)"/>` +
+      all.map((a, i) => {
+        const cx = padL + 40 + i * ((W - padL - 60) / all.length);
+        const h = Math.abs(y(a.v) - y(0));
+        const top = a.v >= 0 ? y(a.v) : y(0);
+        const col = a.v >= 0 ? "var(--up)" : "var(--down)";
+        return `<rect x="${cx - bw / 2}" y="${top}" width="${bw}" height="${Math.max(h, 2)}" rx="4" fill="${col}" ${a.open ? 'opacity=".45"' : ""}/>` +
+               `<text x="${cx}" y="${top - 6 < 12 ? y(0) + 16 : (a.v >= 0 ? top - 6 : top + h + 14)}" text-anchor="middle" font-size="12" font-weight="700" fill="${col}">${fmtUsd(a.v)}${a.open ? " ⏳" : ""}</text>` +
+               `<text x="${cx}" y="${H - 8}" text-anchor="middle" font-size="11" fill="var(--muted)">${a.label}</text>`;
+      }).join("");
+  })();
+
+  // ── cruce con plan / sin plan ──
+  (function cross() {
+    const si = cerradas.filter(t => t.planFlag === true);
+    const no = cerradas.filter(t => t.planFlag === false);
+    $("#cx-si").textContent = si.length ? fmtUsd(si.reduce((s, t) => s + t.usd, 0) / si.length) : "—";
+    $("#cx-si-n").textContent = si.length ? si.length + " trades · neto promedio" : "la abierta (con plan ✓) será la primera";
+    $("#cx-no").textContent = no.length ? fmtUsd(no.reduce((s, t) => s + t.usd, 0) / no.length) : "—";
+    $("#cx-no").className = "cv " + (no.length && no.reduce((s, t) => s + t.usd, 0) < 0 ? "neg" : "");
+    $("#cx-no-n").textContent = no.length ? no.length + " trade" + (no.length > 1 ? "s" : "") + " sin línea previa" : "ojalá quede vacío para siempre";
+  })();
+
+  // ── lista de trades (preserva cuáles estaban expandidas) ──
+  (function tradesList() {
+    const openIds = new Set([...document.querySelectorAll(".trade.open")].map(e => e.dataset.tid));
+    const cont = $("#p-trades");
+    cont.innerHTML = DATA.trades.slice().reverse().map((t) => {
+      const rTxt = t.estado === "cerrada" ? (t.r != null ? fmtR(t.r) : fmtUsd(t.usd)) : (t.riskUsd ? fmtR(livePnl(t) / t.riskUsd) : "—") + " ⏳";
+      const rCls = (t.estado === "cerrada" ? (t.r != null ? t.r : t.usd) : livePnl(t)) >= 0 ? "pos" : "neg";
+      const gs = Object.entries(t.gates).map(([k, v]) => {
+        const note = (t.gateNote && t.gateNote[k]) ? " · " + t.gateNote[k] : "";
+        return `<span class="gate ${v}">${v === "ok" ? "✓" : v === "bad" ? "✗" : "·"} ${k}${note}</span>`;
+      }).join("");
+      const kvClosed = t.estado === "cerrada"
+        ? `<div><span class="k">Salida</span>${fmtN(t.exit)}</div><div><span class="k">Resultado</span>${t.r != null ? fmtR(t.r) + " · " : ""}${fmtUsd(t.usd)} neto</div><div><span class="k">Duración</span>${t.dur}</div>`
+        : `<div><span class="k">TP1 (50%)</span>${t.tp1 ? fmtN(t.tp1) : "—"}</div><div><span class="k">Runner</span>${t.runner ? fmtN(t.runner) : "—"}</div><div><span class="k">Estado</span>en curso ⏳</div>`;
+      return `<div class="trade${openIds.has(t.id) ? " open" : ""}" data-tid="${t.id}">
+        <div class="t-head" onclick="this.parentElement.classList.toggle('open')">
+          <span class="t-sym">${t.sym}</span>
+          <span class="t-dir ${t.dir.toLowerCase()}">${t.dir}</span>
+          <span class="t-date">${t.abierta.slice(0, 10)}</span>
+          <span class="grade g${t.grade[0]}">${t.grade[0]}</span>
+          <span class="t-r ${rCls}">${rTxt}</span>
+          <span class="chev">▾</span>
+        </div>
+        <div class="t-body"><div class="t-inner">
+          <div class="kv">
+            <div><span class="k">Entrada</span>${fmtN(t.entry)}</div>
+            <div><span class="k">Stop Loss</span>${t.sl != null ? fmtN(t.sl) : "— sin SL ⚠️"}</div>
+            <div><span class="k">Tamaño</span>${t.qty}</div>
+            ${kvClosed}
+            <div><span class="k">Riesgo</span>${t.riskUsd != null ? "$" + t.riskUsd.toFixed(2) : "indefinido"}</div>
+            <div><span class="k">Setup</span>${t.grade} (${t.era})</div>
+            <div><span class="k">Abierta</span>${t.abierta}</div>
+          </div>
+          <div class="gates">${gs}</div>
+          <div class="nota">${t.nota}</div>
+        </div></div>
+      </div>`;
+    }).join("");
+  })();
+
+  // ── disciplina ──
+  (function disciplina() {
+    const svg = $("#gauge");
+    const v = adh != null ? adh : 0;
+    const r = 44, c = 2 * Math.PI * r, off = c * (1 - v / 100);
+    svg.innerHTML =
+      `<circle cx="55" cy="55" r="${r}" fill="none" stroke="var(--chip)" stroke-width="11"/>` +
+      `<circle id="garc" cx="55" cy="55" r="${r}" fill="none" stroke="${v >= 80 ? "var(--up)" : "var(--warn)"}" stroke-width="11" stroke-linecap="round" transform="rotate(-90 55 55)" stroke-dasharray="${c}" stroke-dashoffset="${firstRender ? c : off}"/>` +
+      `<text x="55" y="62" text-anchor="middle" font-size="24" font-weight="800" fill="var(--ink)">${adh != null ? adh + "%" : "—"}</text>`;
+    if (firstRender) {
+      const arc = svg.querySelector("#garc");
+      arc.style.transition = "stroke-dashoffset 1.1s ease";
+      requestAnimationFrame(() => requestAnimationFrame(() => { arc.style.strokeDashoffset = off; }));
+    }
+    $("#g-sub").textContent = adh != null
+      ? gOk + " de " + gTot + " compuertas cumplidas en la era playbook (" + pbTrades.length + " trades). El objetivo: ≥90% sostenido."
+      : "Se mide desde la primera trade con playbook.";
+    $("#gates-matrix").innerHTML = pbTrades.map(t =>
+      `<div class="drow"><span class="ic">📌</span><span><b>${t.id}</b> — ` +
+      Object.entries(t.gates).map(([k, v]) => `<span class="${v === "ok" ? "pos" : v === "bad" ? "neg" : ""}" style="white-space:nowrap">${v === "ok" ? "✓" : v === "bad" ? "✗" : "·"} ${k}</span>`).join(" &nbsp; ") +
+      `</span></div>`
+    ).join("") || '<div class="sub">Aún sin trades de la era playbook.</div>';
+  })();
+
+  firstRender = false;
+}
+
+function setConn(ok, msg) {
+  $("#conn").className = ok ? "ok" : "bad";
+  $("#conn").textContent = ok ? "● en vivo" : "● sin conexión";
+  if (!ok && msg) { $("#err").style.display = "block"; $("#err").textContent = msg; }
+  else $("#err").style.display = "none";
+}
+
+async function fetchJournal() {
+  try {
+    const r = await fetch(api("/api/journal"));
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || ("HTTP " + r.status));
+    DATA = await r.json();
+    setConn(true);
+    render();
+  } catch (e) {
+    setConn(false, "No pude leer la cuenta: " + e.message + (DATA ? " — mostrando el último dato bueno." : ""));
+  }
+}
+
+async function fetchPrice() {
+  if (!DATA) return;
+  const abiertas = DATA.trades.filter(t => t.estado === "abierta");
+  if (!abiertas.length) return;
+  try {
+    const r = await fetch(api("/api/price?symbol=" + abiertas[0].sym + "USDT"));
+    if (!r.ok) return;
+    const j = await r.json();
+    DATA.btcNow = j.price;
+    renderLive();
+  } catch {}
+}
+
+document.querySelectorAll(".tab").forEach(b => b.addEventListener("click", () => {
+  document.querySelectorAll(".tab").forEach(x => x.classList.remove("on"));
+  document.querySelectorAll(".panel").forEach(x => x.classList.remove("on"));
+  b.classList.add("on");
+  document.getElementById("p-" + b.dataset.p).classList.add("on");
+}));
+
+fetchJournal();
+let tJournal = setInterval(fetchJournal, 60000);
+let tPrice = setInterval(fetchPrice, 5000);
+document.addEventListener("visibilitychange", () => {
+  clearInterval(tJournal); clearInterval(tPrice);
+  if (!document.hidden) {
+    fetchJournal();
+    tJournal = setInterval(fetchJournal, 60000);
+    tPrice = setInterval(fetchPrice, 5000);
+  }
+});
+</script>
+</body>
+</html>

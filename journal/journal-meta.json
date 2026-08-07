@@ -1,0 +1,34 @@
+{
+  "symbols": ["BTCUSDT"],
+  "eraStart": "2026-07-30T00:00:00Z",
+  "playbookStart": "2026-08-01T00:00:00Z",
+  "artifactUrl": "https://claude.ai/code/artifact/a7c5341e-3c4f-4060-869a-108b931b1767",
+  "trades": {
+    "BTC-0731": {
+      "sl": 65600,
+      "grade": "A",
+      "planFlag": null,
+      "gates": { "Línea previa": "na", "Sesgo 4H": "ok", "Liquidez barrida": "ok", "SL escrito": "ok", "Tamaño fórmula": "bad", "Gestión": "ok" },
+      "gateNote": { "Línea previa": "pre-playbook", "Tamaño fórmula": "~2% (banda 0,5-1%)" },
+      "nota": "<b>Audit:</b> barrió los equal highs de 4 días (mecha 65.391) dentro del supply 4H, con el sesgo bajista recién confirmado. SL estructural sobre la mecha. Entrada LÍMITE (maker ✓), 12h de paciencia, salida manual 27 min antes del flush — capturó el 68% del swing. Neto verificado: +$51.40 (fees $1.16). <b>La trade de referencia del playbook.</b>"
+    },
+    "BTC-0804": {
+      "sl": null,
+      "grade": "C",
+      "planFlag": false,
+      "gates": { "Línea previa": "bad", "Sesgo 4H": "na", "Liquidez barrida": "na", "SL escrito": "bad", "Tamaño fórmula": "bad", "Gestión": "bad" },
+      "gateNote": { "SL escrito": "SIN SL en el exchange", "Tamaño fórmula": "notional ≈3× la cuenta", "Gestión": "cierre manual a los 19 min" },
+      "nota": "<b>Post-mortem (la reveló la API — nunca pasó por el chat):</b> short 0.018 @64.056 cerrado a mano 19 minutos después @64.177. Sin línea previa, sin SL, notional ≈3× la cuenta. La pérdida fue chica (−$2.99 neto) pero el patrón es el caro: la cuenta de julio no murió por un mal setup, murió por trades así. La regla que la habría frenado: <b>escribirla ANTES, siempre.</b>"
+    },
+    "BTC-0805": {
+      "sl": 65655,
+      "tp1": 64327,
+      "runner": 63300,
+      "grade": "B+",
+      "planFlag": true,
+      "gates": { "Línea previa": "ok", "Sesgo 4H": "ok", "Liquidez barrida": "ok", "SL escrito": "ok", "Tamaño fórmula": "bad", "Gestión": "ok" },
+      "gateNote": { "Tamaño fórmula": "3,9% (banda 0,5-1%)", "Gestión": "TP1 ✓ al plan · BE quedó +91 (64.900) y el retest (máx 64.962) lo tagó" },
+      "nota": "<b>Post-mortem (reconstruido con el historial de órdenes):</b> la mejor trade ejecutada hasta ahora — línea previa ✓, límite maker en el barrido ✓, y el <b>TP1 llenó AL PLAN</b> (06-08 13:05 UTC, límite @64.326,6: +1R en la mitad — el mecanismo C4 pagando en real por primera vez). La única desviación: el BE se colocó en <b>64.900</b> ('+100 de colchón') en vez de la entrada exacta. El retest subió a <b>64.962</b> — 29 puntos POR DEBAJO del BE del plan — tagó el stop y se llevó el runner a +$1,09. Ese runner hoy valdría ~$9 y apuntaba a ~$20 en el target 63.300. Lección quirúrgica: <b>BE = tu entrada exacta (64.991); colchón máximo +fees (~15 pts). El +100 te deja DENTRO del retest — justo donde el mercado va a cazar stops.</b>"
+    }
+  }
+}
