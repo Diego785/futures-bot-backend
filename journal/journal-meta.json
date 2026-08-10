@@ -4,6 +4,16 @@
   "playbookStart": "2026-08-01T00:00:00Z",
   "artifactUrl": "https://claude.ai/code/artifact/a7c5341e-3c4f-4060-869a-108b931b1767",
   "trades": {
+    "BTC-0809": {
+      "sl": 65655,
+      "tp1": 64980,
+      "runner": 63823,
+      "grade": "A-",
+      "planFlag": false,
+      "gates": { "Línea previa": "bad", "Sesgo 4H": "ok", "Liquidez barrida": "ok", "SL escrito": "ok", "Tamaño fórmula": "bad", "Gestión": "ok" },
+      "gateNote": { "Línea previa": "el audit llegó con la trade ya viva", "Liquidez barrida": "sweep 65.483 sobre máximos + mecha vieja", "Tamaño fórmula": "1,5% — tu mejor; banda 0,5-1%", "Gestión": "TP1→BE→runner EJECUTADOS al plan — primera vez ✓" },
+      "nota": "<b>La primera ejecución COMPLETA del mecanismo.</b> Límite 6h esperando en la zona de referencia (65.319, la misma del +7.3R) y llenó en el barrido de 65.483 (maker ✓). TP1 cobrado a +1R (64.978, +$3.07) → SL a LA ENTRADA exacta (lección 0805 aplicada) → el retest subió con mecha a 65.374, tagó el BE con slippage A FAVOR (65.305, +$0.12) y el precio volvió a caer. <b>Neto +$2.69 (+0.44R) — el perfil exacto de la 'alcancía de BE' del sistema.</b> Honesto: sin BE la trade seguiría viva — ese es el costo del seguro, no un error. Falta UNA pieza: la línea previa ANTES de colocar."
+    },
     "BTC-0731": {
       "sl": 65600,
       "grade": "A",
